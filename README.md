@@ -86,6 +86,20 @@ npm run build:win    # Typecheck, Build, cm.exe und NSIS-Installer → release/<
 
 `npx electron-builder --win --dir` erzeugt nur den entpackten Ordner `release/<version>/win-unpacked`. Das reicht zum schnellen Testen. Vorher einmal `npm run build:launcher` ausführen, das kompiliert `cm.exe` mit dem C#-Compiler aus dem .NET Framework 4, der bei Windows dabei ist.
 
+### Releases
+
+Jeder Push auf `master` startet [semantic-release](https://semantic-release.gitbook.io/) (`.github/workflows/release.yml`). Es liest die Version aus den Commit-Nachrichten ([Conventional Commits](https://www.conventionalcommits.org/de/)), baut den Installer und veröffentlicht ihn mit den Versionshinweisen als GitHub-Release. Von dort holt sich die installierte App ihre Updates.
+
+| Commit | Version | Versionshinweise |
+| --- | --- | --- |
+| `feat: …` | neue Minor-Version | „Neue Funktionen“ |
+| `fix: …` | neue Patch-Version | „Fehlerbehebungen“ |
+| `perf: …` | neue Patch-Version | „Schneller“ |
+| `feat!: …` oder `BREAKING CHANGE:` im Text | neue Major-Version | |
+| `docs:`, `ci:`, `build:`, `chore:`, `refactor:`, `style:`, `test:` | kein Release | nicht aufgeführt |
+
+Pull Requests werden mit ihrem Titel als Commit-Nachricht gemergt. Deshalb prüft `pr-title.yml` den Titel, und `ci.yml` baut den Installer einmal zur Probe. Die Version in `package.json` bleibt im Repository unverändert: semantic-release setzt sie nur für den Build.
+
 ## Projektstruktur
 
 ```
