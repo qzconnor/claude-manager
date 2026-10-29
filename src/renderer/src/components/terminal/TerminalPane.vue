@@ -29,8 +29,9 @@ const settings = useSettingsStore()
 const ui = useUiStore()
 const { closeTerminal, restartTerminal } = useTerminalActions()
 
-// No padding at the top: the rows reach up to the edge there (see useTerminal's fit).
-const padding = computed(() => `0 ${settings.settings.terminal.padding}px ${settings.settings.terminal.padding}px`)
+// No padding at the top: the rows reach up to the edge there. On the right useTerminal's fit
+// keeps the space free itself, the scrollbar lies in it.
+const padding = computed(() => `0 0 ${settings.settings.terminal.padding}px ${settings.settings.terminal.padding}px`)
 const exited = computed(() => props.terminal.status === 'exited')
 
 // The limit hint stays away once dismissed, until the session hits a limit again.
