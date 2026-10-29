@@ -400,6 +400,11 @@ export function useTerminal(options: UseTerminalOptions) {
     fit,
     copySelection,
     pasteClipboard,
+    /** Pastes like Ctrl+V, e.g. the paths of dropped files. */
+    paste: (text: string) => {
+      term?.paste(text)
+      focus()
+    },
     clear: () => term?.clear(),
     selectAll: () => term?.selectAll(),
     scrollToBottom: () => term?.scrollToBottom(),

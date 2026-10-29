@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import { IpcEvent, IpcInvoke, IpcSend, type ManagerApi, type Unsubscribe } from '@shared/ipc'
 
 function subscribe<Args extends unknown[]>(channel: string, cb: (...args: Args) => void): Unsubscribe {
@@ -19,6 +19,7 @@ const api: ManagerApi = {
     pickDirectory: (defaultPath) => invoke(IpcInvoke.appPickDirectory, defaultPath ?? null),
     listFonts: () => invoke(IpcInvoke.appListFonts),
     clipboardHasImage: () => invoke(IpcInvoke.appClipboardHasImage),
+    pathForFile: (file) => webUtils.getPathForFile(file),
   },
   window: {
     minimize: () => invoke(IpcInvoke.windowMinimize),

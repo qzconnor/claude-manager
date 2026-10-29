@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CircleStopIcon, RotateCwIcon, XIcon } from '@lucide/vue'
+import { CircleStopIcon, FileInputIcon, RotateCwIcon, XIcon } from '@lucide/vue'
 import { computed, nextTick, ref, toRef, watch } from 'vue'
 import type { TerminalInfo } from '@shared/types'
 import { Button } from '@/components/ui/button'
@@ -7,6 +7,7 @@ import { useClock } from '@/composables/useClock'
 import { useTerminal } from '@/composables/useTerminal'
 import { useTerminalActions } from '@/composables/useTerminalActions'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
+import { formatArgs } from '@/lib/args'
 import { useSettingsStore } from '@/stores/settings'
 import { useUiStore } from '@/stores/ui'
 import TerminalLimitBanner from './TerminalLimitBanner.vue'
@@ -33,6 +34,37 @@ const { closeTerminal, restartTerminal } = useTerminalActions()
 // keeps the space free itself, the scrollbar lies in it.
 const padding = computed(() => `0 0 ${settings.settings.terminal.padding}px ${settings.settings.terminal.padding}px`)
 const exited = computed(() => props.terminal.status === 'exited')
+
+// Files dropped on the terminal: their paths are pasted, like in Windows Terminal. Claude Code
+// attaches pasted image paths as images.
+const dragging = ref(false)
+/** dragenter/dragleave also fire for every child element. */
+let dragDepth = 0
+const carriesFiles = (event: DragEvent) => !exited.value && !!event.dataTransfer?.types.includes('Files')
+
+function onDragEnter(event: DragEvent) {
+  if (!carriesFiles(event)) return
+  dragDepth++
+  dragging.value = true
+}
+function onDragOver(event: DragEvent) {
+  if (!carriesFiles(event)) return
+  event.preventDefault()
+  event.dataTransfer!.dropEffect = 'copy'
+}
+function onDragLeave(event: DragEvent) {
+  if (!carriesFiles(event)) return
+  dragDepth = Math.max(0, dragDepth - 1)
+  if (dragDepth === 0) dragging.value = false
+}
+function onDrop(event: DragEvent) {
+  dragDepth = 0
+  dragging.value = false
+  if (!carriesFiles(event)) return
+  event.preventDefault()
+  const paths = [...event.dataTransfer!.files].map((file) => window.api.app.pathForFile(file)).filter(Boolean)
+  if (paths.length) term.paste(formatArgs(paths))
+}
 
 // The limit hint stays away once dismissed, until the session hits a limit again.
 const now = useClock(30_000)
@@ -64,7 +96,14 @@ function closeSearch() {
 </script>
 
 <template>
-  <div class="relative size-full overflow-hidden" :style="{ background: containerBackground, padding }">
+  <div
+    class="relative size-full overflow-hidden"
+    :style="{ background: containerBackground, padding }"
+    @dragenter="onDragEnter"
+    @dragover="onDragOver"
+    @dragleave="onDragLeave"
+    @drop="onDrop"
+  >
     <!-- Aligned to the bottom, so the prompt keeps just the padding there; the top row reaches above
          the container and is cut at the edge of the pane. -->
     <div ref="container" class="flex size-full flex-col justify-end *:shrink-0" />
@@ -80,6 +119,16 @@ function closeSearch() {
 
     <div v-if="searchOpen" class="absolute top-3 right-5 z-10">
       <TerminalSearch ref="search" :find-next="term.findNext" :find-previous="term.findPrevious" @close="closeSearch" />
+    </div>
+
+    <div
+      v-if="dragging"
+      class="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded-xl border-2 border-dashed border-primary/60 bg-background/30"
+    >
+      <div class="glass flex items-center gap-2 rounded-xl px-4 py-2 text-sm shadow-lg ring-1 ring-foreground/10">
+        <FileInputIcon class="size-4 text-primary" />
+        {{ terminal.mode === 'session' ? 'Loslassen fügt den Pfad ein, Bilder hängt Claude an' : 'Loslassen fügt den Pfad ein' }}
+      </div>
     </div>
 
     <div v-if="exited" class="absolute inset-x-0 bottom-4 z-10 flex justify-center px-4">
