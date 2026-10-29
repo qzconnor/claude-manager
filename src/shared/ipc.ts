@@ -121,6 +121,8 @@ export interface ManagerApi {
     listFonts(): Promise<string[]>
     /** Whether the clipboard holds an image, e.g. a screenshot. */
     clipboardHasImage(): Promise<boolean>
+    /** Path of a file dragged into the window; empty for files that don't exist on disk. */
+    pathForFile(file: File): string
   }
   window: {
     minimize(): Promise<void>
