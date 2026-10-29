@@ -66,10 +66,11 @@ Die App wurde in acht Schritten gebaut. Jeder Schritt baut auf dem vorherigen au
 - Tabs schließen sich, wenn Claude Code oder die Shell ohne Fehler endet (z. B. Strg+C). Einstellbar: ohne Fehler, immer, nie. Beendet die App den Prozess selbst, etwa beim Account-Wechsel, bleibt der Tab.
 - Import aus cswap, nur sichtbar, wenn cswap installiert ist und Accounts kennt. Übernommen werden Alias, E-Mail und Organisation aus `sequence.json`, nie cswaps Zugangsdaten. Jeder Account bekommt einen eigenen Browser-Login mit vorausgefüllter E-Mail. Ein Login mit anderer Person oder Organisation wird auf der Karte angezeigt.
 - Die Nachfragen des Hauptprozesses (Beenden mit laufenden Terminals, Fehler von `cm`) erscheinen als Dialog in der App statt als Windows-Fenster. Nur wenn die Oberfläche abgestürzt ist, kommt die Windows-Box als Rückfall, damit sich das Fenster immer schließen lässt.
+- Updates direkt in der App (electron-updater, GitHub-Releases) mit Versionshinweisen. Releases erstellt semantic-release bei jedem Push auf `master` aus den Conventional Commits.
 
 ## Mögliche nächste Schritte
 
-- Code-Signing und Auto-Update (electron-updater), sobald ein Zertifikat vorhanden ist.
+- Code-Signing, sobald ein Zertifikat vorhanden ist (dann prüft electron-updater auch die Signatur des Updates).
 - Geteilte Terminal-Ansicht (Split Panes) und Drag & Drop für Tabs.
 - Benachrichtigung, wenn Claude Code in einem Hintergrund-Tab auf eine Eingabe wartet.
 - Warnung, wenn ein Limit eine einstellbare Schwelle überschreitet.

@@ -16,13 +16,16 @@ import { SessionHandoff } from './services/session-handoff'
 import { SessionService } from './services/session-service'
 import { SettingsService } from './services/settings-service'
 import { TerminalService } from './services/terminal-service'
+import { UpdateService } from './services/update-service'
 import { UsageService } from './services/usage-service'
 import { WindowDialogs } from './window/dialogs'
 import { createMainWindow, revealWindow } from './window/main-window'
 import { WindowMaterialController } from './window/material'
 
 app.setName('Claude Manager')
-if (process.platform === 'win32') app.setAppUserModelId('de.claude-manager.app')
+// The appId of electron-builder.yml: the installer gives the shortcuts this ID, and Windows only
+// shows notifications (and groups the taskbar button with the pinned one) when they match.
+if (process.platform === 'win32') app.setAppUserModelId('local.claude-manager')
 
 // Started through the `cm` command: a running instance takes the request over.
 const launchRequest = readLaunchRequest(process.argv)
@@ -50,6 +53,8 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
   const usage = new UsageService(accounts, settings, indexer, userDataDir, userAgent)
   await usage.init()
   const command = new CommandIntegration()
+  const updates = new UpdateService(userAgent)
+  updates.init()
 
   settings.on('changed', (next, previous) => {
     if (next.claude.executablePath !== previous.claude.executablePath) cli.invalidate()
@@ -67,6 +72,7 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
     handoff,
     usage,
     command,
+    updates,
     async appInfo(): Promise<AppInfo> {
       return {
         name: app.getName(),
@@ -140,7 +146,8 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
     let confirmedClose = false
     let asking = false
     win.on('close', (event) => {
-      if (confirmedClose || !settings.get().general.confirmCloseRunning) return
+      // The page has asked before installing an update.
+      if (confirmedClose || updates.installing || !settings.get().general.confirmCloseRunning) return
       const running = terminals.runningCount()
       if (running === 0) return
       event.preventDefault()
@@ -196,6 +203,7 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
   })
 
   app.on('before-quit', () => {
+    updates.dispose()
     api.dispose()
     terminals.disposeAll()
     usage.dispose()

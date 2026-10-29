@@ -35,6 +35,13 @@ extraFiles:
     filter:
       - cm.exe
 
+# Where the installed app looks for updates (electron-updater reads it from app-update.yml).
+# Releases are published by semantic-release (.releaserc.json), the build itself never publishes.
+publish:
+  provider: github
+  owner: qzconnor
+  repo: claude-manager
+
 win:
   target:
     - target: nsis

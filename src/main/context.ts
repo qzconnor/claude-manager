@@ -7,6 +7,7 @@ import type { SessionHandoff } from './services/session-handoff'
 import type { SessionService } from './services/session-service'
 import type { SettingsService } from './services/settings-service'
 import type { TerminalService } from './services/terminal-service'
+import type { UpdateService } from './services/update-service'
 import type { UsageService } from './services/usage-service'
 import type { AppInfo } from '@shared/types'
 
@@ -25,5 +26,7 @@ export interface AppContext {
   handoff: SessionHandoff
   usage: UsageService
   command: CommandIntegration
+  /** App updates from the GitHub releases. */
+  updates: UpdateService
   appInfo(): Promise<AppInfo>
 }

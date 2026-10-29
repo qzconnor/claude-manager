@@ -91,6 +91,15 @@ const api: ManagerApi = {
     regenerateToken: () => invoke(IpcInvoke.apiRegenerateToken),
     onStatus: (cb) => subscribe(IpcEvent.apiStatusChanged, cb),
   },
+  updates: {
+    state: () => invoke(IpcInvoke.updatesState),
+    check: () => invoke(IpcInvoke.updatesCheck),
+    download: () => invoke(IpcInvoke.updatesDownload),
+    install: () => invoke(IpcInvoke.updatesInstall),
+    releases: () => invoke(IpcInvoke.updatesReleases),
+    onChanged: (cb) => subscribe(IpcEvent.updatesChanged, cb),
+    onShow: (cb) => subscribe(IpcEvent.updatesShow, cb),
+  },
 }
 
 contextBridge.exposeInMainWorld('api', api)

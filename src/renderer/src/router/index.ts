@@ -4,6 +4,7 @@ import DashboardView from '@/views/DashboardView.vue'
 import SessionsView from '@/views/SessionsView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import TerminalsView from '@/views/TerminalsView.vue'
+import UpdatesView from '@/views/UpdatesView.vue'
 
 export const router = createRouter({
   history: createWebHashHistory(),
@@ -14,6 +15,7 @@ export const router = createRouter({
     { path: '/dashboard', name: 'dashboard', component: DashboardView },
     { path: '/accounts', name: 'accounts', component: AccountsView },
     { path: '/settings', name: 'settings', component: SettingsView },
+    { path: '/updates', name: 'updates', component: UpdatesView },
     { path: '/:pathMatch(.*)*', redirect: { name: 'terminals' } },
   ],
 })

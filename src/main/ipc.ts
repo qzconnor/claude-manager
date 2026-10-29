@@ -165,6 +165,15 @@ export function registerIpc(ctx: AppContext): void {
     if (typeof registered !== 'boolean') throw new Error('Ungültiger Parameter: registered')
     return ctx.command.setRegistered(registered)
   })
+
+  // --- updates -------------------------------------------------------------
+  ipcMain.handle(IpcInvoke.updatesState, () => ctx.updates.getState())
+  ipcMain.handle(IpcInvoke.updatesCheck, () => ctx.updates.check())
+  ipcMain.handle(IpcInvoke.updatesDownload, () => ctx.updates.download())
+  ipcMain.handle(IpcInvoke.updatesInstall, () => ctx.updates.install())
+  ipcMain.handle(IpcInvoke.updatesReleases, () => ctx.updates.releases())
+  ctx.updates.on('changed', (state) => broadcast(IpcEvent.updatesChanged, state))
+  ctx.updates.on('show', () => broadcast(IpcEvent.updatesShow))
 }
 
 /** Local HTTP API status for the settings page. */

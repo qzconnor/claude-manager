@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { FolderOpenIcon } from '@lucide/vue'
+import { FolderOpenIcon, SparklesIcon } from '@lucide/vue'
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import AppLogo from '@/components/common/AppLogo.vue'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -9,6 +10,7 @@ import { attempt } from '@/lib/errors'
 import { useAppStore } from '@/stores/app'
 
 const app = useAppStore()
+const router = useRouter()
 
 const rows = computed(() => {
   const i = app.info
@@ -50,10 +52,16 @@ function openDataDir() {
           </TableRow>
         </TableBody>
       </Table>
-      <Button variant="outline" size="sm" class="self-start" @click="openDataDir">
-        <FolderOpenIcon data-icon="inline-start" />
-        Datenordner öffnen
-      </Button>
+      <div class="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" @click="router.push({ name: 'updates' })">
+          <SparklesIcon data-icon="inline-start" />
+          Updates und Versionshinweise
+        </Button>
+        <Button variant="outline" size="sm" @click="openDataDir">
+          <FolderOpenIcon data-icon="inline-start" />
+          Datenordner öffnen
+        </Button>
+      </div>
     </CardContent>
   </Card>
 </template>

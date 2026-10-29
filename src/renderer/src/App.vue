@@ -14,6 +14,7 @@ import { useAccountsStore } from '@/stores/accounts'
 import { useAppStore } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
+import { useUpdatesStore } from '@/stores/updates'
 import { useUsageStore } from '@/stores/usage'
 
 const settings = useSettingsStore()
@@ -21,6 +22,7 @@ const accounts = useAccountsStore()
 const app = useAppStore()
 const terminals = useTerminalsStore()
 const usage = useUsageStore()
+const updates = useUpdatesStore()
 
 const ready = ref(false)
 const fatal = ref<string | null>(null)
@@ -32,7 +34,7 @@ onMounted(async () => {
   try {
     // Settings and app info first: terminals need the Windows build and font settings on mount.
     await Promise.all([settings.load(), app.load()])
-    await Promise.all([accounts.load(), terminals.load(), usage.load()])
+    await Promise.all([accounts.load(), terminals.load(), usage.load(), updates.load()])
     ready.value = true
   } catch (error) {
     fatal.value = errorMessage(error)

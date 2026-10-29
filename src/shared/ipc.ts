@@ -17,6 +17,8 @@ import type {
   TerminalCreateOptions,
   TerminalInfo,
   TranscriptToolDetail,
+  ReleaseNote,
+  UpdateState,
   WindowState,
 } from './types'
 
@@ -70,6 +72,12 @@ export const IpcInvoke = {
 
   apiStatus: 'api:status',
   apiRegenerateToken: 'api:regenerate-token',
+
+  updatesState: 'updates:state',
+  updatesCheck: 'updates:check',
+  updatesDownload: 'updates:download',
+  updatesInstall: 'updates:install',
+  updatesReleases: 'updates:releases',
 } as const
 
 /** Fire-and-forget channels renderer → main (ipcRenderer.send ↔ ipcMain.on). */
@@ -94,6 +102,9 @@ export const IpcEvent = {
   usageChanged: 'event:usage-changed',
   sessionsChanged: 'event:sessions-changed',
   apiStatusChanged: 'event:api-status-changed',
+  updatesChanged: 'event:updates-changed',
+  /** The update notification was clicked. */
+  updatesShow: 'event:updates-show',
   /** The main process asks the window to show a message box. */
   dialogRequest: 'event:dialog-request',
 } as const
@@ -189,5 +200,17 @@ export interface ManagerApi {
     status(): Promise<ApiStatus>
     regenerateToken(): Promise<ApiStatus>
     onStatus(cb: (status: ApiStatus) => void): Unsubscribe
+  }
+  /** Updates of the app itself, from the GitHub releases. */
+  updates: {
+    state(): Promise<UpdateState>
+    check(): Promise<void>
+    download(): Promise<void>
+    /** Quits and installs a downloaded update; the new version starts by itself. */
+    install(): Promise<void>
+    /** Published versions with their release notes, newest first. */
+    releases(): Promise<ReleaseNote[]>
+    onChanged(cb: (state: UpdateState) => void): Unsubscribe
+    onShow(cb: () => void): Unsubscribe
   }
 }

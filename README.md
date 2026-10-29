@@ -12,6 +12,7 @@ Desktop-App für Windows 11, die mehrere Claude-Code-Instanzen nebeneinander ver
 - **Darstellung**: Acryl, Mica oder Mica Alt, auch wenn das Fenster nicht im Fokus ist. 11 Themes (u. a. Catppuccin, Tokyo Night, Rosé Pine, Nord, Dracula). Das Terminal folgt dem Theme oder bekommt ein eigenes Farbschema. Schrift, Größe, Zeilenhöhe, Cursor usw. lassen sich mit Live-Vorschau einstellen.
 - **Lokale API**: REST + Server-Sent Events auf `127.0.0.1`, Doku unter `/docs`, OpenAPI 3.1 unter `/openapi.json`. Siehe [docs/API.md](docs/API.md).
 - **Befehlspalette** (Strg+Umschalt+P) für Aktionen, Navigation, offene Tabs und die letzten Sessions.
+- **Updates**: Die App sucht beim Start und alle 4 Stunden nach einer neuen Version (GitHub-Releases). Ein Update wird mit einem Klick geladen und beim Neustart installiert, laufende Terminals werden vorher abgefragt. Unter *Updates* (unten in der Navigationsleiste) stehen die Versionshinweise aller Versionen. Ein Punkt am Symbol zeigt ein wartendes Update oder ungelesene Neuerungen.
 
 ## Befehl `cm`
 
@@ -93,15 +94,15 @@ src/
   main/            Electron-Hauptprozess
     api/           lokale HTTP-API (Routen, OpenAPI, Doku-Seite, SSE)
     cli/           Aufrufe über cm auswerten, Befehl an- und abmelden
-    services/      Accounts, Terminals (node-pty), Sessions, Usage, Einstellungen
+    services/      Accounts, Terminals (node-pty), Sessions, Usage, Einstellungen, Updates
     workers/       Worker-Thread zum Indexieren der Session-Transcripts
     window/        Fenster, Acryl/Mica (inkl. Fokus-Trick)
   preload/         typisierte Brücke window.api
   shared/          gemeinsame Typen, IPC-Kanäle, Defaults
   renderer/src/    Vue 3 + shadcn-vue
-    components/    ui/ (shadcn-vue), common/, layout/, terminal/, sessions/, accounts/, dashboard/, settings/
+    components/    ui/ (shadcn-vue), common/, layout/, terminal/, sessions/, accounts/, dashboard/, settings/, updates/
     composables/   useTerminal, useLauncher, useShortcuts, useSetting, useSessionDetail, …
-    stores/        Pinia: accounts, terminals, sessions, usage, settings, app, ui
+    stores/        Pinia: accounts, terminals, sessions, usage, settings, updates, app, ui
     themes/        Theme-Definitionen
     views/         eine Seite pro Route
 ```

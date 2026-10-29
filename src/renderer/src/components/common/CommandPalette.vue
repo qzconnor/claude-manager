@@ -6,6 +6,7 @@ import {
   PlusIcon,
   RefreshCwIcon,
   SettingsIcon,
+  SparklesIcon,
   SquareTerminalIcon,
   UsersIcon,
 } from '@lucide/vue'
@@ -114,6 +115,10 @@ function switchTo(id: string) {
           <SettingsIcon />
           Einstellungen
           <CommandShortcut>Strg+,</CommandShortcut>
+        </CommandItem>
+        <CommandItem value="go-updates" @select="run(() => router.push({ name: 'updates' }))">
+          <SparklesIcon />
+          Updates und Versionshinweise
         </CommandItem>
       </CommandGroup>
 

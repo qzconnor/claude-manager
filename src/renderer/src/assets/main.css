@@ -327,3 +327,52 @@
     border-color: var(--border);
   }
 }
+
+/* Release notes as GitHub renders them (updates page). The version heading is the card's title. */
+@layer components {
+  .release-notes {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    color: var(--muted-foreground);
+    overflow-wrap: anywhere;
+  }
+  .release-notes :is(h1, h2),
+  .release-notes .markdown-heading:has(:is(h1, h2)),
+  .release-notes .anchor {
+    display: none;
+  }
+  .release-notes h3 {
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.025em;
+    text-transform: uppercase;
+    color: var(--foreground);
+  }
+  .release-notes :is(h3, .markdown-heading:has(h3)) ~ :is(h3, .markdown-heading:has(h3)) {
+    margin-top: 0.5rem;
+  }
+  .release-notes ul {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding-left: 1rem;
+    list-style: disc;
+  }
+  .release-notes a {
+    color: var(--foreground);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in oklab, var(--foreground) 30%, transparent);
+    text-underline-offset: 2px;
+  }
+  .release-notes a:hover {
+    text-decoration-color: var(--foreground);
+  }
+  .release-notes code {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    padding: 0.1em 0.35em;
+    border-radius: calc(var(--radius) * 0.5);
+    background: var(--muted);
+  }
+}

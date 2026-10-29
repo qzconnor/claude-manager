@@ -490,3 +490,44 @@ export interface ApiStatus {
   token: string
   error: string | null
 }
+
+// ---------------------------------------------------------------------------
+// Updates
+// ---------------------------------------------------------------------------
+
+/**
+ * `unsupported`: a development build, only an installed app can update itself.
+ * `error` with `next` set means the download failed, without it the check did.
+ */
+export type UpdateStatus =
+  | 'unsupported'
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'up-to-date'
+  | 'downloading'
+  | 'downloaded'
+  | 'error'
+
+export interface UpdateState {
+  status: UpdateStatus
+  /** Installed version. */
+  current: string
+  /** Version offered by the last check. */
+  next: string | null
+  /** Download progress in percent. */
+  progress: number
+  /** End of the last check (epoch ms). */
+  checkedAt: number | null
+  error: string | null
+}
+
+/** A published release with its notes. */
+export interface ReleaseNote {
+  version: string
+  /** Publication date (ISO). */
+  date: string
+  /** Notes rendered and sanitized by GitHub. */
+  html: string
+  url: string
+}
