@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { CursorStyle, TerminalRenderer, TerminalSettings, UnicodeMode } from '@shared/types'
+import type { CursorStyle, PanelBackground, TerminalRenderer, TerminalSettings, UnicodeMode } from '@shared/types'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -36,6 +36,7 @@ const copyOnSelect = t('copyOnSelect')
 const rightClickPaste = t('rightClickPaste')
 const minimumContrastRatio = t('minimumContrastRatio', 150)
 const colorSchemeId = t('colorSchemeId')
+const panelBackground = t('panelBackground')
 
 const WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900]
 const CURSORS: { value: CursorStyle; label: string }[] = [
@@ -50,6 +51,11 @@ const RENDERERS: { value: TerminalRenderer; label: string }[] = [
 const UNICODE_VERSIONS: { value: UnicodeMode; label: string }[] = [
   { value: 'graphemes', label: 'Unicode 15' },
   { value: 'unicode11', label: 'Unicode 11' },
+]
+const PANEL_BACKGROUNDS: { value: PanelBackground; label: string }[] = [
+  { value: 'theme', label: 'Theme' },
+  { value: 'terminal', label: 'Terminal' },
+  { value: 'original', label: 'Original' },
 ]
 const FOLLOW_APP = '__app__'
 
@@ -141,6 +147,12 @@ function onScheme(value: unknown) {
         description="0 % lässt das Fenster-Material (Acryl) durchscheinen."
       >
         <SliderControl id="terminal-bg" v-model="backgroundOpacity" :min="0" :max="100" :format="(v) => `${v} %`" />
+      </SettingField>
+      <SettingField
+        label="Hintergrund von Claude-Panels"
+        description="Seitenleisten von Claude Code wie /diff. Theme: Flächenfarbe des Farbschemas, Terminal: wie der Terminal-Hintergrund, Original: das Grau von Claude Code. Wirkt, sobald Claude das Panel neu zeichnet."
+      >
+        <SegmentedControl v-model="panelBackground" :options="PANEL_BACKGROUNDS" aria-label="Hintergrund von Claude-Panels" />
       </SettingField>
       <SettingField for="terminal-padding" label="Innenabstand">
         <SliderControl id="terminal-padding" v-model="padding" :min="0" :max="32" :format="(v) => `${v} px`" />
