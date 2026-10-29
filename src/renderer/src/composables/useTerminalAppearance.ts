@@ -1,5 +1,6 @@
 import { computed } from 'vue'
 import { TERMINAL_FONT_FALLBACKS } from '@shared/defaults'
+import { sgrBackground } from '@/lib/panel-background'
 import { useSettingsStore } from '@/stores/settings'
 import { findTheme } from '@/themes/themes'
 import type { TerminalPalette } from '@/themes/types'
@@ -38,9 +39,19 @@ export async function ensureFontLoaded(fontFamily: string, fontSize: number): Pr
 export function useTerminalAppearance() {
   const store = useSettingsStore()
 
-  const palette = computed<TerminalPalette>(() => {
-    const s = store.settings
-    return findTheme(s.terminal.colorSchemeId ?? s.appearance.themeId).terminal
+  const theme = computed(() => findTheme(store.settings.terminal.colorSchemeId ?? store.settings.appearance.themeId))
+  const palette = computed<TerminalPalette>(() => theme.value.terminal)
+
+  /** SGR background that replaces Claude Code's panel gray; null keeps the gray. */
+  const panelBackground = computed<string | null>(() => {
+    switch (store.settings.terminal.panelBackground) {
+      case 'theme':
+        return sgrBackground(theme.value.colors.surface)
+      case 'terminal':
+        return '49'
+      default:
+        return null
+    }
   })
 
   const containerBackground = computed(() => {
@@ -50,5 +61,5 @@ export function useTerminalAppearance() {
     return `color-mix(in oklab, ${palette.value.background} ${effective}%, transparent)`
   })
 
-  return { palette, containerBackground }
+  return { palette, containerBackground, panelBackground }
 }

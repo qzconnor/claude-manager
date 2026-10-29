@@ -6,6 +6,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal, type ITheme, type ITerminalOptions } from '@xterm/xterm'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import type { TerminalSettings } from '@shared/types'
+import { createPanelBackgroundFilter } from '@/lib/panel-background'
 import { matchShortcut } from '@/lib/shortcuts'
 import { terminalBus } from '@/lib/terminal-bus'
 import { useAppStore } from '@/stores/app'
@@ -102,7 +103,9 @@ export function useTerminal(options: UseTerminalOptions) {
   const { terminalId, claudeSession, container, active } = options
   const settingsStore = useSettingsStore()
   const appStore = useAppStore()
-  const { palette } = useTerminalAppearance()
+  const { palette, panelBackground } = useTerminalAppearance()
+  /** All output passes through here on its way to xterm. */
+  const filterOutput = createPanelBackgroundFilter(() => panelBackground.value)
 
   const ready = ref(false)
   const hasSelection = ref(false)
@@ -331,7 +334,7 @@ export function useTerminal(options: UseTerminalOptions) {
     const queued: [string, number][] = []
     const writeChunk = (data: string, offset: number) => {
       if (offset + data.length <= end) return
-      t.write(offset < end ? data.slice(end - offset) : data)
+      t.write(filterOutput(offset < end ? data.slice(end - offset) : data))
       end = offset + data.length
     }
     cleanups.push(
@@ -343,7 +346,7 @@ export function useTerminal(options: UseTerminalOptions) {
     try {
       const buffer = await window.api.terminals.buffer(terminalId)
       if (disposed) return
-      t.write(buffer.data)
+      t.write(filterOutput(buffer.data))
       end = buffer.end
     } catch {
       end = 0

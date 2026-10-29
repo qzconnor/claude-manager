@@ -50,6 +50,7 @@ function sanitize(s: AppSettings): AppSettings {
   const materials = ['acrylic', 'mica', 'tabbed', 'none'] as const
   const cursors = ['block', 'bar', 'underline'] as const
   const closeOnExit = ['graceful', 'always', 'never'] as const
+  const panelBackgrounds = ['theme', 'terminal', 'original'] as const
   s.appearance.material = materials.includes(s.appearance.material) ? s.appearance.material : d.appearance.material
   s.appearance.surfaceOpacity = clamp(s.appearance.surfaceOpacity, 0, 100, d.appearance.surfaceOpacity)
   s.appearance.uiFontSize = clamp(s.appearance.uiFontSize, 11, 20, d.appearance.uiFontSize)
@@ -66,6 +67,9 @@ function sanitize(s: AppSettings): AppSettings {
   s.terminal.cursorStyle = cursors.includes(s.terminal.cursorStyle) ? s.terminal.cursorStyle : d.terminal.cursorStyle
   s.terminal.renderer = s.terminal.renderer === 'dom' ? 'dom' : 'webgl'
   s.terminal.unicode = s.terminal.unicode === 'unicode11' ? 'unicode11' : 'graphemes'
+  s.terminal.panelBackground = panelBackgrounds.includes(s.terminal.panelBackground)
+    ? s.terminal.panelBackground
+    : d.terminal.panelBackground
   if (!s.terminal.fontFamily.trim()) s.terminal.fontFamily = d.terminal.fontFamily
   s.claude.usageRefreshMinutes = clamp(s.claude.usageRefreshMinutes, 2, 120, d.claude.usageRefreshMinutes)
   s.claude.defaultArgs = s.claude.defaultArgs.filter((a) => typeof a === 'string' && a.length > 0)

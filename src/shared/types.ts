@@ -351,6 +351,11 @@ export type WindowMaterial = 'acrylic' | 'mica' | 'tabbed' | 'none'
 export type CursorStyle = 'block' | 'bar' | 'underline'
 export type TerminalRenderer = 'webgl' | 'dom'
 export type UnicodeMode = 'graphemes' | 'unicode11'
+/**
+ * Background of Claude Code's side panels such as /diff. `theme`: the surface color of the
+ * terminal's theme, `terminal`: the terminal background, `original`: Claude Code's own gray.
+ */
+export type PanelBackground = 'theme' | 'terminal' | 'original'
 
 export interface AppearanceSettings {
   themeId: string
@@ -386,6 +391,7 @@ export interface TerminalSettings {
   /** Use a terminal color scheme different from the app theme (theme id) or `null` to follow the app theme. */
   colorSchemeId: string | null
   minimumContrastRatio: number
+  panelBackground: PanelBackground
 }
 
 export interface ClaudeSettings {
