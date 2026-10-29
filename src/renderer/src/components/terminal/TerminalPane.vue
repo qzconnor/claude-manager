@@ -29,7 +29,8 @@ const settings = useSettingsStore()
 const ui = useUiStore()
 const { closeTerminal, restartTerminal } = useTerminalActions()
 
-const padding = computed(() => `${settings.settings.terminal.padding}px`)
+// No padding at the top: the rows reach up to the edge there (see useTerminal's fit).
+const padding = computed(() => `0 ${settings.settings.terminal.padding}px ${settings.settings.terminal.padding}px`)
 const exited = computed(() => props.terminal.status === 'exited')
 
 // The limit hint stays away once dismissed, until the session hits a limit again.
@@ -63,9 +64,9 @@ function closeSearch() {
 
 <template>
   <div class="relative size-full overflow-hidden" :style="{ background: containerBackground, padding }">
-    <!-- xterm only fills whole rows. Aligning it to the bottom puts the leftover space above the
-         scrollback instead of under the prompt, so the bottom edge keeps just the padding. -->
-    <div ref="container" class="flex size-full flex-col justify-end" />
+    <!-- Aligned to the bottom, so the prompt keeps just the padding there; the top row reaches above
+         the container and is cut at the edge of the pane. -->
+    <div ref="container" class="flex size-full flex-col justify-end *:shrink-0" />
 
     <div v-if="limit" class="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center px-4">
       <TerminalLimitBanner
