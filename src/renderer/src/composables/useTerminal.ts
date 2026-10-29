@@ -77,6 +77,25 @@ function emptyRowsAtBottom(term: Terminal): number {
   return empty
 }
 
+interface Linkifier {
+  _activeLine: number
+  _lastBufferCell: unknown
+  _currentLink: unknown
+}
+
+/**
+ * xterm caches the links of the row under the mouse and only looks again once the mouse moves to
+ * another row, so a URL written into that row later (Claude's answer appearing under a resting
+ * mouse) never gets its hover underline. Dropping the cache makes the next mouse move look again.
+ * An underlined link is left alone; xterm refreshes it itself when its row changes.
+ */
+function forgetCachedLinks(term: Terminal): void {
+  const linkifier = (term as unknown as { _core: { linkifier?: Linkifier } })._core.linkifier
+  if (!linkifier || linkifier._currentLink) return
+  linkifier._activeLine = -1
+  linkifier._lastBufferCell = undefined
+}
+
 export function useTerminal(options: UseTerminalOptions) {
   const { terminalId, claudeSession, container, active } = options
   const settingsStore = useSettingsStore()
@@ -281,7 +300,10 @@ export function useTerminal(options: UseTerminalOptions) {
       t.onBinary((data) => write(data)),
       t.onResize(({ cols, rows }) => window.api.terminals.resize(terminalId, cols, rows)),
       t.onScroll(() => align()),
-      t.onWriteParsed(() => align()),
+      t.onWriteParsed(() => {
+        align()
+        forgetCachedLinks(t)
+      }),
       t.buffer.onBufferChange(() => align()),
       t.onSelectionChange(() => {
         hasSelection.value = t.hasSelection()
