@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
@@ -41,6 +41,22 @@ export function writeJsonAtomic(file: string, data: unknown): Promise<void> {
     if (writeQueues.get(file) === next) writeQueues.delete(file)
   })
   return next
+}
+
+/**
+ * Blocking variant of `writeJsonAtomic` for small files that have to be on disk right away,
+ * e.g. state that must survive quitting the app at any moment.
+ */
+export function writeJsonAtomicSync(file: string, data: unknown): void {
+  mkdirSync(dirname(file), { recursive: true })
+  const tmp = `${file}.${randomBytes(4).toString('hex')}.tmp`
+  writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, 'utf8')
+  try {
+    renameSync(tmp, file)
+  } catch (error) {
+    rmSync(tmp, { force: true })
+    throw error
+  }
 }
 
 async function writeNow(file: string, content: string): Promise<void> {

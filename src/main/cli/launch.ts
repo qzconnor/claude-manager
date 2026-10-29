@@ -1,7 +1,7 @@
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { SYSTEM_ACCOUNT_ID } from '@shared/defaults'
-import type { Account, TerminalCreateOptions } from '@shared/types'
+import type { Account, TerminalCreateOptions, TerminalInfo } from '@shared/types'
 
 /**
  * The `cm` command (src/launcher/cm.cs) starts the app with `--cm=<Base64>`: the caller's
@@ -22,7 +22,15 @@ export interface LaunchCommand {
   /** A session id, or `true` for Claude Code's interactive picker. */
   resume: string | true | null
   shell: boolean
+  /** Always open a new tab, even if one already shows the folder. */
+  newTab: boolean
   passthrough: string[]
+}
+
+export interface LaunchPlan {
+  options: TerminalCreateOptions
+  /** A running tab that already shows what was asked for: it is selected instead. */
+  existing: TerminalInfo | null
 }
 
 export function readLaunchRequest(argv: readonly string[]): LaunchRequest | null {
@@ -40,7 +48,15 @@ export function isLaunchRequest(value: unknown): value is LaunchRequest {
 }
 
 export function parseLaunchArgs(args: readonly string[]): LaunchCommand {
-  const command: LaunchCommand = { dir: null, account: null, continue: false, resume: null, shell: false, passthrough: [] }
+  const command: LaunchCommand = {
+    dir: null,
+    account: null,
+    continue: false,
+    resume: null,
+    shell: false,
+    newTab: false,
+    passthrough: [],
+  }
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]
@@ -71,6 +87,10 @@ export function parseLaunchArgs(args: readonly string[]): LaunchCommand {
       case '-s':
       case '--shell':
         command.shell = true
+        break
+      case '-n':
+      case '--new':
+        command.newTab = true
         break
       default:
         if (arg.startsWith('-')) {
@@ -103,11 +123,16 @@ export function findAccount(accounts: readonly Account[], query: string): Accoun
   throw new Error(`Kein Account „${query}“. Vorhanden: ${accounts.map((a) => a.name).join(', ')}.`)
 }
 
+/**
+ * `openTerminals`: tabs that may be selected instead of opening a new one (see `findOpenTerminal`);
+ * empty to always open one.
+ */
 export function resolveLaunch(
   request: LaunchRequest,
   accounts: readonly Account[],
   defaultAccountId: string,
-): TerminalCreateOptions {
+  openTerminals: readonly TerminalInfo[] = [],
+): LaunchPlan {
   const command = parseLaunchArgs(request.args)
   const account = command.account
     ? findAccount(accounts, command.account)
@@ -120,7 +145,7 @@ export function resolveLaunch(
     cwd = isAbsolute(dir) ? dir : resolve(request.cwd, dir)
   }
 
-  return {
+  const options: TerminalCreateOptions = {
     accountId: account.id,
     cwd,
     mode: command.shell ? 'shell' : 'session',
@@ -131,4 +156,33 @@ export function resolveLaunch(
       ...command.passthrough,
     ],
   }
+  return { options, existing: findOpenTerminal(command, account.id, cwd, openTerminals) }
+}
+
+/**
+ * The running tab a call asks for: the one with the session to resume, otherwise the latest tab of
+ * the same kind in the folder (of the account, if one was named). -n, -c, -r without a session id
+ * and arguments for claude ask for something new.
+ */
+function findOpenTerminal(
+  command: LaunchCommand,
+  accountId: string,
+  cwd: string,
+  terminals: readonly TerminalInfo[],
+): TerminalInfo | null {
+  if (command.newTab || command.continue || command.resume === true || command.passthrough.length) return null
+  const mode = command.shell ? 'shell' : 'session'
+  const running = terminals.filter((t) => t.status === 'running' && t.mode === mode)
+  if (typeof command.resume === 'string') return running.find((t) => t.sessionId === command.resume) ?? null
+  return (
+    running.findLast(
+      (t) => samePath(t.cwd, cwd) && (!command.account || t.accountId === accountId || t.authAccountId === accountId),
+    ) ?? null
+  )
+}
+
+/** Windows paths are compared without regard to case, slash direction or a trailing backslash. */
+function samePath(a: string, b: string): boolean {
+  const normalize = (path: string) => (process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path))
+  return normalize(a) === normalize(b)
 }
