@@ -44,6 +44,7 @@ static class Program
         "  cm -c                 letzte Session in diesem Ordner fortsetzen",
         "  cm -r [session-id]    Session fortsetzen (ohne ID: Auswahl in Claude Code)",
         "  cm -s                 PowerShell mit Account-Umgebung statt Claude Code",
+        "  cm -n                 neuer Tab, auch wenn der Ordner schon offen ist",
         "  cm -- <argumente>     Argumente an claude weitergeben, z. B. cm -- --model opus",
         "",
         "Auch in der Explorer-Adressleiste: \"cm\" öffnet eine Session im angezeigten Ordner.",

@@ -15,6 +15,7 @@ import { LoginProfiles } from './services/login-profiles'
 import { SessionHandoff } from './services/session-handoff'
 import { SessionService } from './services/session-service'
 import { SettingsService } from './services/settings-service'
+import { TerminalRestore } from './services/terminal-restore'
 import { TerminalService } from './services/terminal-service'
 import { UpdateService } from './services/update-service'
 import { UsageService } from './services/usage-service'
@@ -91,6 +92,9 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
   }
   registerIpc(ctx)
   const dialogs = new WindowDialogs()
+  // Runs while the window loads; its tabs appear as soon as they are open.
+  const restore = new TerminalRestore(userDataDir, terminals, accounts, settings)
+  const restored = restore.init().catch((error) => console.error('[restore] tabs could not be restored', error))
 
   let mainWindow: BrowserWindow | null = null
 
@@ -102,11 +106,21 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
     win.webContents.send(IpcEvent.terminalActivate, id)
   }
 
-  /** `cm` typed in a terminal or the Explorer address bar (src/launcher/cm.cs). */
-  const openFromCommandLine = (request: LaunchRequest) => {
+  /**
+   * `cm` typed in a terminal or the Explorer address bar (src/launcher/cm.cs). A tab that already
+   * shows the folder is only selected, also one restored from the last run.
+   */
+  const openFromCommandLine = async (request: LaunchRequest) => {
+    await restored
     try {
-      const options = resolveLaunch(request, accounts.list(), settings.get().general.defaultAccountId)
-      showTerminal(terminals.create(options).id)
+      const { general } = settings.get()
+      const { options, existing } = resolveLaunch(
+        request,
+        accounts.list(),
+        general.defaultAccountId,
+        general.cmReuseTab ? terminals.list() : [],
+      )
+      showTerminal(existing?.id ?? terminals.create(options).id)
     } catch (error) {
       const win = mainWindow
       if (!win || win.isDestroyed()) return
@@ -185,13 +199,13 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
   const firstWindow = openWindow()
   if (launchRequest) {
     // Wait for the page so it can select the new tab.
-    firstWindow.webContents.once('did-finish-load', () => openFromCommandLine(launchRequest))
+    firstWindow.webContents.once('did-finish-load', () => void openFromCommandLine(launchRequest))
   }
 
   app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => {
     if (!mainWindow) openWindow()
     else revealWindow(mainWindow)
-    if (isLaunchRequest(additionalData)) openFromCommandLine(additionalData)
+    if (isLaunchRequest(additionalData)) void openFromCommandLine(additionalData)
   })
 
   app.on('activate', () => {
@@ -205,6 +219,8 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
   app.on('before-quit', () => {
     updates.dispose()
     api.dispose()
+    // Before the tabs close, otherwise an empty list would be remembered.
+    restore.dispose()
     terminals.disposeAll()
     usage.dispose()
     sessions.dispose()

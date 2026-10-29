@@ -4,7 +4,7 @@ Desktop-App für Windows 11, die mehrere Claude-Code-Instanzen nebeneinander ver
 
 ## Funktionen
 
-- **Terminals**: xterm.js (WebGL) mit ConPTY. Farben, Emoji inkl. ZWJ-Sequenzen, Box-Drawing und Nerd-Font-Icons werden korrekt dargestellt. Tabs bleiben beim Seitenwechsel erhalten. Suche, Zoom, Kopieren/Einfügen, Umschalt+Enter für Zeilenumbrüche in Claude Code. Beendest du Claude mit Strg+C oder `/exit` (bzw. die Shell mit `exit`), schließt sich der Tab. Bei einem Fehler bleibt er offen, einstellbar unter Einstellungen › Claude Code.
+- **Terminals**: xterm.js (WebGL) mit ConPTY. Farben, Emoji inkl. ZWJ-Sequenzen, Box-Drawing und Nerd-Font-Icons werden korrekt dargestellt. Tabs bleiben beim Seitenwechsel erhalten. Suche, Zoom, Kopieren/Einfügen, Umschalt+Enter für Zeilenumbrüche in Claude Code. Beendest du Claude mit Strg+C oder `/exit` (bzw. die Shell mit `exit`), schließt sich der Tab. Bei einem Fehler bleibt er offen, einstellbar unter Einstellungen › Claude Code. Auf Wunsch merkt sich die App die offenen Tabs und öffnet sie beim nächsten Start wieder, Claude-Sessions werden dabei fortgesetzt (Einstellungen › Claude Code › Tabs beim Start wiederherstellen).
 - **Accounts**: beliebig viele Accounts parallel, auch mehrere Tabs mit demselben Account. Ist ein Account am Limit, läuft die Session mit einem anderen weiter (siehe unten). Accounts aus cswap lassen sich übernehmen.
 - **Sessions**: alle gespeicherten Claude-Code-Sessions, gruppiert nach Account. Suche über Titel, ersten und letzten Prompt, Ordner, Git-Branch und Session-ID, Verlauf mit Markdown und Tool-Aufrufen, die sich aufklappen lassen: vollständige Eingabe und Ergebnis, Fehler rot markiert. Fortsetzen per Doppelklick oder als neue Session abzweigen (`--fork-session`).
 - **Usage-Dashboard**: 5-Stunden- und Wochen-Limits (live, wie bei [cswap](https://github.com/realiti4/claude-swap)) sowie Token-Verbrauch pro Tag und Modell, berechnet aus den lokalen Transcripts. Ist der Login von `~/.claude` schon als eigener Account hinterlegt (etwa nach dem cswap-Import), lassen Dashboard und Accounts-Seite den Standard-Account weg, damit dieselben Limits nicht doppelt erscheinen. Auf der Accounts-Seite lässt er sich über den Hinweis unter den Karten wieder einblenden. Die Limits des Accounts im aktiven Tab stehen außerdem in der Titelleiste, ein Klick zeigt Details und Reset-Zeiten. Balken und Ringe sind grün (unter 60 %), orange (ab 60 %) und rot (ab 85 %), in den Farben des gewählten Themes.
@@ -16,7 +16,7 @@ Desktop-App für Windows 11, die mehrere Claude-Code-Instanzen nebeneinander ver
 
 ## Befehl `cm`
 
-Der Installer richtet den Befehl `cm` ein. Wie `cmd` funktioniert er auch in der Adressleiste des Explorers: `cm` eintippen, Enter, und im Manager öffnet sich eine Session im angezeigten Ordner. Läuft die App noch nicht, startet sie.
+Der Installer richtet den Befehl `cm` ein. Wie `cmd` funktioniert er auch in der Adressleiste des Explorers: `cm` eintippen, Enter, und im Manager öffnet sich eine Session im angezeigten Ordner. Läuft die App noch nicht, startet sie. Ist der Ordner schon in einem Tab offen, wechselt `cm` nur zu diesem Tab, auch wenn er gerade beim Start wiederhergestellt wurde (abschaltbar unter *Einstellungen → Claude Code*).
 
 | Aufruf | Wirkung |
 |---|---|
@@ -26,6 +26,7 @@ Der Installer richtet den Befehl `cm` ein. Wie `cmd` funktioniert er auch in der
 | `cm -c` | letzte Session in diesem Ordner fortsetzen (`claude --continue`) |
 | `cm -r [session-id]` | Session fortsetzen, ohne ID mit der Auswahl von Claude Code |
 | `cm -s` | PowerShell mit der Umgebung des Accounts statt Claude Code |
+| `cm -n` | immer einen neuen Tab öffnen, auch wenn der Ordner schon offen ist |
 | `cm -- <argumente>` | Argumente an `claude` weitergeben, z. B. `cm -- --model opus` |
 | `cm -h` | Hilfe |
 

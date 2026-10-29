@@ -418,6 +418,10 @@ export interface GeneralSettings {
   closeOnExit: CloseOnExit
   /** Which account the "+" button uses by default. */
   defaultAccountId: string
+  /** Remember the open tabs (folder and session) and open them again on the next start. */
+  restoreTerminals: boolean
+  /** `cm` shows a running tab in the same folder instead of opening another one (`cm -n` always opens one). */
+  cmReuseTab: boolean
 }
 
 export interface ApiSettings {

@@ -55,6 +55,10 @@ const closeOnExit = useSetting(
   (s) => s.general.closeOnExit,
   (closeOnExit) => ({ general: { closeOnExit } }),
 )
+const restoreTerminals = useSetting(
+  (s) => s.general.restoreTerminals,
+  (restoreTerminals) => ({ general: { restoreTerminals } }),
+)
 
 const CLOSE_ON_EXIT: { value: CloseOnExit; label: string }[] = [
   { value: 'graceful', label: 'Ohne Fehler' },
@@ -147,6 +151,13 @@ async function recheck() {
     <SettingsSection title="Allgemein" reset-section="general">
       <SettingField for="default-account" label="Standard-Account" description="Wird für „+“ und Strg+Umschalt+T verwendet.">
         <AccountSelect id="default-account" v-model="defaultAccountId" size="sm" class="w-56" />
+      </SettingField>
+      <SettingField
+        for="restore-terminals"
+        label="Tabs beim Start wiederherstellen"
+        description="Merkt sich Ordner und Session jedes offenen Tabs. Beim nächsten Start wird die Session fortgesetzt, ohne gespeicherte Session startet eine neue im selben Ordner."
+      >
+        <Switch id="restore-terminals" v-model="restoreTerminals" />
       </SettingField>
       <SettingField for="confirm-close" label="Schließen laufender Terminals bestätigen">
         <Switch id="confirm-close" v-model="confirmCloseRunning" />

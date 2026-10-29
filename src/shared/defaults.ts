@@ -89,6 +89,8 @@ export function createDefaultSettings(): AppSettings {
       confirmCloseRunning: true,
       closeOnExit: 'graceful',
       defaultAccountId: SYSTEM_ACCOUNT_ID,
+      restoreTerminals: false,
+      cmReuseTab: true,
     },
     api: {
       enabled: false,
