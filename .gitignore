@@ -1,0 +1,15 @@
+node_modules/
+out/
+release/
+build/bin/
+*.tsbuildinfo
+*.log
+.DS_Store
+Thumbs.db
+
+# Local tool settings (coding assistants, MCP servers, analysis caches)
+.claude/
+.agents/
+.fallow/
+.mcp.json
+skills-lock.json

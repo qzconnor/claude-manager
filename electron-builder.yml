@@ -1,0 +1,51 @@
+appId: local.claude-manager
+productName: Claude Manager
+copyright: Copyright © 2026 Connor Breuer
+
+directories:
+  output: release/${version}
+  buildResources: build
+
+# Use the Electron build from node_modules instead of downloading it again.
+electronDist: node_modules/electron/dist
+
+files:
+  - out/**
+  - package.json
+  # Native sources, debug symbols and other platforms are not needed at runtime.
+  - '!**/*.{pdb,map}'
+  - '!node_modules/node-pty/{src,deps,third_party,scripts,binding.gyp}'
+  - '!node_modules/node-pty/prebuilds/{darwin-*,win32-arm64}'
+  - '!node_modules/koffi/{doc,vendor,cnoke.cjs,CHANGELOG.md}'
+
+asar: true
+# Native modules (.node), the ConPTY helpers and node-pty's worker script must live on disk.
+asarUnpack:
+  - node_modules/node-pty/**
+  - node_modules/koffi/**
+  - node_modules/@koromix/**
+
+# node-pty and koffi ship Node-API prebuilds, so nothing has to be compiled for Electron.
+npmRebuild: false
+
+# The `cm` command line launcher (npm run build:launcher), registered by build/installer.nsh.
+extraFiles:
+  - from: build/bin
+    to: bin
+    filter:
+      - cm.exe
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.png
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: Claude Manager
+  artifactName: Claude-Manager-${version}-Setup.${ext}
+  include: build/installer.nsh
