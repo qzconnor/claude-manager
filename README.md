@@ -98,7 +98,7 @@ Jeder Push auf `master` startet [semantic-release](https://semantic-release.gitb
 | `feat!: …` oder `BREAKING CHANGE:` im Text | neue Major-Version | |
 | `docs:`, `ci:`, `build:`, `chore:`, `refactor:`, `style:`, `test:` | kein Release | nicht aufgeführt |
 
-Pull Requests werden mit ihrem Titel als Commit-Nachricht gemergt. Deshalb prüft `pr-title.yml` den Titel, und `ci.yml` baut den Installer einmal zur Probe. Die Version in `package.json` bleibt im Repository unverändert: semantic-release setzt sie nur für den Build.
+Pull Requests per Squash-Merge zusammenführen: Dann wird ihr Titel zur Commit-Nachricht. Deshalb prüft `pr-title.yml` den Titel, und `ci.yml` baut den Installer einmal zur Probe. Die Version in `package.json` bleibt im Repository unverändert: semantic-release setzt sie nur für den Build.
 
 ## Projektstruktur
 
