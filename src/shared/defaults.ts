@@ -76,6 +76,7 @@ export function createDefaultSettings(): AppSettings {
       rightClickPaste: true,
       colorSchemeId: null,
       minimumContrastRatio: 1,
+      panelBackground: 'theme',
     },
     claude: {
       executablePath: '',

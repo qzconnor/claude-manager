@@ -1,4 +1,3 @@
-import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { UnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes'
@@ -7,6 +6,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal, type ITheme, type ITerminalOptions } from '@xterm/xterm'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import type { TerminalSettings } from '@shared/types'
+import { createPanelBackgroundFilter } from '@/lib/panel-background'
 import { matchShortcut } from '@/lib/shortcuts'
 import { terminalBus } from '@/lib/terminal-bus'
 import { useAppStore } from '@/stores/app'
@@ -51,8 +51,11 @@ export function terminalOptions(s: TerminalSettings, palette: TerminalPalette): 
   }
 }
 
+/** Width of xterm's scrollbar (it uses 14 px unless an overview ruler is configured). */
+const SCROLLBAR_WIDTH = 14
+
 interface RenderService {
-  dimensions: { css: { cell: { height: number } } }
+  dimensions: { css: { cell: { width: number; height: number } } }
   clear(): void
 }
 
@@ -100,12 +103,13 @@ export function useTerminal(options: UseTerminalOptions) {
   const { terminalId, claudeSession, container, active } = options
   const settingsStore = useSettingsStore()
   const appStore = useAppStore()
-  const { palette } = useTerminalAppearance()
+  const { palette, panelBackground } = useTerminalAppearance()
+  /** All output passes through here on its way to xterm. */
+  const filterOutput = createPanelBackgroundFilter(() => panelBackground.value)
 
   const ready = ref(false)
   const hasSelection = ref(false)
   let term: Terminal | null = null
-  let fitAddon: FitAddon | null = null
   let searchAddon: SearchAddon | null = null
   let webgl: WebglAddon | null = null
   let resizeObserver: ResizeObserver | null = null
@@ -165,22 +169,26 @@ export function useTerminal(options: UseTerminalOptions) {
   /**
    * xterm only shows whole rows. Instead of leaving the rest of the height empty, one more row
    * reaches up to the top edge, where it is cut like the first line of a scrolled list.
+   * The container has no padding on the right: the scrollbar lies within the padding there
+   * instead of next to it, so the gap on the right is not much wider than on the left.
    */
   function fit(): void {
     cancelAnimationFrame(fitFrame)
     fitFrame = requestAnimationFrame(() => {
       const el = container.value
-      if (!term || !fitAddon || !el || el.clientWidth === 0 || el.clientHeight === 0) return
+      if (!term || !el || el.clientWidth === 0 || el.clientHeight === 0) return
       try {
-        const dims = fitAddon.proposeDimensions()
-        const cell = renderService(term).dimensions.css.cell.height
-        if (!dims || !cell) return
-        viewHeight = el.getBoundingClientRect().height
-        const rows = Math.max(1, Math.ceil(viewHeight / cell - 0.001))
-        if (rows !== term.rows || dims.cols !== term.cols) {
+        const cell = renderService(term).dimensions.css.cell
+        if (!cell.width || !cell.height) return
+        const rect = el.getBoundingClientRect()
+        viewHeight = rect.height
+        const right = Math.max(settingsStore.settings.terminal.padding, SCROLLBAR_WIDTH)
+        const cols = Math.max(2, Math.floor((rect.width - right) / cell.width))
+        const rows = Math.max(1, Math.ceil(viewHeight / cell.height - 0.001))
+        if (rows !== term.rows || cols !== term.cols) {
           // Like the fit addon: a full render after the resize.
           renderService(term).clear()
-          term.resize(dims.cols, rows)
+          term.resize(cols, rows)
         }
         align()
       } catch {
@@ -276,9 +284,7 @@ export function useTerminal(options: UseTerminalOptions) {
         },
       },
     })
-    fitAddon = new FitAddon()
     searchAddon = new SearchAddon()
-    term.loadAddon(fitAddon)
     term.loadAddon(searchAddon)
     term.loadAddon(
       new WebLinksAddon((event, uri) => {
@@ -328,7 +334,7 @@ export function useTerminal(options: UseTerminalOptions) {
     const queued: [string, number][] = []
     const writeChunk = (data: string, offset: number) => {
       if (offset + data.length <= end) return
-      t.write(offset < end ? data.slice(end - offset) : data)
+      t.write(filterOutput(offset < end ? data.slice(end - offset) : data))
       end = offset + data.length
     }
     cleanups.push(
@@ -340,7 +346,7 @@ export function useTerminal(options: UseTerminalOptions) {
     try {
       const buffer = await window.api.terminals.buffer(terminalId)
       if (disposed) return
-      t.write(buffer.data)
+      t.write(filterOutput(buffer.data))
       end = buffer.end
     } catch {
       end = 0
