@@ -51,6 +51,32 @@ export function terminalOptions(s: TerminalSettings, palette: TerminalPalette): 
   }
 }
 
+interface RenderService {
+  dimensions: { css: { cell: { height: number } } }
+  clear(): void
+}
+
+/** xterm keeps the cell size private; the fit addon reads it the same way. */
+function renderService(term: Terminal): RenderService {
+  return (term as unknown as { _core: { _renderService: RenderService } })._core._renderService
+}
+
+/** Rows at the bottom of the screen below the cursor with neither text nor a background. */
+function emptyRowsAtBottom(term: Terminal): number {
+  const buffer = term.buffer.active
+  const cell = buffer.getNullCell()
+  let empty = 0
+  for (let y = term.rows - 1; y > buffer.cursorY; y--) {
+    const line = buffer.getLine(buffer.baseY + y)
+    for (let x = 0; line && x < term.cols; x++) {
+      line.getCell(x, cell)
+      if ((cell.getChars() && cell.getChars() !== ' ') || !cell.isBgDefault() || cell.isInverse()) return empty
+    }
+    empty++
+  }
+  return empty
+}
+
 export function useTerminal(options: UseTerminalOptions) {
   const { terminalId, claudeSession, container, active } = options
   const settingsStore = useSettingsStore()
@@ -65,6 +91,10 @@ export function useTerminal(options: UseTerminalOptions) {
   let webgl: WebglAddon | null = null
   let resizeObserver: ResizeObserver | null = null
   let fitFrame = 0
+  /** Height of the container at the last fit, so writes don't have to measure the layout. */
+  let viewHeight = 0
+  /** Current downward shift of the rows (see `align`). */
+  let shiftY = 0
   let disposed = false
   const cleanups: (() => void)[] = []
 
@@ -113,17 +143,64 @@ export function useTerminal(options: UseTerminalOptions) {
     webgl = null
   }
 
+  /**
+   * xterm only shows whole rows. Instead of leaving the rest of the height empty, one more row
+   * reaches up to the top edge, where it is cut like the first line of a scrolled list.
+   */
   function fit(): void {
     cancelAnimationFrame(fitFrame)
     fitFrame = requestAnimationFrame(() => {
       const el = container.value
       if (!term || !fitAddon || !el || el.clientWidth === 0 || el.clientHeight === 0) return
       try {
-        fitAddon.fit()
+        const dims = fitAddon.proposeDimensions()
+        const cell = renderService(term).dimensions.css.cell.height
+        if (!dims || !cell) return
+        viewHeight = el.getBoundingClientRect().height
+        const rows = Math.max(1, Math.ceil(viewHeight / cell - 0.001))
+        if (rows !== term.rows || dims.cols !== term.cols) {
+          // Like the fit addon: a full render after the resize.
+          renderService(term).clear()
+          term.resize(dims.cols, rows)
+        }
+        align()
       } catch {
         // renderer not ready yet
       }
     })
+  }
+
+  /**
+   * Moves the rows down while nothing lies above them, so the start of the output is not cut at
+   * the top edge but has the usual padding, as far as the bottom allows.
+   */
+  function align(): void {
+    const el = container.value
+    if (!term || !el || !viewHeight) return
+    const cell = renderService(term).dimensions.css.cell.height
+    if (!cell) return
+    const padding = settingsStore.settings.terminal.padding
+    // How far the top row reaches above the edge.
+    const overhang = Math.max(0, term.rows * cell - viewHeight)
+    const buffer = term.buffer.active
+    let shift = 0
+    if (buffer.type === 'alternate') {
+      // Full-screen programs use every row: centred, so any cut is split between top and bottom.
+      shift = (overhang + padding) / 2
+    } else if (buffer.viewportY === 0) {
+      shift =
+        buffer.viewportY < buffer.baseY
+          ? // Scrolled up to the start: the rows at the bottom are history.
+            overhang + padding
+          : // The live screen: only empty rows below the cursor may move under the bottom edge.
+            Math.min(overhang + padding, emptyRowsAtBottom(term) * cell)
+    }
+    // Whole device pixels, otherwise the text gets blurry.
+    const ratio = window.devicePixelRatio || 1
+    const y = Math.round(shift * ratio) / ratio
+    if (y === shiftY) return
+    shiftY = y
+    el.style.transform = y ? `translateY(${y}px)` : ''
   }
 
   function focus(): void {
@@ -203,6 +280,9 @@ export function useTerminal(options: UseTerminalOptions) {
       t.onData((data) => write(data)),
       t.onBinary((data) => write(data)),
       t.onResize(({ cols, rows }) => window.api.terminals.resize(terminalId, cols, rows)),
+      t.onScroll(() => align()),
+      t.onWriteParsed(() => align()),
+      t.buffer.onBufferChange(() => align()),
       t.onSelectionChange(() => {
         hasSelection.value = t.hasSelection()
         if (settingsStore.settings.terminal.copyOnSelect && t.hasSelection()) {
