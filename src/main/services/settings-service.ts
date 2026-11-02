@@ -14,7 +14,7 @@ export class SettingsService extends TypedEmitter<Events> {
   constructor(userDataDir: string) {
     super()
     this.file = join(userDataDir, 'settings.json')
-    this.settings = sanitize(mergeKnown(createDefaultSettings(), readJsonSync(this.file) ?? {}))
+    this.settings = sanitize(mergeKnown(createDefaultSettings(), migrate(readJsonSync(this.file))))
   }
 
   get(): AppSettings {
@@ -44,6 +44,17 @@ function clamp(value: number, min: number, max: number, fallback: number): numbe
   return Math.min(max, Math.max(min, value))
 }
 
+/** Brings a settings file of an older version into the current shape. */
+function migrate(stored: unknown): unknown {
+  const terminal = (stored as { terminal?: { padding?: unknown } } | null)?.terminal
+  // Earlier there was one padding for all sides; on the right at least the scrollbar's 14 px were kept free.
+  if (terminal && typeof terminal.padding === 'number') {
+    const p = terminal.padding
+    terminal.padding = { top: p, right: Math.max(p, 14), bottom: p, left: p }
+  }
+  return stored ?? {}
+}
+
 /** Keeps every numeric setting in a sane range, whatever the settings file contains. */
 function sanitize(s: AppSettings): AppSettings {
   const d = createDefaultSettings()
@@ -61,7 +72,9 @@ function sanitize(s: AppSettings): AppSettings {
   s.terminal.fontWeight = clamp(Math.round(s.terminal.fontWeight / 100) * 100, 100, 900, d.terminal.fontWeight)
   s.terminal.fontWeightBold = clamp(Math.round(s.terminal.fontWeightBold / 100) * 100, 100, 900, d.terminal.fontWeightBold)
   s.terminal.scrollback = clamp(Math.round(s.terminal.scrollback), 500, 200000, d.terminal.scrollback)
-  s.terminal.padding = clamp(s.terminal.padding, 0, 48, d.terminal.padding)
+  for (const side of ['top', 'right', 'bottom', 'left'] as const) {
+    s.terminal.padding[side] = clamp(s.terminal.padding[side], 0, 48, d.terminal.padding[side])
+  }
   s.terminal.backgroundOpacity = clamp(s.terminal.backgroundOpacity, 0, 100, d.terminal.backgroundOpacity)
   s.terminal.minimumContrastRatio = clamp(s.terminal.minimumContrastRatio, 1, 21, d.terminal.minimumContrastRatio)
   s.terminal.cursorStyle = cursors.includes(s.terminal.cursorStyle) ? s.terminal.cursorStyle : d.terminal.cursorStyle

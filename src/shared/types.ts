@@ -370,6 +370,14 @@ export interface AppearanceSettings {
   radius: number
 }
 
+/** Inner padding of the terminal per side, in px. */
+export interface TerminalPadding {
+  top: number
+  right: number
+  bottom: number
+  left: number
+}
+
 export interface TerminalSettings {
   fontFamily: string
   fontSize: number
@@ -380,8 +388,7 @@ export interface TerminalSettings {
   cursorStyle: CursorStyle
   cursorBlink: boolean
   scrollback: number
-  /** Inner padding in px. */
-  padding: number
+  padding: TerminalPadding
   /** 0–100: opacity of the terminal background on top of the window material. */
   backgroundOpacity: number
   renderer: TerminalRenderer

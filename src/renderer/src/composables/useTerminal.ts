@@ -51,17 +51,27 @@ export function terminalOptions(s: TerminalSettings, palette: TerminalPalette): 
   }
 }
 
-/** Width of xterm's scrollbar (it uses 14 px unless an overview ruler is configured). */
-const SCROLLBAR_WIDTH = 14
-
 interface RenderService {
   dimensions: { css: { cell: { width: number; height: number } } }
   clear(): void
 }
 
 /** xterm keeps the cell size private; the fit addon reads it the same way. */
-function renderService(term: Terminal): RenderService {
+export function renderService(term: Terminal): RenderService {
   return (term as unknown as { _core: { _renderService: RenderService } })._core._renderService
+}
+
+/**
+ * Fits whole columns between the left and right padding. What is left over for a whole column
+ * goes half to each side, so every change of either padding moves the text and equal paddings
+ * look equal. `offset` is where the first column starts.
+ */
+export function placeColumns(width: number, cellWidth: number, left: number, right: number): { cols: number; offset: number } {
+  const cols = Math.max(2, Math.floor((width - left - right) / cellWidth))
+  const rest = Math.max(0, width - left - right - cols * cellWidth)
+  // Whole device pixels, otherwise the text gets blurry. Rounded down, so the last column always fits.
+  const ratio = window.devicePixelRatio || 1
+  return { cols, offset: Math.floor((left + rest / 2) * ratio) / ratio }
 }
 
 /** Rows at the bottom of the screen below the cursor with neither text nor a background. */
@@ -169,8 +179,8 @@ export function useTerminal(options: UseTerminalOptions) {
   /**
    * xterm only shows whole rows. Instead of leaving the rest of the height empty, one more row
    * reaches up to the top edge, where it is cut like the first line of a scrolled list.
-   * The container has no padding on the right: the scrollbar lies within the padding there
-   * instead of next to it, so the gap on the right is not much wider than on the left.
+   * The container spans the whole width; the left and right padding are kept here. The scrollbar
+   * stays at the right edge and lies within the right padding instead of next to it.
    */
   function fit(): void {
     cancelAnimationFrame(fitFrame)
@@ -180,10 +190,12 @@ export function useTerminal(options: UseTerminalOptions) {
       try {
         const cell = renderService(term).dimensions.css.cell
         if (!cell.width || !cell.height) return
+        // The border box: the padding set below does not change it.
         const rect = el.getBoundingClientRect()
         viewHeight = rect.height
-        const right = Math.max(settingsStore.settings.terminal.padding, SCROLLBAR_WIDTH)
-        const cols = Math.max(2, Math.floor((rect.width - right) / cell.width))
+        const { left, right } = settingsStore.settings.terminal.padding
+        const { cols, offset } = placeColumns(rect.width, cell.width, left, right)
+        el.style.paddingLeft = `${offset}px`
         const rows = Math.max(1, Math.ceil(viewHeight / cell.height - 0.001))
         if (rows !== term.rows || cols !== term.cols) {
           // Like the fit addon: a full render after the resize.
@@ -199,28 +211,29 @@ export function useTerminal(options: UseTerminalOptions) {
 
   /**
    * Moves the rows down while nothing lies above them, so the start of the output is not cut at
-   * the top edge but has the usual padding, as far as the bottom allows.
+   * the top edge but has the top padding, as far as the bottom allows.
    */
   function align(): void {
     const el = container.value
     if (!term || !el || !viewHeight) return
     const cell = renderService(term).dimensions.css.cell.height
     if (!cell) return
-    const padding = settingsStore.settings.terminal.padding
+    const top = settingsStore.settings.terminal.padding.top
     // How far the top row reaches above the edge.
     const overhang = Math.max(0, term.rows * cell - viewHeight)
     const buffer = term.buffer.active
     let shift = 0
     if (buffer.type === 'alternate') {
-      // Full-screen programs use every row: centred, so any cut is split between top and bottom.
-      shift = (overhang + padding) / 2
+      // Full-screen programs use every row: centred between the top and bottom padding, so any
+      // cut is split between top and bottom.
+      shift = (overhang + top) / 2
     } else if (buffer.viewportY === 0) {
       shift =
         buffer.viewportY < buffer.baseY
           ? // Scrolled up to the start: the rows at the bottom are history.
-            overhang + padding
+            overhang + top
           : // The live screen: only empty rows below the cursor may move under the bottom edge.
-            Math.min(overhang + padding, emptyRowsAtBottom(term) * cell)
+            Math.min(overhang + top, emptyRowsAtBottom(term) * cell)
     }
     // Whole device pixels, otherwise the text gets blurry.
     const ratio = window.devicePixelRatio || 1

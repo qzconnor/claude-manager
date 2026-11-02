@@ -68,7 +68,8 @@ export function createDefaultSettings(): AppSettings {
       cursorStyle: 'bar',
       cursorBlink: true,
       scrollback: 10000,
-      padding: 12,
+      // Right: the scrollbar (14 px) lies in the padding there and never covers text.
+      padding: { top: 12, right: 14, bottom: 12, left: 12 },
       backgroundOpacity: 0,
       renderer: 'webgl',
       unicode: 'graphemes',

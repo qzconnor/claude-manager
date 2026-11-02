@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { UnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes'
 import { Terminal } from '@xterm/xterm'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { terminalOptions } from '@/composables/useTerminal'
+import { placeColumns, renderService, terminalOptions } from '@/composables/useTerminal'
 import { ensureFontLoaded, useTerminalAppearance } from '@/composables/useTerminalAppearance'
 import { useSettingsStore } from '@/stores/settings'
 
@@ -31,11 +30,30 @@ const SAMPLE = [
 ].join('\r\n')
 
 let term: Terminal | null = null
-let fit: FitAddon | null = null
 let observer: ResizeObserver | null = null
+let fitFrame = 0
 
 function applyUnicode() {
   if (term) term.unicode.activeVersion = settings.settings.terminal.unicode === 'graphemes' ? '15-graphemes' : '11'
+}
+
+/** Places the columns like the real terminal, so the left and right padding look the same here. */
+function fit() {
+  cancelAnimationFrame(fitFrame)
+  fitFrame = requestAnimationFrame(() => {
+    const el = container.value
+    if (!term || !el || el.clientWidth === 0) return
+    const cell = renderService(term).dimensions.css.cell
+    if (!cell.width || !cell.height) return
+    const rect = el.getBoundingClientRect()
+    const { left, right } = settings.settings.terminal.padding
+    const { cols, offset } = placeColumns(rect.width, cell.width, left, right)
+    el.style.paddingLeft = `${offset}px`
+    const rows = Math.max(1, Math.floor(rect.height / cell.height))
+    if (cols === term.cols && rows === term.rows) return
+    renderService(term).clear()
+    term.resize(cols, rows)
+  })
 }
 
 onMounted(async () => {
@@ -54,15 +72,13 @@ onMounted(async () => {
     cursorBlink: false,
     scrollback: 0,
   })
-  fit = new FitAddon()
-  term.loadAddon(fit)
   term.loadAddon(new Unicode11Addon())
   term.loadAddon(new UnicodeGraphemesAddon())
   applyUnicode()
   term.open(el)
   term.write(SAMPLE)
-  fit.fit()
-  observer = new ResizeObserver(() => fit?.fit())
+  fit()
+  observer = new ResizeObserver(() => fit())
   observer.observe(el)
 })
 
@@ -74,11 +90,12 @@ watch(
     if (!term) return
     Object.assign(term.options, { ...terminalOptions(s, p), cursorBlink: false, scrollback: 0 })
     applyUnicode()
-    fit?.fit()
+    fit()
   },
 )
 
 onBeforeUnmount(() => {
+  cancelAnimationFrame(fitFrame)
   observer?.disconnect()
   term?.dispose()
   term = null
@@ -88,7 +105,11 @@ onBeforeUnmount(() => {
 <template>
   <div
     class="overflow-hidden rounded-xl ring-1 ring-foreground/10"
-    :style="{ background: containerBackground, padding: `${settings.settings.terminal.padding}px` }"
+    :style="{
+      background: containerBackground,
+      paddingTop: `${settings.settings.terminal.padding.top}px`,
+      paddingBottom: `${settings.settings.terminal.padding.bottom}px`,
+    }"
   >
     <div ref="container" class="h-56 w-full" />
   </div>

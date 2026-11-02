@@ -30,9 +30,10 @@ const settings = useSettingsStore()
 const ui = useUiStore()
 const { closeTerminal, restartTerminal } = useTerminalActions()
 
-// No padding at the top: the rows reach up to the edge there. On the right useTerminal's fit
-// keeps the space free itself, the scrollbar lies in it.
-const padding = computed(() => `0 0 ${settings.settings.terminal.padding}px ${settings.settings.terminal.padding}px`)
+// Only the bottom padding is set here. At the top the rows reach up to the edge, useTerminal's
+// align keeps the top padding while the start of the output is visible. Left and right
+// useTerminal's fit places the columns, the scrollbar lies in the right padding.
+const paddingBottom = computed(() => `${settings.settings.terminal.padding.bottom}px`)
 const exited = computed(() => props.terminal.status === 'exited')
 
 // Files dropped on the terminal: their paths are pasted, like in Windows Terminal. Claude Code
@@ -98,7 +99,7 @@ function closeSearch() {
 <template>
   <div
     class="relative size-full overflow-hidden"
-    :style="{ background: containerBackground, padding }"
+    :style="{ background: containerBackground, paddingBottom }"
     @dragenter="onDragEnter"
     @dragover="onDragOver"
     @dragleave="onDragLeave"
