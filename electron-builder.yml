@@ -35,6 +35,11 @@ extraFiles:
     filter:
       - cm.exe
 
+# The icon in the notification area (src/main/window/tray.ts).
+extraResources:
+  - from: build/icon.ico
+    to: icon.ico
+
 # Where the installed app looks for updates (electron-updater reads it from app-update.yml).
 # Releases are published by semantic-release (.releaserc.json), the build itself never publishes.
 publish:

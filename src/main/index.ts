@@ -8,6 +8,7 @@ import { CommandIntegration } from './cli/command-integration'
 import { isLaunchRequest, readLaunchRequest, resolveLaunch, type LaunchRequest } from './cli/launch'
 import type { AppContext } from './context'
 import { forwardWindowState, registerApiIpc, registerIpc } from './ipc'
+import { AUTOSTART_ARG, setLaunchAtLogin } from './lib/login-item'
 import { AccountService } from './services/account-service'
 import { ClaudeCli } from './services/claude-cli'
 import { CswapImport } from './services/cswap-import'
@@ -23,6 +24,7 @@ import { UsageService } from './services/usage-service'
 import { WindowDialogs } from './window/dialogs'
 import { createMainWindow, revealWindow } from './window/main-window'
 import { WindowMaterialController } from './window/material'
+import { AppTray } from './window/tray'
 
 app.setName('Claude Manager')
 // Development builds get their own profile. With the installed app's profile they would fail to get
@@ -91,6 +93,7 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
         claudeExecutable: cli.resolve(),
         claudeVersion: (await Promise.all([cli.version(), cli.checkLoginEmail()]))[0],
         windowsBuild: process.platform === 'win32' ? Number(release().split('.')[2]) || null : null,
+        packaged: app.isPackaged,
       }
     },
   }
@@ -101,6 +104,42 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
   const restored = restore.init().catch((error) => console.error('[restore] tabs could not be restored', error))
 
   let mainWindow: BrowserWindow | null = null
+  /** The app is quitting: the window really closes instead of going to the tray. */
+  let quitting = false
+
+  /** Brings the window to the front, also out of the tray. */
+  const showWindow = () => {
+    if (mainWindow) revealWindow(mainWindow)
+    else openWindow()
+  }
+
+  let asking = false
+  /** Ends the app, after asking about running terminals (setting `confirmCloseRunning`). */
+  const quit = async (): Promise<void> => {
+    const win = mainWindow
+    const running = terminals.runningCount()
+    if (win && !win.isDestroyed() && running > 0 && settings.get().general.confirmCloseRunning) {
+      // Quitting again while the question is open (e.g. from the taskbar) only brings it back.
+      if (asking) return revealWindow(win)
+      asking = true
+      const confirmed = await dialogs
+        .show(win, {
+          title: 'Claude Manager beenden?',
+          description:
+            running === 1
+              ? 'Es läuft noch 1 Terminal. Es wird beim Beenden geschlossen, Claude-Code-Sessions lassen sich später über „Sessions“ fortsetzen.'
+              : `Es laufen noch ${running} Terminals. Sie werden beim Beenden geschlossen, Claude-Code-Sessions lassen sich später über „Sessions“ fortsetzen.`,
+          confirmText: 'Beenden',
+          destructive: true,
+        })
+        .finally(() => (asking = false))
+      if (!confirmed) return
+    }
+    quitting = true
+    app.quit()
+  }
+
+  const tray = new AppTray({ open: showWindow, quit: () => void quit() })
 
   /** Brings the window to the front and selects the terminal's tab. */
   const showTerminal = (id: string) => {
@@ -143,8 +182,8 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
   })
   registerApiIpc(api)
   await api.init()
-  const openWindow = (): BrowserWindow => {
-    const win = createMainWindow(settings.get(), userDataDir)
+  const openWindow = ({ hidden = false } = {}): BrowserWindow => {
+    const win = createMainWindow(settings.get(), userDataDir, { hidden })
     const material = new WindowMaterialController(win)
     const applyAppearance = () => {
       const { appearance } = settings.get()
@@ -160,34 +199,18 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
       }
     })
     forwardWindowState(win)
+    // The taskbar button flashes after a turn (see below) until the window is in front.
+    win.on('focus', () => win.flashFrame(false))
+    // Windows is shutting down or logging off: the window must not hold it back.
+    win.on('session-end', () => (quitting = true))
 
-    let confirmedClose = false
-    let asking = false
     win.on('close', (event) => {
-      // The page has asked before installing an update.
-      if (confirmedClose || updates.installing || !settings.get().general.confirmCloseRunning) return
-      const running = terminals.runningCount()
-      if (running === 0) return
+      // Asked already, or the page has asked before installing an update.
+      if (quitting || updates.installing) return
       event.preventDefault()
-      // Closing again while the question is open (e.g. from the taskbar) only brings it back.
-      if (asking) return revealWindow(win)
-      asking = true
-      void dialogs
-        .show(win, {
-          title: 'Claude Manager beenden?',
-          description:
-            running === 1
-              ? 'Es läuft noch 1 Terminal. Es wird beim Beenden geschlossen, Claude-Code-Sessions lassen sich später über „Sessions“ fortsetzen.'
-              : `Es laufen noch ${running} Terminals. Sie werden beim Beenden geschlossen, Claude-Code-Sessions lassen sich später über „Sessions“ fortsetzen.`,
-          confirmText: 'Beenden',
-          destructive: true,
-        })
-        .then((confirmed) => {
-          asking = false
-          if (!confirmed || win.isDestroyed()) return
-          confirmedClose = true
-          win.close()
-        })
+      // With the tray icon the window only hides: terminals and the API keep running.
+      if (tray.visible) win.hide()
+      else void quit()
     })
     win.on('closed', () => {
       off()
@@ -200,15 +223,35 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
   // Dark/light of the native backdrop follows the app theme (set by the renderer via settings).
   nativeTheme.themeSource = 'dark'
 
-  const firstWindow = openWindow()
+  tray.set(settings.get().general.runInTray)
+  setLaunchAtLogin(settings.get().general.launchAtLogin, true)
+  settings.on('changed', (next, previous) => {
+    if (next.general.launchAtLogin !== previous.general.launchAtLogin) setLaunchAtLogin(next.general.launchAtLogin)
+    if (next.general.runInTray !== previous.general.runInTray) {
+      tray.set(next.general.runInTray)
+      // Without the icon a hidden window could not be opened again.
+      if (!tray.visible && mainWindow && !mainWindow.isVisible()) revealWindow(mainWindow)
+    }
+  })
+
+  // Claude Code is done or waits for the user: draw attention when the window is in the background.
+  terminals.on('turnEnded', () => {
+    const win = mainWindow
+    if (!win || win.isDestroyed() || win.isFocused() || !settings.get().general.flashOnTurnEnd) return
+    win.flashFrame(true)
+  })
+
+  // Started by Windows at login: with the tray icon the window stays hidden until it is opened.
+  const firstWindow = openWindow({ hidden: process.argv.includes(AUTOSTART_ARG) && tray.visible })
   if (launchRequest) {
     // Wait for the page so it can select the new tab.
     firstWindow.webContents.once('did-finish-load', () => void openFromCommandLine(launchRequest))
   }
 
-  app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => {
-    if (!mainWindow) openWindow()
-    else revealWindow(mainWindow)
+  app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
+    // A start at login while the app already runs changes nothing.
+    if (argv.includes(AUTOSTART_ARG)) return
+    showWindow()
     if (isLaunchRequest(additionalData)) void openFromCommandLine(additionalData)
   })
 
@@ -217,10 +260,13 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
   })
 
   app.on('window-all-closed', () => {
-    app.quit()
+    // With the tray icon the app keeps running and opens a new window from there.
+    if (!tray.visible) app.quit()
   })
 
   app.on('before-quit', () => {
+    quitting = true
+    tray.dispose()
     updates.dispose()
     api.dispose()
     // Before the tabs close, otherwise an empty list would be remembered.

@@ -35,7 +35,8 @@ export function revealWindow(win: BrowserWindow): void {
   win.focus()
 }
 
-export function createMainWindow(settings: AppSettings, userDataDir: string): BrowserWindow {
+/** `hidden`: the window only appears with `revealWindow` (start at login into the tray). */
+export function createMainWindow(settings: AppSettings, userDataDir: string, { hidden = false } = {}): BrowserWindow {
   const boundsFile = join(userDataDir, 'window-state.json')
   const saved = restoreBounds(boundsFile)
   const isWin = process.platform === 'win32'
@@ -63,9 +64,13 @@ export function createMainWindow(settings: AppSettings, userDataDir: string): Br
     },
   })
   win.setMenu(null)
-  if (saved.maximized) win.maximize()
+  if (saved.maximized) {
+    // Maximizing also shows the window, so a hidden one does it when it appears.
+    if (hidden) win.once('show', () => win.maximize())
+    else win.maximize()
+  }
 
-  win.once('ready-to-show', () => win.show())
+  if (!hidden) win.once('ready-to-show', () => win.show())
 
   // Never open new Electron windows; http(s) links go to the default browser.
   win.webContents.setWindowOpenHandler(({ url }) => {

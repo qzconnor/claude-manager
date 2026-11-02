@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { CircleCheckIcon, CircleXIcon, RefreshCwIcon } from '@lucide/vue'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import type { CloseOnExit } from '@shared/types'
 import AccountSelect from '@/components/common/AccountSelect.vue'
 import DirectoryInput from '@/components/common/DirectoryInput.vue'
@@ -59,6 +59,25 @@ const restoreTerminals = useSetting(
   (s) => s.general.restoreTerminals,
   (restoreTerminals) => ({ general: { restoreTerminals } }),
 )
+const flashOnTurnEnd = useSetting(
+  (s) => s.general.flashOnTurnEnd,
+  (flashOnTurnEnd) => ({ general: { flashOnTurnEnd } }),
+)
+const runInTray = useSetting(
+  (s) => s.general.runInTray,
+  (runInTray) => ({ general: { runInTray } }),
+)
+const launchAtLogin = useSetting(
+  (s) => s.general.launchAtLogin,
+  (launchAtLogin) => ({ general: { launchAtLogin } }),
+)
+
+const launchAtLoginHint = computed(() => {
+  if (app.info && !app.info.packaged) return 'Nur in der installierten App, nicht im Entwicklungs-Build.'
+  return runInTray.value
+    ? 'Startet beim Anmelden ohne Fenster, nur im Infobereich. Die API ist dann sofort erreichbar.'
+    : 'Startet beim Anmelden mit Fenster. Zusammen mit „Im Infobereich weiterlaufen“ nur im Infobereich.'
+})
 
 const CLOSE_ON_EXIT: { value: CloseOnExit; label: string }[] = [
   { value: 'graceful', label: 'Ohne Fehler' },
@@ -163,6 +182,13 @@ async function recheck() {
         <Switch id="confirm-close" v-model="confirmCloseRunning" />
       </SettingField>
       <SettingField
+        for="flash-on-turn-end"
+        label="Taskleiste blinken lassen, wenn Claude fertig ist"
+        description="Wenn das Fenster im Hintergrund ist und Claude eine Antwort beendet hat oder auf eine Bestätigung wartet. Hört auf, sobald du das Fenster öffnest."
+      >
+        <Switch id="flash-on-turn-end" v-model="flashOnTurnEnd" />
+      </SettingField>
+      <SettingField
         label="Tab schließen, wenn der Prozess endet"
         description="Ohne Fehler: nach Strg+C oder /exit in Claude bzw. exit in der Shell. Bei einem Fehler bleibt der Tab zum Nachlesen offen."
       >
@@ -174,6 +200,19 @@ async function recheck() {
         description="Minuten zwischen zwei Live-Abfragen der Plan-Limits (min. 2)."
       >
         <NumberControl id="usage-refresh" v-model="usageRefreshMinutes" :min="2" :max="120" />
+      </SettingField>
+    </SettingsSection>
+
+    <SettingsSection title="Start und Infobereich" description="Damit Terminals und die lokale API auch ohne Fenster weiterlaufen.">
+      <SettingField
+        for="run-in-tray"
+        label="Im Infobereich weiterlaufen"
+        description="Schließen blendet das Fenster nur aus, Terminals und API laufen weiter. Öffnen per Klick auf das Symbol im Infobereich, Beenden über sein Kontextmenü."
+      >
+        <Switch id="run-in-tray" v-model="runInTray" />
+      </SettingField>
+      <SettingField for="launch-at-login" label="Mit Windows starten" :description="launchAtLoginHint">
+        <Switch id="launch-at-login" v-model="launchAtLogin" :disabled="app.info ? !app.info.packaged : false" />
       </SettingField>
     </SettingsSection>
   </div>
