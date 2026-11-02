@@ -93,6 +93,9 @@ export function createDefaultSettings(): AppSettings {
       defaultAccountId: SYSTEM_ACCOUNT_ID,
       restoreTerminals: false,
       cmReuseTab: true,
+      flashOnTurnEnd: true,
+      runInTray: false,
+      launchAtLogin: false,
     },
     api: {
       enabled: false,

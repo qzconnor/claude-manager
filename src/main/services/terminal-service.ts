@@ -15,6 +15,7 @@ import {
   SESSION_ID_RE,
   type TitleScan,
 } from '../lib/session-files'
+import { claudeActivity, TitleReader } from '../lib/terminal-title'
 import { TypedEmitter } from '../lib/typed-emitter'
 import type { AccountService } from './account-service'
 import type { ClaudeCli } from './claude-cli'
@@ -54,6 +55,9 @@ interface TerminalRecord {
   flushTimer: NodeJS.Timeout | null
   /** The app ended the process (kill, close, account switch): its tab never closes by itself. */
   killed: boolean
+  titles: TitleReader
+  /** Claude Code works on a turn, as its window title shows (also when started in a shell tab). */
+  busy: boolean
 }
 
 type Events = {
@@ -61,6 +65,8 @@ type Events = {
   /** `offset` = position of `data` in the terminal's output stream */
   data: [id: string, data: string, offset: number]
   exit: [id: string, exitCode: number]
+  /** Claude Code ended its turn: it is done or waits for the user (e.g. a permission prompt). */
+  turnEnded: [id: string]
 }
 
 export class TerminalService extends TypedEmitter<Events> {
@@ -182,6 +188,8 @@ export class TerminalService extends TypedEmitter<Events> {
       pending: '',
       flushTimer: null,
       killed: false,
+      titles: new TitleReader(),
+      busy: false,
     }
     this.terminals.set(id, record)
 
@@ -361,9 +369,22 @@ export class TerminalService extends TypedEmitter<Events> {
   }
 
   private handleData(record: TerminalRecord, data: string): void {
+    const title = record.titles.read(data)
+    if (title !== null) this.followActivity(record, title)
     record.pending += data
     if (!record.flushTimer) {
       record.flushTimer = setTimeout(() => this.flush(record), FLUSH_INTERVAL_MS)
+    }
+  }
+
+  /** Reports the end of a turn once, when the title goes from working to waiting. */
+  private followActivity(record: TerminalRecord, title: string): void {
+    const activity = claudeActivity(title)
+    if (activity === 'busy') {
+      record.busy = true
+    } else if (activity === 'idle' && record.busy) {
+      record.busy = false
+      this.emit('turnEnded', record.info.id)
     }
   }
 

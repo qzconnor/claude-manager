@@ -11,6 +11,8 @@ Die vollständige Referenz mit allen Parametern, Schemas und curl-Beispielen lie
 
 *Einstellungen → API*: „API aktivieren“ einschalten. Standard-Port ist **47821**, er lässt sich dort ändern. Auf derselben Seite stehen Adresse und Token. Der Token lässt sich jederzeit neu erzeugen, danach sind alte Token und offene Event-Streams ungültig.
 
+Die API läuft, solange die App läuft. Soll sie immer erreichbar sein, unter *Einstellungen → Claude Code → Start und Infobereich* „Im Infobereich weiterlaufen“ und „Mit Windows starten“ einschalten: Die App startet dann beim Anmelden ohne Fenster, und Schließen blendet das Fenster nur aus.
+
 ## Sicherheit
 
 - Der Server lauscht nur auf `127.0.0.1` und ist von anderen Rechnern nicht erreichbar.

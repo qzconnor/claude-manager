@@ -437,6 +437,12 @@ export interface GeneralSettings {
   restoreTerminals: boolean
   /** `cm` shows a running tab in the same folder instead of opening another one (`cm -n` always opens one). */
   cmReuseTab: boolean
+  /** Flash the taskbar button when Claude Code ends its turn while the window is in the background. */
+  flashOnTurnEnd: boolean
+  /** Closing the window only hides it; the app keeps running in the notification area (tray). */
+  runInTray: boolean
+  /** Start with Windows; with `runInTray` without a window, only in the notification area. */
+  launchAtLogin: boolean
 }
 
 export interface ApiSettings {
@@ -473,6 +479,8 @@ export interface AppInfo {
   claudeVersion: string | null
   /** Windows build number (e.g. 26100), used to configure xterm for ConPTY. */
   windowsBuild: number | null
+  /** Installed build (not a development build): only it can start with Windows. */
+  packaged: boolean
 }
 
 export interface WindowState {
