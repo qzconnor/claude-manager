@@ -190,7 +190,10 @@ export interface TerminalInfo {
   sessionId: string | null
   /** Set while the session is stopped by a usage limit. */
   limit: SessionLimit | null
+  /** The session's title as in `/resume`, unless `fixedTitle`; without one a default. */
   title: string
+  /** The title was given (renamed, or passed when opening) and doesn't follow the session. */
+  fixedTitle: boolean
   cwd: string
   mode: 'session' | 'login' | 'shell'
   resumeSessionId: string | null
@@ -370,6 +373,14 @@ export interface AppearanceSettings {
   radius: number
 }
 
+/** Inner padding of the terminal per side, in px. */
+export interface TerminalPadding {
+  top: number
+  right: number
+  bottom: number
+  left: number
+}
+
 export interface TerminalSettings {
   fontFamily: string
   fontSize: number
@@ -380,8 +391,7 @@ export interface TerminalSettings {
   cursorStyle: CursorStyle
   cursorBlink: boolean
   scrollback: number
-  /** Inner padding in px. */
-  padding: number
+  padding: TerminalPadding
   /** 0–100: opacity of the terminal background on top of the window material. */
   backgroundOpacity: number
   renderer: TerminalRenderer

@@ -70,7 +70,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
       cwd: old.cwd,
       mode: old.mode,
       resumeSessionId: old.resumeSessionId,
-      title: old.title,
+      title: old.fixedTitle ? old.title : null,
     })
     await window.api.terminals.close(id)
     replace(id, index, info)

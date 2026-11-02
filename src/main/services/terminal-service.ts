@@ -5,7 +5,16 @@ import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import * as pty from 'node-pty'
 import type { CloseOnExit, SessionLimit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
-import { findTranscript, readLiveSessionId, readSessionLimit, SESSION_ID_RE } from '../lib/session-files'
+import {
+  findTranscript,
+  newTitleScan,
+  readLiveSessionId,
+  readSessionLimit,
+  readSessionTitles,
+  scannedTitle,
+  SESSION_ID_RE,
+  type TitleScan,
+} from '../lib/session-files'
 import { TypedEmitter } from '../lib/typed-emitter'
 import type { AccountService } from './account-service'
 import type { ClaudeCli } from './claude-cli'
@@ -26,10 +35,13 @@ interface TrackedTranscript {
   size: number
   mtimeMs: number
   limit: SessionLimit | null
+  titles: TitleScan
 }
 
 interface TerminalRecord {
   info: TerminalInfo
+  /** Shown while the session has no title (and for shells and logins). */
+  defaultTitle: string
   process: pty.IPty | null
   /** Resolves when the process has exited. */
   exited: Promise<void>
@@ -55,6 +67,8 @@ export class TerminalService extends TypedEmitter<Events> {
   private readonly terminals = new Map<string, TerminalRecord>()
   private readonly trackTimer: NodeJS.Timeout
   private tracking = false
+  /** A new tab arrived during a round: run another one right after it. */
+  private trackAgain = false
 
   constructor(
     private readonly accounts: AccountService,
@@ -136,13 +150,16 @@ export class TerminalService extends TypedEmitter<Events> {
     })
 
     const id = randomUUID()
+    const defaultTitle = defaultTerminalTitle(mode, auth.name, cwd)
+    const fixedTitle = options.title?.trim().slice(0, 120) || null
     const info: TerminalInfo = {
       id,
       accountId: account.id,
       authAccountId: auth.id,
       sessionId,
       limit: null,
-      title: options.title?.trim() || defaultTerminalTitle(mode, auth.name, cwd),
+      title: fixedTitle ?? defaultTitle,
+      fixedTitle: fixedTitle !== null,
       cwd,
       mode,
       resumeSessionId: options.resumeSessionId ?? null,
@@ -155,6 +172,7 @@ export class TerminalService extends TypedEmitter<Events> {
     let markExited!: () => void
     const record: TerminalRecord = {
       info,
+      defaultTitle,
       process: proc,
       exited: new Promise((resolve) => (markExited = resolve)),
       transcript: null,
@@ -180,6 +198,8 @@ export class TerminalService extends TypedEmitter<Events> {
     })
 
     this.emitChanged()
+    // A resumed session already has its title: show it right away, not with the next round.
+    if (mode === 'session') this.trackSoon()
     return { ...info }
   }
 
@@ -231,11 +251,12 @@ export class TerminalService extends TypedEmitter<Events> {
     this.emitChanged()
   }
 
+  /** An empty title lets the tab follow the session's title again. */
   rename(id: string, title: string): void {
     const record = this.require(id)
-    const next = title.trim()
-    if (!next) return
-    record.info.title = next.slice(0, 120)
+    const next = title.trim().slice(0, 120)
+    record.info.fixedTitle = next.length > 0
+    record.info.title = next || this.autoTitle(record)
     this.emitChanged()
   }
 
@@ -253,10 +274,16 @@ export class TerminalService extends TypedEmitter<Events> {
     for (const id of [...this.terminals.keys()]) this.close(id)
   }
 
-  /** Follows which session runs in each tab and whether it stopped at a usage limit. */
+  private trackSoon(): void {
+    if (this.tracking) this.trackAgain = true
+    else void this.track()
+  }
+
+  /** Follows which session runs in each tab, its title and whether it stopped at a usage limit. */
   private async track(): Promise<void> {
     if (this.tracking) return
     this.tracking = true
+    this.trackAgain = false
     try {
       let changed = false
       for (const record of [...this.terminals.values()]) {
@@ -269,6 +296,7 @@ export class TerminalService extends TypedEmitter<Events> {
     } finally {
       this.tracking = false
     }
+    if (this.trackAgain) void this.track()
   }
 
   private async trackSession(record: TerminalRecord): Promise<boolean> {
@@ -285,19 +313,36 @@ export class TerminalService extends TypedEmitter<Events> {
       info.sessionId = live
       changed = true
     }
-    const limit = info.sessionId ? await this.readLimit(record, paths.projectsDir, info.sessionId) : null
+    const transcript = info.sessionId ? await this.readTranscript(record, paths.projectsDir, info.sessionId) : null
+    const limit = transcript ? currentLimit(transcript.limit) : null
     if (JSON.stringify(limit) !== JSON.stringify(info.limit)) {
       info.limit = limit
+      changed = true
+    }
+    const title = info.fixedTitle ? info.title : this.autoTitle(record)
+    if (title !== info.title) {
+      info.title = title
       changed = true
     }
     return changed
   }
 
-  /** Re-reads the transcript only when it changed; a limit also ends at its reset time. */
-  private async readLimit(record: TerminalRecord, projectsDir: string, sessionId: string): Promise<SessionLimit | null> {
+  /** The session's title as Claude Code shows it; after `/clear` the new session has none yet. */
+  private autoTitle(record: TerminalRecord): string {
+    const tracked = record.transcript
+    const title = tracked && tracked.sessionId === record.info.sessionId ? scannedTitle(tracked.titles) : null
+    return title ? title.replace(/\s+/g, ' ').slice(0, 120) : record.defaultTitle
+  }
+
+  /** Re-reads the transcript only when it changed. */
+  private async readTranscript(
+    record: TerminalRecord,
+    projectsDir: string,
+    sessionId: string,
+  ): Promise<TrackedTranscript | null> {
     if (record.transcript?.sessionId !== sessionId) {
       const file = await findTranscript(projectsDir, sessionId, record.info.cwd)
-      record.transcript = file ? { sessionId, file, size: -1, mtimeMs: -1, limit: null } : null
+      record.transcript = file ? { sessionId, file, size: -1, mtimeMs: -1, limit: null, titles: newTitleScan() } : null
     }
     const tracked = record.transcript
     if (!tracked) return null
@@ -308,11 +353,11 @@ export class TerminalService extends TypedEmitter<Events> {
     }
     if (info.size !== tracked.size || info.mtimeMs !== tracked.mtimeMs) {
       tracked.limit = await readSessionLimit(tracked.file, Date.parse(record.info.createdAt))
+      await readSessionTitles(tracked.file, tracked.titles)
       tracked.size = info.size
       tracked.mtimeMs = info.mtimeMs
     }
-    const resetsAt = tracked.limit?.resetsAt ? Date.parse(tracked.limit.resetsAt) : null
-    return resetsAt !== null && resetsAt <= Date.now() ? null : tracked.limit
+    return tracked
   }
 
   private handleData(record: TerminalRecord, data: string): void {
@@ -362,6 +407,12 @@ export class TerminalService extends TypedEmitter<Events> {
   private emitChanged(): void {
     this.emit('changed', this.list())
   }
+}
+
+/** A limit also ends at its reset time, even if the transcript doesn't change. */
+function currentLimit(limit: SessionLimit | null): SessionLimit | null {
+  const resetsAt = limit?.resetsAt ? Date.parse(limit.resetsAt) : null
+  return resetsAt !== null && resetsAt <= Date.now() ? null : limit
 }
 
 function closesOnExit(setting: CloseOnExit, exitCode: number): boolean {

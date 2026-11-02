@@ -44,7 +44,8 @@ export function useLauncher() {
         cwd: session.cwd,
         resumeSessionId: session.id,
         forkSession: fork,
-        title: fork ? `Fork · ${session.title}` : session.title,
+        // Otherwise the tab follows the session's title, also after `/rename`.
+        title: fork ? `Fork · ${session.title}` : null,
       }),
     login: (accountId: string) => launch({ accountId, mode: 'login' }),
     shell: (accountId: string) => launch({ accountId, mode: 'shell' }),

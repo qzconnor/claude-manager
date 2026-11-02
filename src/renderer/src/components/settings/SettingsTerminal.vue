@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { CursorStyle, PanelBackground, TerminalRenderer, TerminalSettings, UnicodeMode } from '@shared/types'
+import type { CursorStyle, PanelBackground, TerminalPadding, TerminalRenderer, TerminalSettings, UnicodeMode } from '@shared/types'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -18,6 +18,12 @@ const t = <K extends keyof TerminalSettings>(key: K, delay = 0) =>
     (value) => ({ terminal: { [key]: value } as Partial<TerminalSettings> }),
     delay,
   )
+const pad = (side: keyof TerminalPadding) =>
+  useSetting(
+    (s) => s.terminal.padding[side],
+    (value) => ({ terminal: { padding: { [side]: value } as Partial<TerminalPadding> } }),
+    150,
+  )
 
 const fontFamily = t('fontFamily')
 const fontSize = t('fontSize', 150)
@@ -27,7 +33,11 @@ const fontWeight = t('fontWeight')
 const fontWeightBold = t('fontWeightBold')
 const cursorStyle = t('cursorStyle')
 const cursorBlink = t('cursorBlink')
-const padding = t('padding', 150)
+const paddingTop = pad('top')
+const paddingBottom = pad('bottom')
+const paddingLeft = pad('left')
+const paddingRight = pad('right')
+const px = (v: number) => `${v} px`
 const backgroundOpacity = t('backgroundOpacity', 150)
 const scrollback = t('scrollback', 300)
 const renderer = t('renderer')
@@ -154,9 +164,6 @@ function onScheme(value: unknown) {
       >
         <SegmentedControl v-model="panelBackground" :options="PANEL_BACKGROUNDS" aria-label="Hintergrund von Claude-Panels" />
       </SettingField>
-      <SettingField for="terminal-padding" label="Innenabstand">
-        <SliderControl id="terminal-padding" v-model="padding" :min="0" :max="32" :format="(v) => `${v} px`" />
-      </SettingField>
       <SettingField label="Cursor">
         <SegmentedControl :model-value="cursorStyle" :options="CURSORS" aria-label="Cursor" @update:model-value="onCursor" />
       </SettingField>
@@ -169,6 +176,32 @@ function onScheme(value: unknown) {
         description="Hellt Text automatisch auf, wenn er sich zu wenig vom Hintergrund abhebt (1 = aus)."
       >
         <SliderControl id="terminal-contrast" v-model="minimumContrastRatio" :min="1" :max="7" :step="0.5" />
+      </SettingField>
+    </SettingsSection>
+
+    <SettingsSection
+      title="Innenabstand"
+      description="Abstand zwischen Text und Rand. Was links und rechts nicht mehr für eine ganze Spalte reicht, kommt je zur Hälfte auf beide Seiten."
+    >
+      <SettingField
+        for="terminal-padding-top"
+        label="Oben"
+        description="Solange der Anfang der Ausgabe zu sehen ist. Beim Scrollen reicht der Text bis an die Kante."
+      >
+        <SliderControl id="terminal-padding-top" v-model="paddingTop" :min="0" :max="48" :format="px" />
+      </SettingField>
+      <SettingField for="terminal-padding-bottom" label="Unten" description="Unter dem Prompt.">
+        <SliderControl id="terminal-padding-bottom" v-model="paddingBottom" :min="0" :max="48" :format="px" />
+      </SettingField>
+      <SettingField for="terminal-padding-left" label="Links">
+        <SliderControl id="terminal-padding-left" v-model="paddingLeft" :min="0" :max="48" :format="px" />
+      </SettingField>
+      <SettingField
+        for="terminal-padding-right"
+        label="Rechts"
+        description="Die Scrollbar liegt in diesem Abstand. Unter 14 px kann sie beim Scrollen die letzte Spalte überdecken."
+      >
+        <SliderControl id="terminal-padding-right" v-model="paddingRight" :min="0" :max="48" :format="px" />
       </SettingField>
     </SettingsSection>
 

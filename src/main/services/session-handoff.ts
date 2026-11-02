@@ -4,7 +4,7 @@ import { assertNoNewerCopy, copySession, findTranscript } from '../lib/session-f
 import type { AccountService } from './account-service'
 import type { SessionService } from './session-service'
 import type { SettingsService } from './settings-service'
-import { defaultTerminalTitle, type TerminalService } from './terminal-service'
+import type { TerminalService } from './terminal-service'
 
 /**
  * Continues a Claude Code session with another account's limits, e.g. once one hits its limit.
@@ -43,9 +43,7 @@ export class SessionHandoff {
       const options = await this.prepare(old.accountId, old.sessionId, old.cwd, target)
       // The session stopped at its limit: let Claude carry on where it was, so nobody has to type.
       if (old.limit && options.resumeSessionId) options.prompt = this.settings.get().claude.continuePrompt || null
-      const previousAuth = this.accounts.list().find((a) => a.id === old.authAccountId)
-      const titleWasDefault = previousAuth && old.title === defaultTerminalTitle(old.mode, previousAuth.name, old.cwd)
-      const info = this.terminals.create({ ...options, title: titleWasDefault ? null : old.title })
+      const info = this.terminals.create({ ...options, title: old.fixedTitle ? old.title : null })
       this.terminals.close(terminalId)
       return info
     } finally {
@@ -59,7 +57,7 @@ export class SessionHandoff {
     const session = group?.sessions.find((s) => s.id === sessionId)
     if (!session) throw new Error('Session nicht gefunden.')
     const options = await this.prepare(accountId, sessionId, session.cwd, this.accounts.get(targetId))
-    return this.terminals.create({ ...options, title: session.title })
+    return this.terminals.create(options)
   }
 
   private async prepare(

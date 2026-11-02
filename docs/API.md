@@ -65,6 +65,8 @@ Nur `accountId` ist Pflicht. `mode` ist `session` (Standard), `login` (`claude a
 
 Mit `authAccountId` läuft die Session über die Limits eines anderen Accounts: Die Dateien liegen weiter bei `accountId`, Claude Code bekommt aber Token oder API-Key von `authAccountId`. Das geht nur mit Token- und API-Key-Accounts, ein Browser-Login funktioniert nur im eigenen Ordner.
 
+`title` ist der Titel der Claude-Code-Session wie in `/resume` (bei `/rename` der neue Name), solange es noch keinen gibt, `Account · Ordner`. Wird ein Tab mit `title` geöffnet oder umbenannt, bleibt der Titel fest (`fixedTitle: true`).
+
 Jedes Terminal meldet außerdem `sessionId` (die Session, die gerade darin läuft), `authAccountId` und `limit`. `limit` ist gesetzt, solange die Session an einem Nutzungslimit steht, mit `type` (z. B. `five_hour`), `resetsAt` und der Meldung von Claude Code. Über den `terminals`-Stream lässt sich so automatisch auf ein Limit reagieren.
 
 ### Ausgabe lesen
