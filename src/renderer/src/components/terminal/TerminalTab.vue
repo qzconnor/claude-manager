@@ -35,7 +35,8 @@ import { useAccountsStore } from '@/stores/accounts'
 import { useTerminalsStore } from '@/stores/terminals'
 import TerminalTabCard from './TerminalTabCard.vue'
 
-const props = defineProps<{ terminal: TerminalInfo; selected: boolean }>()
+/** `vertical`: a full-width row in the sidebar, with the hover card beside it. */
+const props = defineProps<{ terminal: TerminalInfo; selected: boolean; vertical?: boolean }>()
 const emit = defineEmits<{ select: [] }>()
 
 const accounts = useAccountsStore()
@@ -124,7 +125,8 @@ function openFolder() {
             :aria-selected="selected"
             :class="
               cn(
-                'app-no-drag group/tab relative flex h-8 max-w-56 min-w-28 shrink-0 cursor-pointer items-center gap-2 rounded-lg pr-1 pl-3 text-xs transition-colors',
+                'app-no-drag group/tab relative flex h-8 shrink-0 cursor-pointer items-center gap-2 rounded-lg pr-1 pl-3 text-xs transition-colors',
+                vertical ? 'w-full' : 'max-w-56 min-w-28',
                 selected
                   ? 'bg-surface-strong text-foreground shadow-sm ring-1 ring-foreground/10'
                   : 'text-muted-foreground hover:bg-accent hover:text-foreground',
@@ -172,7 +174,7 @@ function openFolder() {
           </div>
         </HoverCardTrigger>
       </ContextMenuTrigger>
-      <HoverCardContent side="bottom" align="start" :side-offset="6" class="w-72">
+      <HoverCardContent :side="vertical ? 'right' : 'bottom'" align="start" :side-offset="vertical ? 12 : 6" class="w-72">
         <TerminalTabCard :terminal="terminal" :account="account" :session-account="sessionAccount" />
       </HoverCardContent>
     </HoverCard>

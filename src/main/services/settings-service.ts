@@ -66,6 +66,7 @@ function sanitize(s: AppSettings): AppSettings {
   s.appearance.surfaceOpacity = clamp(s.appearance.surfaceOpacity, 0, 100, d.appearance.surfaceOpacity)
   s.appearance.uiFontSize = clamp(s.appearance.uiFontSize, 11, 20, d.appearance.uiFontSize)
   s.appearance.radius = clamp(s.appearance.radius, 0, 1.5, d.appearance.radius)
+  s.appearance.tabPosition = s.appearance.tabPosition === 'sidebar' ? 'sidebar' : 'top'
   s.terminal.fontSize = clamp(s.terminal.fontSize, 6, 40, d.terminal.fontSize)
   s.terminal.lineHeight = clamp(s.terminal.lineHeight, 1, 2.5, d.terminal.lineHeight)
   s.terminal.letterSpacing = clamp(s.terminal.letterSpacing, -5, 10, d.terminal.letterSpacing)
