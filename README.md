@@ -85,6 +85,8 @@ npm run typecheck    # Main/Preload (tsc) und Renderer (vue-tsc) prüfen
 npm run build:win    # Typecheck, Build, cm.exe und NSIS-Installer → release/<version>/
 ```
 
+`npm run dev` und `npm start` nutzen ein eigenes Profil (`%APPDATA%\Claude Manager Dev`), damit sie neben der installierten App laufen. Einstellungen und Accounts sind dort getrennt, der Standard-Account (`~/.claude`) ist immer da.
+
 `npx electron-builder --win --dir` erzeugt nur den entpackten Ordner `release/<version>/win-unpacked`. Das reicht zum schnellen Testen. Vorher einmal `npm run build:launcher` ausführen, das kompiliert `cm.exe` mit dem C#-Compiler aus dem .NET Framework 4, der bei Windows dabei ist.
 
 ### Releases

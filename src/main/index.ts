@@ -1,4 +1,5 @@
 import { homedir, release } from 'node:os'
+import { join } from 'node:path'
 import { app, BrowserWindow, nativeTheme } from 'electron'
 import { IpcEvent } from '@shared/ipc'
 import type { AppInfo } from '@shared/types'
@@ -24,6 +25,9 @@ import { createMainWindow, revealWindow } from './window/main-window'
 import { WindowMaterialController } from './window/material'
 
 app.setName('Claude Manager')
+// Development builds get their own profile. With the installed app's profile they would fail to get
+// the single instance lock while it runs (and hand over to it), and Chromium's caches would collide.
+if (!app.isPackaged) app.setPath('userData', join(app.getPath('appData'), 'Claude Manager Dev'))
 // The appId of electron-builder.yml: the installer gives the shortcuts this ID, and Windows only
 // shows notifications (and groups the taskbar button with the pinned one) when they match.
 if (process.platform === 'win32') app.setAppUserModelId('local.claude-manager')
