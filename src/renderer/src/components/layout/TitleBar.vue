@@ -36,7 +36,8 @@ const tabsInSidebar = computed(() => settings.settings.appearance.tabPosition ==
       "
     >
       <AppLogo class="size-6" />
-      <span v-if="tabsInSidebar" class="truncate text-sm font-medium">Claude Manager</span>
+      <!-- Line box as tall as the logo, so the text sits on the same centre line as the icon. -->
+      <span v-if="tabsInSidebar" class="truncate text-base leading-6 font-semibold">Claude Manager</span>
     </div>
     <TerminalTabs v-if="!tabsInSidebar" class="min-w-0" />
     <div class="h-full min-w-8 flex-1" />
