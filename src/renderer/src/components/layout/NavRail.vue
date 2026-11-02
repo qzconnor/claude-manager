@@ -10,17 +10,21 @@ import {
   UsersIcon,
 } from '@lucide/vue'
 import { computed, type Component } from 'vue'
+import TerminalTabs from '@/components/terminal/TerminalTabs.vue'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Separator } from '@/components/ui/separator'
+import { cn } from '@/lib/utils'
+import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import { useUpdatesStore } from '@/stores/updates'
+import NavRailButton from './NavRailButton.vue'
 
 interface NavItem {
   name: string
   label: string
   icon: Component
+  tooltip?: string
 }
 
 const primary: NavItem[] = [
@@ -29,11 +33,17 @@ const primary: NavItem[] = [
   { name: 'dashboard', label: 'Usage-Dashboard', icon: GaugeIcon },
   { name: 'accounts', label: 'Accounts', icon: UsersIcon },
 ]
-const secondary: NavItem[] = [{ name: 'settings', label: 'Einstellungen (Strg+,)', icon: SettingsIcon }]
+const secondary: NavItem[] = [
+  { name: 'settings', label: 'Einstellungen', icon: SettingsIcon, tooltip: 'Einstellungen (Strg+,)' },
+]
 
+const settings = useSettingsStore()
 const terminals = useTerminalsStore()
 const ui = useUiStore()
 const updates = useUpdatesStore()
+
+/** With the tabs in the sidebar the rail widens, labels its icons and lists the tabs below them. */
+const expanded = computed(() => settings.settings.appearance.tabPosition === 'sidebar')
 
 /** A waiting update pulses, release notes still unread after an update get a dot. */
 const updatesLabel = computed(() =>
@@ -46,8 +56,16 @@ const updatesLabel = computed(() =>
 </script>
 
 <template>
-  <nav class="flex w-13 shrink-0 flex-col items-center justify-between pt-1 pb-3" aria-label="Hauptnavigation">
-    <div class="flex flex-col items-center gap-1">
+  <nav
+    :class="
+      cn(
+        'flex shrink-0 flex-col pt-1 pb-3',
+        expanded ? 'w-(--sidebar-width) px-2' : 'w-13 items-center justify-between',
+      )
+    "
+    aria-label="Hauptnavigation"
+  >
+    <div :class="cn('flex flex-col gap-1', !expanded && 'items-center')">
       <RouterLink
         v-for="item in primary"
         :key="item.name"
@@ -55,65 +73,59 @@ const updatesLabel = computed(() =>
         :to="{ name: item.name }"
         custom
       >
-        <Tooltip>
-          <TooltipTrigger as-child>
-            <Button
-              as="a"
-              :href="href"
-              :variant="isActive ? 'secondary' : 'ghost'"
-              size="icon-lg"
-              class="relative"
-              :aria-label="item.label"
-              :aria-current="isActive ? 'page' : undefined"
-              @click="navigate"
-            >
-              <component :is="item.icon" class="size-5" />
-              <Badge
-                v-if="item.name === 'terminals' && terminals.runningCount > 0"
-                class="absolute -top-1 -right-1 h-4 min-w-4 px-1 text-[10px] tabular-nums"
-              >
-                {{ terminals.runningCount }}
-              </Badge>
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="right">{{ item.label }}</TooltipContent>
-        </Tooltip>
+        <NavRailButton
+          :label="item.label"
+          :icon="item.icon"
+          :tooltip="item.tooltip"
+          :expanded="expanded"
+          :href="href"
+          :active="isActive"
+          @click="navigate"
+        >
+          <Badge
+            v-if="item.name === 'terminals' && terminals.runningCount > 0"
+            :class="cn('h-4 min-w-4 px-1 text-[10px] tabular-nums', !expanded && 'absolute -top-1 -right-1')"
+          >
+            {{ terminals.runningCount }}
+          </Badge>
+        </NavRailButton>
       </RouterLink>
     </div>
 
-    <div class="flex flex-col items-center gap-1">
-      <Tooltip>
-        <TooltipTrigger as-child>
-          <Button variant="ghost" size="icon-lg" aria-label="Befehlspalette" @click="ui.paletteOpen = true">
-            <SearchIcon class="size-5" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="right">Befehlspalette (Strg+Umschalt+P)</TooltipContent>
-      </Tooltip>
+    <template v-if="expanded">
+      <Separator class="my-2" />
+      <TerminalTabs vertical class="min-h-0 flex-1" />
+      <Separator class="my-2" />
+    </template>
+
+    <div :class="cn('flex flex-col gap-1', !expanded && 'items-center')">
+      <NavRailButton
+        label="Befehlspalette"
+        :icon="SearchIcon"
+        tooltip="Befehlspalette (Strg+Umschalt+P)"
+        :expanded="expanded"
+        @click="ui.paletteOpen = true"
+      />
       <RouterLink v-slot="{ href, navigate, isActive }" :to="{ name: 'updates' }" custom>
-        <Tooltip>
-          <TooltipTrigger as-child>
-            <Button
-              as="a"
-              :href="href"
-              :variant="isActive ? 'secondary' : 'ghost'"
-              size="icon-lg"
-              class="relative"
-              :aria-label="updatesLabel"
-              :aria-current="isActive ? 'page' : undefined"
-              @click="navigate"
-            >
-              <CircleArrowDownIcon v-if="updates.hasUpdate" class="size-5 text-success" />
-              <SparklesIcon v-else class="size-5" />
-              <span v-if="updates.hasUpdate" class="absolute top-1 right-1 flex size-2">
-                <span class="absolute size-full animate-ping rounded-full bg-success opacity-75" />
-                <span class="relative size-2 rounded-full bg-success" />
-              </span>
-              <span v-else-if="updates.unseen" class="absolute top-1 right-1 size-2 rounded-full bg-success" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="right">{{ updatesLabel }}</TooltipContent>
-        </Tooltip>
+        <NavRailButton
+          :label="updates.hasUpdate ? 'Update verfügbar' : 'Updates'"
+          :icon="updates.hasUpdate ? CircleArrowDownIcon : SparklesIcon"
+          :icon-class="updates.hasUpdate ? 'text-success' : undefined"
+          :tooltip="updatesLabel"
+          :expanded="expanded"
+          :href="href"
+          :active="isActive"
+          @click="navigate"
+        >
+          <span v-if="updates.hasUpdate" :class="cn('flex size-2', expanded ? 'relative mr-1' : 'absolute top-1 right-1')">
+            <span class="absolute size-full animate-ping rounded-full bg-success opacity-75" />
+            <span class="relative size-2 rounded-full bg-success" />
+          </span>
+          <span
+            v-else-if="updates.unseen"
+            :class="cn('size-2 rounded-full bg-success', expanded ? 'mr-1' : 'absolute top-1 right-1')"
+          />
+        </NavRailButton>
       </RouterLink>
       <RouterLink
         v-for="item in secondary"
@@ -122,22 +134,15 @@ const updatesLabel = computed(() =>
         :to="{ name: item.name }"
         custom
       >
-        <Tooltip>
-          <TooltipTrigger as-child>
-            <Button
-              as="a"
-              :href="href"
-              :variant="isActive ? 'secondary' : 'ghost'"
-              size="icon-lg"
-              :aria-label="item.label"
-              :aria-current="isActive ? 'page' : undefined"
-              @click="navigate"
-            >
-              <component :is="item.icon" class="size-5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="right">{{ item.label }}</TooltipContent>
-        </Tooltip>
+        <NavRailButton
+          :label="item.label"
+          :icon="item.icon"
+          :tooltip="item.tooltip"
+          :expanded="expanded"
+          :href="href"
+          :active="isActive"
+          @click="navigate"
+        />
       </RouterLink>
     </div>
   </nav>

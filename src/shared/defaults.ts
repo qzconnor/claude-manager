@@ -57,6 +57,7 @@ export function createDefaultSettings(): AppSettings {
       surfaceOpacity: 72,
       uiFontSize: 14,
       radius: 0.625,
+      tabPosition: 'top',
     },
     terminal: {
       fontFamily: 'Cascadia Mono',

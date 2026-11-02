@@ -106,6 +106,8 @@
   --window-bg: var(--background);
   --titlebar-height: 40px;
   --caption-buttons-width: 140px;
+  /* Nav rail with labels, used when the tabs are in the sidebar. */
+  --sidebar-width: 15rem;
 }
 
 .dark {

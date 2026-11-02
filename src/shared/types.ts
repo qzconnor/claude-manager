@@ -360,6 +360,9 @@ export type UnicodeMode = 'graphemes' | 'unicode11'
  */
 export type PanelBackground = 'theme' | 'terminal' | 'original'
 
+/** Where the terminal tabs are: in the title bar or listed in the nav sidebar. */
+export type TabPosition = 'top' | 'sidebar'
+
 export interface AppearanceSettings {
   themeId: string
   material: WindowMaterial
@@ -371,6 +374,8 @@ export interface AppearanceSettings {
   uiFontSize: number
   /** Corner radius in rem for cards / inputs. */
   radius: number
+  /** In the sidebar the nav icons also get their labels. */
+  tabPosition: TabPosition
 }
 
 /** Inner padding of the terminal per side, in px. */

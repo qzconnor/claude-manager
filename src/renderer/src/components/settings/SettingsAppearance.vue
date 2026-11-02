@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { WindowMaterial } from '@shared/types'
+import type { TabPosition, WindowMaterial } from '@shared/types'
 import { Switch } from '@/components/ui/switch'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useSetting } from '@/composables/useSetting'
@@ -36,6 +36,16 @@ const radius = useSetting(
   150,
 )
 
+const tabPosition = useSetting(
+  (s) => s.appearance.tabPosition,
+  (tabPosition) => ({ appearance: { tabPosition } }),
+)
+
+const TAB_POSITIONS: { value: TabPosition; label: string }[] = [
+  { value: 'top', label: 'Oben' },
+  { value: 'sidebar', label: 'Seitenleiste' },
+]
+
 const MATERIALS: { value: WindowMaterial; label: string }[] = [
   { value: 'acrylic', label: 'Acryl' },
   { value: 'mica', label: 'Mica' },
@@ -53,6 +63,15 @@ function onMaterial(value: unknown) {
   <div class="flex flex-col gap-4">
     <SettingsSection title="Theme" description="Farben für App und Terminal.">
       <ThemePicker v-model="themeId" />
+    </SettingsSection>
+
+    <SettingsSection title="Tabs" description="Wo die offenen Terminals stehen.">
+      <SettingField
+        label="Position"
+        description="Oben in der Titelleiste oder untereinander in der Seitenleiste. Dort bekommen auch die Symbole der Navigation eine Beschriftung."
+      >
+        <SegmentedControl v-model="tabPosition" :options="TAB_POSITIONS" aria-label="Position der Tabs" />
+      </SettingField>
     </SettingsSection>
 
     <SettingsSection title="Fenster" description="Windows-11-Material hinter der App." reset-section="appearance">
