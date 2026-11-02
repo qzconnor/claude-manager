@@ -105,9 +105,11 @@ export function registerIpc(ctx: AppContext): void {
   ipcMain.handle(IpcInvoke.terminalsCreate, (_e, options: TerminalCreateOptions) => ctx.terminals.create(options))
   ipcMain.handle(IpcInvoke.terminalsKill, (_e, id: unknown) => ctx.terminals.kill(requireString(id, 'id')))
   ipcMain.handle(IpcInvoke.terminalsClose, (_e, id: unknown) => ctx.terminals.close(requireString(id, 'id')))
-  ipcMain.handle(IpcInvoke.terminalsRename, (_e, id: unknown, title: unknown) =>
-    ctx.terminals.rename(requireString(id, 'id'), requireString(title, 'title')),
-  )
+  ipcMain.handle(IpcInvoke.terminalsRename, (_e, id: unknown, title: unknown) => {
+    // Empty is allowed: the tab follows the session's title again.
+    if (typeof title !== 'string') throw new Error('Ungültiger Parameter: title')
+    ctx.terminals.rename(requireString(id, 'id'), title)
+  })
   ipcMain.handle(IpcInvoke.terminalsBuffer, (_e, id: unknown) => ctx.terminals.buffer(requireString(id, 'id')))
   ipcMain.handle(IpcInvoke.terminalsContinueWith, (_e, id: unknown, accountId: unknown) =>
     ctx.handoff.continueTerminal(requireString(id, 'id'), requireString(accountId, 'accountId')),

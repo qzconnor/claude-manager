@@ -3,7 +3,7 @@ import { readJsonSync, writeJsonAtomicSync } from '../lib/json-file'
 import { findTranscript, SESSION_ID_RE } from '../lib/session-files'
 import type { AccountService } from './account-service'
 import type { SettingsService } from './settings-service'
-import type { TerminalService } from './terminal-service'
+import { defaultTerminalTitle, type TerminalService } from './terminal-service'
 
 /** What is remembered of a tab. Login tabs are not. */
 interface SavedTerminal {
@@ -14,6 +14,8 @@ interface SavedTerminal {
   /** Continued on the next start if Claude Code has written it, otherwise a new session starts. */
   sessionId: string | null
   title: string
+  /** Missing in files of older versions. */
+  fixedTitle?: boolean
 }
 
 /**
@@ -60,18 +62,21 @@ export class TerminalRestore {
   private async restore(): Promise<void> {
     const saved = readJsonSync<unknown>(this.file)
     if (!Array.isArray(saved)) return
-    const accountIds = new Set(this.accounts.list().map((a) => a.id))
+    const accounts = new Map(this.accounts.list().map((a) => [a.id, a]))
     for (const tab of saved) {
-      if (!isSavedTerminal(tab) || !accountIds.has(tab.accountId)) continue
+      if (!isSavedTerminal(tab) || !accounts.has(tab.accountId)) continue
+      // Without the lending account the session runs with its own login again.
+      const auth = accounts.get(tab.authAccountId) ?? accounts.get(tab.accountId)!
+      // Older versions saved no flag: a title other than the default was chosen.
+      const fixedTitle = tab.fixedTitle ?? tab.title !== defaultTerminalTitle(tab.mode, auth.name, tab.cwd)
       try {
         this.terminals.create({
           accountId: tab.accountId,
-          // Without the lending account the session runs with its own login again.
-          authAccountId: accountIds.has(tab.authAccountId) ? tab.authAccountId : null,
+          authAccountId: auth.id,
           cwd: tab.cwd,
           mode: tab.mode,
           resumeSessionId: tab.sessionId && (await this.hasTranscript(tab.accountId, tab.sessionId, tab.cwd)) ? tab.sessionId : null,
-          title: tab.title,
+          title: fixedTitle ? tab.title : null,
         })
       } catch {
         // e.g. the folder no longer exists: the tab is left out.
@@ -103,7 +108,17 @@ export class TerminalRestore {
     return this.terminals.list().flatMap((t) =>
       t.mode === 'login'
         ? []
-        : [{ accountId: t.accountId, authAccountId: t.authAccountId, cwd: t.cwd, mode: t.mode, sessionId: t.sessionId, title: t.title }],
+        : [
+            {
+              accountId: t.accountId,
+              authAccountId: t.authAccountId,
+              cwd: t.cwd,
+              mode: t.mode,
+              sessionId: t.sessionId,
+              title: t.title,
+              fixedTitle: t.fixedTitle,
+            },
+          ],
     )
   }
 }
@@ -117,6 +132,7 @@ function isSavedTerminal(value: unknown): value is SavedTerminal {
     typeof t.cwd === 'string' &&
     (t.mode === 'session' || t.mode === 'shell') &&
     (t.sessionId === null || (typeof t.sessionId === 'string' && SESSION_ID_RE.test(t.sessionId))) &&
-    typeof t.title === 'string'
+    typeof t.title === 'string' &&
+    (t.fixedTitle === undefined || typeof t.fixedTitle === 'boolean')
   )
 }

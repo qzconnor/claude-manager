@@ -190,7 +190,10 @@ export interface TerminalInfo {
   sessionId: string | null
   /** Set while the session is stopped by a usage limit. */
   limit: SessionLimit | null
+  /** The session's title as in `/resume`, unless `fixedTitle`; without one a default. */
   title: string
+  /** The title was given (renamed, or passed when opening) and doesn't follow the session. */
+  fixedTitle: boolean
   cwd: string
   mode: 'session' | 'login' | 'shell'
   resumeSessionId: string | null
