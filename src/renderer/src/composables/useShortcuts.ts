@@ -45,6 +45,9 @@ export function useShortcuts() {
       case 'command-palette':
         ui.paletteOpen = true
         break
+      case 'tab-search':
+        ui.tabSearchOpen = !ui.tabSearchOpen
+        break
       case 'zoom-in':
         zoom(1)
         break

@@ -10,6 +10,7 @@ import { parentPort, workerData } from 'node:worker_threads'
 import { readJson, writeJsonAtomic } from '../lib/json-file'
 import { parseTranscript, readConversation, readToolCall, type ParsedSummary, type UsageEntry } from './transcript-parser'
 import type { IndexerRequest, IndexerResponse, IndexedSession, TokenStatsResult } from './indexer-protocol'
+import { SearchIndex } from './search-index'
 
 interface CacheEntry {
   size: number
@@ -24,7 +25,7 @@ interface CacheFile {
 }
 
 const CACHE_VERSION = 2
-const { cacheFile } = workerData as { cacheFile: string }
+const { cacheFile, searchCacheFile } = workerData as { cacheFile: string; searchCacheFile: string }
 let cache: Record<string, CacheEntry> = {}
 let cacheLoaded: Promise<void> | null = null
 let saveTimer: NodeJS.Timeout | null = null
@@ -87,6 +88,10 @@ async function listTranscripts(projectsDir: string, includeSubagents: boolean): 
   }
   return out
 }
+
+const searchIndex = new SearchIndex(searchCacheFile, async (projectsDir) =>
+  (await listTranscripts(projectsDir, false)).filter((f) => f.isSession),
+)
 
 type Indexed = { entry: CacheEntry; size: number; mtimeMs: number } | null
 const inflight = new Map<string, Promise<Indexed>>()
@@ -230,6 +235,8 @@ async function handle(request: IndexerRequest): Promise<unknown> {
     }
     case 'readToolCall':
       return readToolCall(await readFile(request.filePath), request.toolUseId)
+    case 'searchTranscripts':
+      return searchIndex.search(request.projectsDir, request.query, request.limit)
   }
 }
 

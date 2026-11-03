@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ChevronRightIcon, PlusIcon, TriangleAlertIcon } from '@lucide/vue'
 import { computed, ref } from 'vue'
-import type { SessionSummary } from '@shared/types'
+import type { SessionSearchHit, SessionSummary } from '@shared/types'
 import AccountDot from '@/components/common/AccountDot.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -11,6 +11,7 @@ import { useLauncher } from '@/composables/useLauncher'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
 import type { SessionRef } from '@/composables/useSessionDetail'
+import { sessionKey } from '@/composables/useSessionSearch'
 import SessionListItem from './SessionListItem.vue'
 
 const PAGE_SIZE = 80
@@ -21,6 +22,10 @@ const props = defineProps<{
   error: string | null
   selected: SessionRef | null
   now: number
+  /** Matches of a search in the conversations, by `sessionKey`. */
+  hits?: Map<string, SessionSearchHit>
+  /** Words of the search, to highlight them. */
+  terms?: string[]
 }>()
 const emit = defineEmits<{ select: [session: SessionSummary] }>()
 
@@ -67,6 +72,8 @@ const visible = computed(() => props.sessions.slice(0, limit.value))
         :session="session"
         :now="now"
         :selected="selected?.accountId === accountId && selected.sessionId === session.id"
+        :hit="hits?.get(sessionKey(accountId, session.id))"
+        :terms="terms"
         @select="emit('select', session)"
       />
       <Button v-if="sessions.length > limit" variant="ghost" size="sm" class="self-center" @click="limit += PAGE_SIZE">
