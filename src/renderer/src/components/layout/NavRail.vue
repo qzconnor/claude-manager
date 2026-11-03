@@ -6,16 +6,13 @@ import {
   SearchIcon,
   SettingsIcon,
   SparklesIcon,
-  SquareTerminalIcon,
   UsersIcon,
 } from '@lucide/vue'
 import { computed, type Component } from 'vue'
 import TerminalTabs from '@/components/terminal/TerminalTabs.vue'
-import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings'
-import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import { useUpdatesStore } from '@/stores/updates'
 import NavRailButton from './NavRailButton.vue'
@@ -27,8 +24,8 @@ interface NavItem {
   tooltip?: string
 }
 
+// No entry for the terminals: their tabs lead there, in the title bar or in the sidebar.
 const primary: NavItem[] = [
-  { name: 'terminals', label: 'Terminals', icon: SquareTerminalIcon },
   { name: 'sessions', label: 'Sessions', icon: HistoryIcon },
   { name: 'dashboard', label: 'Usage-Dashboard', icon: GaugeIcon },
   { name: 'accounts', label: 'Accounts', icon: UsersIcon },
@@ -38,7 +35,6 @@ const secondary: NavItem[] = [
 ]
 
 const settings = useSettingsStore()
-const terminals = useTerminalsStore()
 const ui = useUiStore()
 const updates = useUpdatesStore()
 
@@ -81,14 +77,7 @@ const updatesLabel = computed(() =>
           :href="href"
           :active="isActive"
           @click="navigate"
-        >
-          <Badge
-            v-if="item.name === 'terminals' && terminals.runningCount > 0"
-            :class="cn('h-4 min-w-4 px-1 text-[10px] tabular-nums', !expanded && 'absolute -top-1 -right-1')"
-          >
-            {{ terminals.runningCount }}
-          </Badge>
-        </NavRailButton>
+        />
       </RouterLink>
     </div>
 
