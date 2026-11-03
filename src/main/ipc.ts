@@ -106,7 +106,7 @@ export function registerIpc(ctx: AppContext): void {
 
   // --- terminals -----------------------------------------------------------
   ipcMain.handle(IpcInvoke.terminalsList, () => ctx.terminals.list())
-  ipcMain.handle(IpcInvoke.terminalsCreate, (_e, options: TerminalCreateOptions) => ctx.terminals.create(options))
+  ipcMain.handle(IpcInvoke.terminalsCreate, (_e, options: TerminalCreateOptions) => ctx.terminals.open(options))
   ipcMain.handle(IpcInvoke.terminalsKill, (_e, id: unknown) => ctx.terminals.kill(requireString(id, 'id')))
   ipcMain.handle(IpcInvoke.terminalsClose, (_e, id: unknown) => ctx.terminals.close(requireString(id, 'id')))
   ipcMain.handle(IpcInvoke.terminalsRename, (_e, id: unknown, title: unknown) => {

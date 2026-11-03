@@ -168,7 +168,8 @@ export interface ManagerApi {
   }
   terminals: {
     list(): Promise<TerminalInfo[]>
-    create(options: TerminalCreateOptions): Promise<TerminalInfo>
+    /** Null when Claude Code shouldn't trust the folder (the user said no in the app's question). */
+    create(options: TerminalCreateOptions): Promise<TerminalInfo | null>
     write(id: string, data: string): void
     resize(id: string, cols: number, rows: number): void
     /** Kill the process but keep the tab (shows exit state). */
@@ -181,8 +182,9 @@ export interface ManagerApi {
     /**
      * Ends the tab and continues its session in a new one with `accountId`'s limits.
      * Tokens and API keys run the session where it lies; for a browser login it is copied over.
+     * Null when the folder isn't trusted for that account: the tab then stays as it is.
      */
-    continueWith(id: string, accountId: string): Promise<TerminalInfo>
+    continueWith(id: string, accountId: string): Promise<TerminalInfo | null>
     onChanged(cb: (terminals: TerminalInfo[]) => void): Unsubscribe
     onData(cb: (id: string, data: string, offset: number) => void): Unsubscribe
     onExit(cb: (id: string, exitCode: number) => void): Unsubscribe
@@ -198,8 +200,8 @@ export interface ManagerApi {
      * An empty query only brings the search index up to date, e.g. while the search opens.
      */
     search(query: string): Promise<SessionSearchHit[]>
-    /** Opens the session in a new tab that runs with `targetAccountId`'s limits. */
-    continueWith(accountId: string, sessionId: string, targetAccountId: string): Promise<TerminalInfo>
+    /** Opens the session in a new tab that runs with `targetAccountId`'s limits; null when its folder isn't trusted. */
+    continueWith(accountId: string, sessionId: string, targetAccountId: string): Promise<TerminalInfo | null>
     /**
      * Moves sessions to the recycle bin: transcript, subagents, `/rewind` snapshots.
      * Sessions open in a tab or a running Claude Code are kept.

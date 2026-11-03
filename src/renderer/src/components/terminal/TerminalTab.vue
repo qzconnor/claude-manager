@@ -4,6 +4,7 @@ import {
   CircleStopIcon,
   FolderOpenIcon,
   KeyRoundIcon,
+  LoaderCircleIcon,
   PencilIcon,
   RotateCwIcon,
   SquareTerminalIcon,
@@ -158,10 +159,20 @@ function openFolder() {
             @dblclick="startRename"
             @mousedown="onMouseDown"
           >
-            <KeyRoundIcon v-if="terminal.mode === 'login'" class="size-3.5 shrink-0" />
-            <SquareTerminalIcon v-else-if="terminal.mode === 'shell'" class="size-3.5 shrink-0" />
-            <TriangleAlertIcon v-else-if="terminal.limit" class="size-3.5 shrink-0 text-warning" />
-            <AccountDot v-else :color="account?.color" :class="cn(exited && 'opacity-40')" />
+            <!-- Same width for every symbol, so the title doesn't move when Claude Code starts or stops working. -->
+            <span class="flex size-3.5 shrink-0 items-center justify-center">
+              <KeyRoundIcon v-if="terminal.mode === 'login'" class="size-3.5" />
+              <LoaderCircleIcon
+                v-else-if="terminal.busy"
+                role="status"
+                aria-label="Claude Code arbeitet"
+                class="size-3.5 animate-spin"
+                :style="{ color: account?.color ?? undefined }"
+              />
+              <SquareTerminalIcon v-else-if="terminal.mode === 'shell'" class="size-3.5" />
+              <TriangleAlertIcon v-else-if="terminal.limit" class="size-3.5 text-warning" />
+              <AccountDot v-else :color="account?.color" :class="cn(exited && 'opacity-40')" />
+            </span>
 
             <input
               v-if="editing"

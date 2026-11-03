@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, statSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import * as pty from 'node-pty'
 import type { CloseOnExit, SessionLimit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
+import { fallbackSessionFolder } from '../lib/session-folder'
 import {
   findTranscript,
   newTitleScan,
@@ -20,6 +20,7 @@ import { TypedEmitter } from '../lib/typed-emitter'
 import type { AccountService } from './account-service'
 import type { ClaudeCli } from './claude-cli'
 import type { SettingsService } from './settings-service'
+import type { WorkspaceTrust } from './workspace-trust'
 
 /** Output kept per terminal so a view (or API client) can re-attach and replay it. */
 const MAX_BUFFER_CHARS = 2_000_000
@@ -56,8 +57,6 @@ interface TerminalRecord {
   /** The app ended the process (kill, close, account switch): its tab never closes by itself. */
   killed: boolean
   titles: TitleReader
-  /** Claude Code works on a turn, as its window title shows (also when started in a shell tab). */
-  busy: boolean
 }
 
 type Events = {
@@ -80,6 +79,7 @@ export class TerminalService extends TypedEmitter<Events> {
     private readonly accounts: AccountService,
     private readonly cli: ClaudeCli,
     private readonly settings: SettingsService,
+    private readonly trust: WorkspaceTrust,
   ) {
     super()
     this.trackTimer = setInterval(() => void this.track(), TRACK_INTERVAL_MS)
@@ -102,6 +102,24 @@ export class TerminalService extends TypedEmitter<Events> {
     ).length
   }
 
+  /**
+   * Like `create`, but Claude Code only starts in a folder it trusts: the app asks first, instead of
+   * Claude Code in the terminal. Null when the user said no.
+   */
+  async open(options: TerminalCreateOptions): Promise<TerminalInfo | null> {
+    if ((options.mode ?? 'session') !== 'session') return this.create(options)
+    const cwd = await this.trustedCwd(options.accountId, options.cwd)
+    return cwd === null ? null : this.create({ ...options, cwd })
+  }
+
+  /** The folder a session of the account starts in, once it is trusted (see `open`). */
+  async trustedCwd(accountId: string, cwd: string | null | undefined): Promise<string | null> {
+    const account = this.accounts.get(accountId)
+    const dir = this.resolveCwd(cwd ?? account.defaultCwd ?? this.settings.get().claude.defaultCwd)
+    return this.trust.ensure(account.id, dir)
+  }
+
+  /** Starts right away; a folder Claude Code doesn't trust yet gets its question in the terminal. */
   create(options: TerminalCreateOptions): TerminalInfo {
     const account = this.accounts.get(options.accountId)
     const auth = options.authAccountId ? this.accounts.get(options.authAccountId) : account
@@ -164,6 +182,7 @@ export class TerminalService extends TypedEmitter<Events> {
       authAccountId: auth.id,
       sessionId,
       limit: null,
+      busy: false,
       title: fixedTitle ?? defaultTitle,
       fixedTitle: fixedTitle !== null,
       cwd,
@@ -189,7 +208,6 @@ export class TerminalService extends TypedEmitter<Events> {
       flushTimer: null,
       killed: false,
       titles: new TitleReader(),
-      busy: false,
     }
     this.terminals.set(id, record)
 
@@ -199,6 +217,7 @@ export class TerminalService extends TypedEmitter<Events> {
       record.process = null
       record.info.status = 'exited'
       record.info.exitCode = exitCode
+      record.info.busy = false
       markExited()
       this.emit('exit', id, exitCode)
       if (!record.killed && closesOnExit(this.settings.get().general.closeOnExit, exitCode)) this.close(id)
@@ -377,15 +396,13 @@ export class TerminalService extends TypedEmitter<Events> {
     }
   }
 
-  /** Reports the end of a turn once, when the title goes from working to waiting. */
+  /** Shows in the tab whether Claude Code works; the end of a turn is reported once. */
   private followActivity(record: TerminalRecord, title: string): void {
     const activity = claudeActivity(title)
-    if (activity === 'busy') {
-      record.busy = true
-    } else if (activity === 'idle' && record.busy) {
-      record.busy = false
-      this.emit('turnEnded', record.info.id)
-    }
+    if (activity === null || (activity === 'busy') === record.info.busy) return
+    record.info.busy = activity === 'busy'
+    this.emitChanged()
+    if (!record.info.busy) this.emit('turnEnded', record.info.id)
   }
 
   private flush(record: TerminalRecord): void {
@@ -416,7 +433,7 @@ export class TerminalService extends TypedEmitter<Events> {
       }
       throw new Error(`Der Ordner „${dir}“ existiert nicht.`)
     }
-    return homedir()
+    return fallbackSessionFolder()
   }
 
   private require(id: string): TerminalRecord {

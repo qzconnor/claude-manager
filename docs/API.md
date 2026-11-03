@@ -65,11 +65,13 @@ POST /api/v1/terminals
 
 Nur `accountId` ist Pflicht. `mode` ist `session` (Standard), `login` (`claude auth login`) oder `shell`. Mit `resumeSessionId` wird eine Session fortgesetzt, mit zusätzlich `"forkSession": true` als neue Session abgezweigt. `activate` holt die App nach vorn und zeigt den Tab.
 
+Vertraut Claude Code dem Ordner für den Account noch nicht, fragt die App vorher in einem eigenen Dialog nach (statt Claude Code im Terminal) und trägt die Antwort in die `.claude.json` des Accounts ein. Die Antwort auf den Request kommt erst danach, bei „Abbrechen“ mit `403`.
+
 Mit `authAccountId` läuft die Session über die Limits eines anderen Accounts: Die Dateien liegen weiter bei `accountId`, Claude Code bekommt aber Token oder API-Key von `authAccountId`. Das geht nur mit Token- und API-Key-Accounts, ein Browser-Login funktioniert nur im eigenen Ordner.
 
 `title` ist der Titel der Claude-Code-Session wie in `/resume` (bei `/rename` der neue Name), solange es noch keinen gibt, `Account · Ordner`. Wird ein Tab mit `title` geöffnet oder umbenannt, bleibt der Titel fest (`fixedTitle: true`).
 
-Jedes Terminal meldet außerdem `sessionId` (die Session, die gerade darin läuft), `authAccountId` und `limit`. `limit` ist gesetzt, solange die Session an einem Nutzungslimit steht, mit `type` (z. B. `five_hour`), `resetsAt` und der Meldung von Claude Code. Über den `terminals`-Stream lässt sich so automatisch auf ein Limit reagieren.
+Jedes Terminal meldet außerdem `sessionId` (die Session, die gerade darin läuft), `authAccountId`, `busy` (Claude Code arbeitet gerade an einer Antwort) und `limit`. `limit` ist gesetzt, solange die Session an einem Nutzungslimit steht, mit `type` (z. B. `five_hour`), `resetsAt` und der Meldung von Claude Code. Über den `terminals`-Stream lässt sich so automatisch auf ein Limit reagieren.
 
 ### Ausgabe lesen
 

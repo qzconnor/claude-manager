@@ -9,6 +9,7 @@ import { isLaunchRequest, readLaunchRequest, resolveLaunch, type LaunchRequest }
 import type { AppContext } from './context'
 import { forwardWindowState, registerApiIpc, registerIpc } from './ipc'
 import { AUTOSTART_ARG, setLaunchAtLogin } from './lib/login-item'
+import { fallbackSessionFolder } from './lib/session-folder'
 import { AccountService } from './services/account-service'
 import { ClaudeCli } from './services/claude-cli'
 import { CswapImport } from './services/cswap-import'
@@ -22,6 +23,7 @@ import { TerminalRestore } from './services/terminal-restore'
 import { TerminalService } from './services/terminal-service'
 import { UpdateService } from './services/update-service'
 import { UsageService } from './services/usage-service'
+import { WorkspaceTrust } from './services/workspace-trust'
 import { WindowDialogs } from './window/dialogs'
 import { createMainWindow, revealWindow } from './window/main-window'
 import { WindowMaterialController } from './window/material'
@@ -54,7 +56,14 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
   await accounts.init()
   const cli = new ClaudeCli(() => settings.get().claude.executablePath)
   const indexer = new IndexerClient(userDataDir)
-  const terminals = new TerminalService(accounts, cli, settings)
+  const dialogs = new WindowDialogs()
+  let mainWindow: BrowserWindow | null = null
+  // Claude Code's question whether to trust a folder comes up in the app, before the session starts.
+  const trust = new WorkspaceTrust(accounts, async (options) => {
+    const win = mainWindow
+    return win && !win.isDestroyed() ? dialogs.show(win, options) : null
+  })
+  const terminals = new TerminalService(accounts, cli, settings, trust)
   const sessions = new SessionService(accounts, indexer, terminals)
   sessions.init()
   const handoff = new SessionHandoff(accounts, sessions, terminals, settings)
@@ -93,6 +102,7 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
         platform: process.platform,
         userDataDir,
         homeDir: homedir(),
+        fallbackCwd: fallbackSessionFolder(),
         claudeExecutable: cli.resolve(),
         claudeVersion: (await Promise.all([cli.version(), cli.checkLoginEmail()]))[0],
         windowsBuild: process.platform === 'win32' ? Number(release().split('.')[2]) || null : null,
@@ -101,12 +111,10 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
     },
   }
   registerIpc(ctx)
-  const dialogs = new WindowDialogs()
   // Runs while the window loads; its tabs appear as soon as they are open.
   const restore = new TerminalRestore(userDataDir, terminals, accounts, settings)
   const restored = restore.init().catch((error) => console.error('[restore] tabs could not be restored', error))
 
-  let mainWindow: BrowserWindow | null = null
   /** The app is quitting: the window really closes instead of going to the tray. */
   let quitting = false
 
@@ -123,7 +131,7 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
     const running = terminals.runningCount()
     if (win && !win.isDestroyed() && running > 0 && settings.get().general.confirmCloseRunning) {
       // Quitting again while the question is open (e.g. from the taskbar) only brings it back.
-      if (asking) return revealWindow(win)
+      if (asking) return revealWindow(win, { steal: true })
       asking = true
       const confirmed = await dialogs
         .show(win, {
@@ -166,7 +174,8 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
         general.defaultAccountId,
         general.cmReuseTab ? terminals.list() : [],
       )
-      showTerminal(existing?.id ?? terminals.create(options).id)
+      const id = existing?.id ?? (await terminals.open(options))?.id
+      if (id) showTerminal(id)
     } catch (error) {
       const win = mainWindow
       if (!win || win.isDestroyed()) return

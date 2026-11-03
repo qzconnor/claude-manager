@@ -29,7 +29,7 @@ async function loadSendMessage(): Promise<SendMessage | null> {
   return sendMessage
 }
 
-function hwndOf(win: BrowserWindow): number {
+export function hwndOf(win: BrowserWindow): number {
   const handle = win.getNativeWindowHandle()
   return handle.length >= 8 ? Number(handle.readBigUInt64LE(0)) : handle.readUInt32LE(0)
 }

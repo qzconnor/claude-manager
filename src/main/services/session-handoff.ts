@@ -21,8 +21,11 @@ export class SessionHandoff {
     private readonly settings: SettingsService,
   ) {}
 
-  /** Replaces the tab by one that continues its session with `targetId`. */
-  async continueTerminal(terminalId: string, targetId: string): Promise<TerminalInfo> {
+  /**
+   * Replaces the tab by one that continues its session with `targetId`. Null when the user doesn't
+   * trust the folder for the account whose folder the session lands in: the tab then keeps running.
+   */
+  async continueTerminal(terminalId: string, targetId: string): Promise<TerminalInfo | null> {
     const old = this.terminals.get(terminalId)
     if (old.mode !== 'session') throw new Error('Nur Claude-Code-Sessions können den Account wechseln.')
     if (!old.sessionId) throw new Error('Welche Session in diesem Tab läuft, ist noch nicht bekannt.')
@@ -34,13 +37,17 @@ export class SessionHandoff {
     this.switching.add(terminalId)
     try {
       // A copy that can't be made should not cost the running tab: check before stopping it.
-      if (!canLendCredentials(target.kind) && target.id !== old.accountId) {
+      const copies = !canLendCredentials(target.kind) && target.id !== old.accountId
+      if (copies) {
         const transcript = await findTranscript(this.accounts.paths(old.accountId).projectsDir, old.sessionId, old.cwd)
         if (transcript) await assertNoNewerCopy(this.accounts.paths(target.id), old.sessionId, transcript, target.name)
       }
+      // Neither should a folder the user doesn't trust for that account.
+      const cwd = await this.terminals.trustedCwd(copies ? target.id : old.accountId, old.cwd)
+      if (cwd === null) return null
       // Two processes must never write to the same transcript: the old one ends first.
       await this.terminals.stop(terminalId)
-      const options = await this.prepare(old.accountId, old.sessionId, old.cwd, target)
+      const options = await this.prepare(old.accountId, old.sessionId, cwd, target)
       // The session stopped at its limit: let Claude carry on where it was, so nobody has to type.
       if (old.limit && options.resumeSessionId) options.prompt = this.settings.get().claude.continuePrompt || null
       const info = this.terminals.create({ ...options, title: old.fixedTitle ? old.title : null })
@@ -51,13 +58,13 @@ export class SessionHandoff {
     }
   }
 
-  /** Opens a session from the history in a new tab, running with `targetId`. */
-  async resumeSession(accountId: string, sessionId: string, targetId: string): Promise<TerminalInfo> {
+  /** Opens a session from the history in a new tab, running with `targetId`; null when its folder isn't trusted. */
+  async resumeSession(accountId: string, sessionId: string, targetId: string): Promise<TerminalInfo | null> {
     const [group] = await this.sessions.list(accountId)
     const session = group?.sessions.find((s) => s.id === sessionId)
     if (!session) throw new Error('Session nicht gefunden.')
     const options = await this.prepare(accountId, sessionId, session.cwd, this.accounts.get(targetId))
-    return this.terminals.create(options)
+    return this.terminals.open(options)
   }
 
   private async prepare(

@@ -229,7 +229,9 @@ export const routes: Route[] = [
       tag: 'Terminals',
       summary: 'Terminal öffnen',
       description:
-        'Startet Claude Code (oder `claude auth login` / eine Shell) mit dem Account als neuen Tab in der App.',
+        'Startet Claude Code (oder `claude auth login` / eine Shell) mit dem Account als neuen Tab in der App. ' +
+        'Vertraut Claude Code dem Ordner noch nicht, fragt die App vorher nach; die Antwort kommt erst danach, ' +
+        'bei „Abbrechen“ mit 403.',
       requestBody: {
         required: true,
         schema: ref('TerminalCreate'),
@@ -263,10 +265,12 @@ export const routes: Route[] = [
       }
       let terminal
       try {
-        terminal = ctx.app.terminals.create(options)
+        // A folder Claude Code doesn't trust yet is asked about in the app first.
+        terminal = await ctx.app.terminals.open(options)
       } catch (error) {
         throw new HttpError(400, error instanceof Error ? error.message : String(error))
       }
+      if (!terminal) throw new HttpError(403, 'Dem Ordner wurde in der App nicht vertraut.')
       if (optionalBoolean(body, 'activate')) ctx.activateTerminal(terminal.id)
       return terminal
     },

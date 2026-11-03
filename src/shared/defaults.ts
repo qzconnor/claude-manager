@@ -84,6 +84,7 @@ export function createDefaultSettings(): AppSettings {
     claude: {
       executablePath: '',
       defaultCwd: '',
+      defaultCwdAsked: false,
       defaultArgs: [],
       usageRefreshMinutes: 5,
       continuePrompt: 'Mach weiter',

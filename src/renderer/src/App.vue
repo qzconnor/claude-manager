@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import CommandPalette from '@/components/common/CommandPalette.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import DefaultFolderDialog from '@/components/common/DefaultFolderDialog.vue'
 import AppShell from '@/components/layout/AppShell.vue'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Toaster } from '@/components/ui/sonner'
@@ -55,6 +56,7 @@ onMounted(async () => {
       <Spinner v-else class="size-6 text-muted-foreground" />
     </div>
     <ConfirmDialog />
+    <DefaultFolderDialog v-if="ready" />
     <CommandPalette v-if="ready" />
     <Toaster :theme="theme.mode" position="bottom-right" close-button />
   </TooltipProvider>
