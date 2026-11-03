@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import AppLogo from '@/components/common/AppLogo.vue'
 import TerminalTabs from '@/components/terminal/TerminalTabs.vue'
+import TitleBarBranch from './TitleBarBranch.vue'
 import TitleBarUsage from './TitleBarUsage.vue'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/stores/app'
@@ -40,7 +41,8 @@ const tabsInSidebar = computed(() => settings.settings.appearance.tabPosition ==
     </div>
     <TerminalTabs v-if="!tabsInSidebar" class="min-w-0" />
     <div class="h-full min-w-8 flex-1" />
-    <div class="mr-2 flex items-center transition-opacity in-data-unfocused:opacity-75">
+    <div class="mr-2 flex items-center gap-2 transition-opacity in-data-unfocused:opacity-75">
+      <TitleBarBranch />
       <TitleBarUsage />
     </div>
   </header>

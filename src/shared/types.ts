@@ -489,6 +489,13 @@ export interface WindowState {
   fullscreen: boolean
 }
 
+/** The checked-out branch of a git repository. */
+export interface GitBranch {
+  /** Branch name, or the short commit hash for a detached HEAD. */
+  name: string
+  detached: boolean
+}
+
 /** An in-app message box. The main process requests these too instead of native dialogs. */
 export interface DialogOptions {
   title: string
