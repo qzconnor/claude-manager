@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { CursorStyle, PanelBackground, TerminalPadding, TerminalRenderer, TerminalSettings, UnicodeMode } from '@shared/types'
+import type { CursorStyle, DiffColors, PanelBackground, TerminalPadding, TerminalRenderer, TerminalSettings, UnicodeMode } from '@shared/types'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -47,6 +47,7 @@ const rightClickPaste = t('rightClickPaste')
 const minimumContrastRatio = t('minimumContrastRatio', 150)
 const colorSchemeId = t('colorSchemeId')
 const panelBackground = t('panelBackground')
+const diffColors = t('diffColors')
 
 const WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900]
 const CURSORS: { value: CursorStyle; label: string }[] = [
@@ -65,6 +66,10 @@ const UNICODE_VERSIONS: { value: UnicodeMode; label: string }[] = [
 const PANEL_BACKGROUNDS: { value: PanelBackground; label: string }[] = [
   { value: 'theme', label: 'Theme' },
   { value: 'terminal', label: 'Terminal' },
+  { value: 'original', label: 'Original' },
+]
+const DIFF_COLORS: { value: DiffColors; label: string }[] = [
+  { value: 'theme', label: 'Theme' },
   { value: 'original', label: 'Original' },
 ]
 const FOLLOW_APP = '__app__'
@@ -159,10 +164,16 @@ function onScheme(value: unknown) {
         <SliderControl id="terminal-bg" v-model="backgroundOpacity" :min="0" :max="100" :format="(v) => `${v} %`" />
       </SettingField>
       <SettingField
-        label="Hintergrund von Claude-Panels"
-        description="Seitenleisten von Claude Code wie /diff. Theme: Flächenfarbe des Farbschemas, Terminal: wie der Terminal-Hintergrund, Original: das Grau von Claude Code. Wirkt, sobald Claude das Panel neu zeichnet."
+        label="Hintergrund von Claude-Flächen"
+        description="Seitenleisten von Claude Code wie /diff und die Balken hinter deinen Eingaben im Verlauf. Theme: leicht getönt und durchscheinend. Terminal: ganz durchsichtig wie der Terminal-Hintergrund. Original: das deckende Grau von Claude Code. Ein Wechsel dieser Option wirkt auf alles, was Claude danach zeichnet."
       >
-        <SegmentedControl v-model="panelBackground" :options="PANEL_BACKGROUNDS" aria-label="Hintergrund von Claude-Panels" />
+        <SegmentedControl v-model="panelBackground" :options="PANEL_BACKGROUNDS" aria-label="Hintergrund von Claude-Flächen" />
+      </SettingField>
+      <SettingField
+        label="Diff-Farben"
+        description="Grün und Rot hinter geänderten Zeilen, etwa bei Update. Theme: durchscheinend in den Farben des Farbschemas. Original: die deckenden Farben von Claude Code. Ein Wechsel dieser Option wirkt auf alles, was Claude danach zeichnet."
+      >
+        <SegmentedControl v-model="diffColors" :options="DIFF_COLORS" aria-label="Diff-Farben" />
       </SettingField>
       <SettingField label="Cursor">
         <SegmentedControl :model-value="cursorStyle" :options="CURSORS" aria-label="Cursor" @update:model-value="onCursor" />

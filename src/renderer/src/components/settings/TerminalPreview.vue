@@ -5,12 +5,14 @@ import { Terminal } from '@xterm/xterm'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { placeColumns, renderService, terminalOptions } from '@/composables/useTerminal'
 import { ensureFontLoaded, useTerminalAppearance } from '@/composables/useTerminalAppearance'
+import { createBackgroundFilter } from '@/lib/claude-backgrounds'
+import { setSlotTints } from '@/lib/translucent-slots'
 import { useSettingsStore } from '@/stores/settings'
 
 /** Static xterm instance that shows the current terminal settings with sample output. */
 const container = ref<HTMLElement | null>(null)
 const settings = useSettingsStore()
-const { palette, containerBackground } = useTerminalAppearance()
+const { palette, slotTints, containerBackground, backgrounds } = useTerminalAppearance()
 
 const ESC = '\x1b['
 const SAMPLE = [
@@ -18,13 +20,15 @@ const SAMPLE = [
   '',
   `${ESC}2m  /help for help, /status for your current setup${ESC}0m`,
   '',
-  `${ESC}36m>${ESC}0m Refactor the session list 🚀 and add tests ✅`,
+  // Claude Code's own backgrounds, exchanged like in a real terminal: the bar behind the user's
+  // message and the diff. `ESC[K` fills the rest of the row with the background.
+  `${ESC}48;2;55;55;55m${ESC}90m❯${ESC}39m Refactor the session list 🚀 and add tests ✅${ESC}K${ESC}0m`,
   '',
   `${ESC}32m●${ESC}0m ${ESC}1mRead${ESC}0m(src/views/SessionsView.vue)`,
   `  ⎿  Read ${ESC}1m142${ESC}0m lines`,
   `${ESC}33m●${ESC}0m ${ESC}1mUpdate${ESC}0m(src/lib/format.ts)`,
-  `  ${ESC}42;30m + ${ESC}0m${ESC}32m export function formatTokens(value: number) {${ESC}0m`,
-  `  ${ESC}41;30m - ${ESC}0m${ESC}31m const old = 'legacy' // 👋${ESC}0m`,
+  `  ${ESC}48;2;61;1;0m${ESC}31m - ${ESC}39mconst old = ${ESC}48;2;92;2;0m'legacy'${ESC}48;2;61;1;0m // 👋${ESC}K${ESC}0m`,
+  `  ${ESC}48;2;2;40;0m${ESC}32m + ${ESC}39mexport function ${ESC}48;2;4;71;0mformatTokens${ESC}48;2;2;40;0m(value: number) {${ESC}K${ESC}0m`,
   '',
   `${ESC}30m■${ESC}31m■${ESC}32m■${ESC}33m■${ESC}34m■${ESC}35m■${ESC}36m■${ESC}37m■ ${ESC}90m■${ESC}91m■${ESC}92m■${ESC}93m■${ESC}94m■${ESC}95m■${ESC}96m■${ESC}97m■${ESC}0m  äöü ß € → ✓ ⚡ 👨‍👩‍👧 🇩🇪`,
 ].join('\r\n')
@@ -32,6 +36,13 @@ const SAMPLE = [
 let term: Terminal | null = null
 let observer: ResizeObserver | null = null
 let fitFrame = 0
+
+/** Writes the sample anew; needed when the exchanged backgrounds change. */
+function writeSample() {
+  if (!term) return
+  term.reset()
+  term.write(createBackgroundFilter(() => backgrounds.value)(SAMPLE))
+}
 
 function applyUnicode() {
   if (term) term.unicode.activeVersion = settings.settings.terminal.unicode === 'graphemes' ? '15-graphemes' : '11'
@@ -62,8 +73,9 @@ onMounted(async () => {
   const s = settings.settings.terminal
   await ensureFontLoaded(s.fontFamily, s.fontSize)
   if (!container.value) return
+  setSlotTints(slotTints.value)
   term = new Terminal({
-    ...terminalOptions(s, palette.value),
+    ...terminalOptions(s, palette.value, slotTints.value),
     allowProposedApi: true,
     allowTransparency: true,
     customGlyphs: true,
@@ -76,23 +88,26 @@ onMounted(async () => {
   term.loadAddon(new UnicodeGraphemesAddon())
   applyUnicode()
   term.open(el)
-  term.write(SAMPLE)
+  writeSample()
   fit()
   observer = new ResizeObserver(() => fit())
   observer.observe(el)
 })
 
 watch(
-  () => [settings.settings.terminal, palette.value] as const,
-  async ([s, p]) => {
+  () => [settings.settings.terminal, palette.value, slotTints.value] as const,
+  async ([s, p, tints]) => {
     if (!term) return
     await ensureFontLoaded(s.fontFamily, s.fontSize)
     if (!term) return
-    Object.assign(term.options, { ...terminalOptions(s, p), cursorBlink: false, scrollback: 0 })
+    setSlotTints(tints)
+    Object.assign(term.options, { ...terminalOptions(s, p, tints), cursorBlink: false, scrollback: 0 })
     applyUnicode()
     fit()
   },
 )
+
+watch(backgrounds, writeSample)
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(fitFrame)

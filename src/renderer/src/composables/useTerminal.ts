@@ -6,9 +6,10 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal, type ITheme, type ITerminalOptions } from '@xterm/xterm'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import type { TerminalSettings } from '@shared/types'
-import { createPanelBackgroundFilter } from '@/lib/panel-background'
+import { createBackgroundFilter, slotPalette, type SlotTints } from '@/lib/claude-backgrounds'
 import { matchShortcut } from '@/lib/shortcuts'
 import { terminalBus } from '@/lib/terminal-bus'
+import { makeSlotsTranslucent, setSlotTints } from '@/lib/translucent-slots'
 import { useAppStore } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
 import type { TerminalPalette } from '@/themes/types'
@@ -23,18 +24,21 @@ export interface UseTerminalOptions {
   active: Ref<boolean>
 }
 
-export function toXtermTheme(p: TerminalPalette): ITheme {
+/** `tints` are the colors of the palette slots that Claude's backgrounds are exchanged for. */
+export function toXtermTheme(p: TerminalPalette, tints: SlotTints): ITheme {
   return {
     ...p,
     // The container paints the background so the window material can shine through.
     background: '#00000000',
+    extendedAnsi: slotPalette(tints, p.background),
     scrollbarSliderBackground: 'rgba(128, 128, 128, 0.25)',
     scrollbarSliderHoverBackground: 'rgba(128, 128, 128, 0.4)',
     scrollbarSliderActiveBackground: 'rgba(128, 128, 128, 0.55)',
   }
 }
 
-export function terminalOptions(s: TerminalSettings, palette: TerminalPalette): ITerminalOptions {
+/** Also call `setSlotTints` with the same tints, so the see-through slots match the theme. */
+export function terminalOptions(s: TerminalSettings, palette: TerminalPalette, tints: SlotTints): ITerminalOptions {
   return {
     fontFamily: buildFontStack(s.fontFamily),
     fontSize: s.fontSize,
@@ -47,7 +51,7 @@ export function terminalOptions(s: TerminalSettings, palette: TerminalPalette): 
     cursorBlink: s.cursorBlink,
     scrollback: s.scrollback,
     minimumContrastRatio: s.minimumContrastRatio,
-    theme: toXtermTheme(palette),
+    theme: toXtermTheme(palette, tints),
   }
 }
 
@@ -113,9 +117,9 @@ export function useTerminal(options: UseTerminalOptions) {
   const { terminalId, claudeSession, container, active } = options
   const settingsStore = useSettingsStore()
   const appStore = useAppStore()
-  const { palette, panelBackground } = useTerminalAppearance()
+  const { palette, slotTints, backgrounds } = useTerminalAppearance()
   /** All output passes through here on its way to xterm. */
-  const filterOutput = createPanelBackgroundFilter(() => panelBackground.value)
+  const filterOutput = createBackgroundFilter(() => backgrounds.value)
 
   const ready = ref(false)
   const hasSelection = ref(false)
@@ -164,6 +168,7 @@ export function useTerminal(options: UseTerminalOptions) {
         if (webgl === addon) webgl = null
       })
       term.loadAddon(addon)
+      makeSlotsTranslucent(addon)
       webgl = addon
     } catch (error) {
       console.warn('[terminal] WebGL unavailable, using DOM renderer', error)
@@ -280,8 +285,9 @@ export function useTerminal(options: UseTerminalOptions) {
     if (disposed) return
 
     const build = appStore.info?.windowsBuild ?? null
+    setSlotTints(slotTints.value)
     term = new Terminal({
-      ...terminalOptions(s, palette.value),
+      ...terminalOptions(s, palette.value, slotTints.value),
       allowProposedApi: true,
       allowTransparency: true,
       customGlyphs: true,
@@ -382,12 +388,13 @@ export function useTerminal(options: UseTerminalOptions) {
   })
 
   watch(
-    () => [settingsStore.settings.terminal, palette.value] as const,
-    async ([s, p], [prev]) => {
+    () => [settingsStore.settings.terminal, palette.value, slotTints.value] as const,
+    async ([s, p, tints], [prev]) => {
       if (!term) return
       if (s.fontFamily !== prev.fontFamily || s.fontSize !== prev.fontSize) await ensureFontLoaded(s.fontFamily, s.fontSize)
       if (!term) return
-      Object.assign(term.options, terminalOptions(s, p))
+      setSlotTints(tints)
+      Object.assign(term.options, terminalOptions(s, p, tints))
       term.unicode.activeVersion = s.unicode === 'graphemes' ? '15-graphemes' : '11'
       if (s.renderer === 'webgl') enableWebgl()
       else disableWebgl()

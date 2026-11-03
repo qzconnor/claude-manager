@@ -386,10 +386,13 @@ export type CursorStyle = 'block' | 'bar' | 'underline'
 export type TerminalRenderer = 'webgl' | 'dom'
 export type UnicodeMode = 'graphemes' | 'unicode11'
 /**
- * Background of Claude Code's side panels such as /diff. `theme`: the surface color of the
- * terminal's theme, `terminal`: the terminal background, `original`: Claude Code's own gray.
+ * Background of Claude Code's side panels such as /diff and of the bars behind the user's own
+ * messages in the transcript. `theme`: a see-through tint of the terminal theme's text color,
+ * `terminal`: the terminal background, `original`: Claude Code's own gray.
  */
 export type PanelBackground = 'theme' | 'terminal' | 'original'
+/** Green and red behind changed lines in Claude Code's diffs: a see-through tint of the theme or Claude's own. */
+export type DiffColors = 'theme' | 'original'
 
 /** Where the terminal tabs are: in the title bar or listed in the nav sidebar. */
 export type TabPosition = 'top' | 'sidebar'
@@ -438,6 +441,7 @@ export interface TerminalSettings {
   colorSchemeId: string | null
   minimumContrastRatio: number
   panelBackground: PanelBackground
+  diffColors: DiffColors
 }
 
 export interface ClaudeSettings {

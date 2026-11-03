@@ -79,6 +79,7 @@ export function createDefaultSettings(): AppSettings {
       colorSchemeId: null,
       minimumContrastRatio: 1,
       panelBackground: 'theme',
+      diffColors: 'theme',
     },
     claude: {
       executablePath: '',
