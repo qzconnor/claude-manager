@@ -194,6 +194,12 @@ export function registerIpc(ctx: AppContext): void {
   ipcMain.handle(IpcInvoke.updatesDownload, () => ctx.updates.download())
   ipcMain.handle(IpcInvoke.updatesInstall, () => ctx.updates.install())
   ipcMain.handle(IpcInvoke.updatesReleases, () => ctx.updates.releases())
+  ipcMain.handle(IpcInvoke.updatesReference, (_e, number: unknown) => {
+    if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 1) {
+      throw new Error('Ungültiger Parameter: number')
+    }
+    return ctx.updates.reference(number)
+  })
   ctx.updates.on('changed', (state) => broadcast(IpcEvent.updatesChanged, state))
   ctx.updates.on('show', () => broadcast(IpcEvent.updatesShow))
 }

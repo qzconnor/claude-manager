@@ -613,4 +613,15 @@ export interface ReleaseNote {
   /** Notes rendered and sanitized by GitHub. */
   html: string
   url: string
+  /** Pull requests (or issues) the notes link to, in order – their descriptions are the details. */
+  references: number[]
+}
+
+/** A pull request (or issue) from the release notes with its description. */
+export interface ReleaseReference {
+  number: number
+  title: string
+  /** Description as written on GitHub (markdown), empty without one. */
+  body: string
+  url: string
 }

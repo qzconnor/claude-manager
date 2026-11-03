@@ -104,6 +104,7 @@ const api: ManagerApi = {
     download: () => invoke(IpcInvoke.updatesDownload),
     install: () => invoke(IpcInvoke.updatesInstall),
     releases: () => invoke(IpcInvoke.updatesReleases),
+    reference: (number) => invoke(IpcInvoke.updatesReference, number),
     onChanged: (cb) => subscribe(IpcEvent.updatesChanged, cb),
     onShow: (cb) => subscribe(IpcEvent.updatesShow, cb),
   },
