@@ -3,6 +3,7 @@ import { CloudOffIcon, ExternalLinkIcon, RefreshCwIcon, ScrollTextIcon } from '@
 import { computed, onActivated, ref } from 'vue'
 import PageContainer from '@/components/common/PageContainer.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import ReleaseDetails from '@/components/updates/ReleaseDetails.vue'
 import UpdateStatus from '@/components/updates/UpdateStatus.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -126,9 +127,10 @@ function onNotesClick(event: MouseEvent) {
               </Button>
             </CardAction>
           </CardHeader>
-          <CardContent>
+          <CardContent class="flex flex-col gap-3">
             <!-- Rendered and sanitized by GitHub. -->
             <div class="release-notes selectable" @click="onNotesClick" v-html="release.html" />
+            <ReleaseDetails v-if="release.references.length" :references="release.references" />
           </CardContent>
         </Card>
       </template>

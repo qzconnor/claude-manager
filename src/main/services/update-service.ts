@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Notification, net } from 'electron'
 import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
-import type { ReleaseNote, UpdateState } from '@shared/types'
+import type { ReleaseNote, ReleaseReference, UpdateState } from '@shared/types'
 import { TypedEmitter } from '../lib/typed-emitter'
 import { revealWindow } from '../window/main-window'
 
@@ -27,6 +27,17 @@ interface GitHubRelease {
   draft: boolean
   prerelease: boolean
 }
+
+/** A pull request through the issues endpoint, which answers for issues as well. */
+interface GitHubIssue {
+  number: number
+  title: string
+  body: string | null
+  html_url: string
+}
+
+/** Links of the notes to a pull request or issue, e.g. `…/qzconnor/claude-manager/issues/17`. */
+const REFERENCE_LINK = new RegExp(`https://github\\.com/${REPO}/(?:issues|pull)/(\\d+)`, 'g')
 
 export class UpdateService extends TypedEmitter<Events> {
   private state: UpdateState = {
@@ -135,6 +146,17 @@ export class UpdateService extends TypedEmitter<Events> {
     return notes
   }
 
+  /** Title and description of a pull request (or issue) the notes link to – the details of a change. */
+  async reference(number: number): Promise<ReleaseReference> {
+    const response = await net.fetch(`https://api.github.com/repos/${REPO}/issues/${number}`, {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': this.userAgent },
+      cache: 'no-cache',
+    })
+    if (!response.ok) throw new Error(describeStatus(response))
+    const issue = (await response.json()) as GitHubIssue
+    return { number: issue.number, title: issue.title, body: issue.body?.trim() ?? '', url: issue.html_url }
+  }
+
   private setState(patch: Partial<UpdateState>): void {
     this.state = { ...this.state, ...patch }
     this.emit('changed', this.state)
@@ -174,6 +196,7 @@ export class UpdateService extends TypedEmitter<Events> {
         date: release.published_at ?? '',
         html: release.body_html ?? '',
         url: release.html_url,
+        references: references(release.body_html ?? ''),
       }))
   }
 
@@ -190,15 +213,31 @@ export class UpdateService extends TypedEmitter<Events> {
     const feed = await response.text()
     return [...feed.matchAll(/<entry>([\s\S]*?)<\/entry>/g)].map(([, entry]) => {
       const text = (tag: string) => unescapeXml(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`).exec(entry)?.[1] ?? '')
+      const html = text('content')
       return {
         // The id ends with the tag, e.g. `tag:github.com,2008:Repository/123456789/v1.2.3`.
         version: (text('id').split('/').pop() ?? '').replace(/^v/, ''),
         date: text('updated'),
-        html: text('content'),
+        html,
         url: unescapeXml(/<link[^>]*href="([^"]*)"/.exec(entry)?.[1] ?? ''),
+        references: references(html),
       }
     })
   }
+}
+
+/** Numbers of the pull requests (or issues) the notes link to, each once. */
+function references(html: string): number[] {
+  return [...new Set([...html.matchAll(REFERENCE_LINK)].map(([, number]) => Number(number)))]
+}
+
+/** The hourly limit without sign-in is 60 requests – the most likely reason for a refusal. */
+function describeStatus(response: Response): string {
+  const limited =
+    response.status === 429 || (response.status === 403 && response.headers.get('x-ratelimit-remaining') === '0')
+  if (limited) return 'GitHub nimmt gerade keine weiteren Anfragen an (Limit pro Stunde). Bitte später noch einmal versuchen.'
+  if (response.status === 404) return 'Auf GitHub nicht gefunden.'
+  return `GitHub antwortet mit Status ${response.status}.`
 }
 
 /** electron-updater appends long HTTP dumps to its errors – the first line is enough. */

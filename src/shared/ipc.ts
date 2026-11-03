@@ -22,6 +22,7 @@ import type {
   TerminalInfo,
   TranscriptToolDetail,
   ReleaseNote,
+  ReleaseReference,
   UpdateState,
   WindowState,
 } from './types'
@@ -86,6 +87,7 @@ export const IpcInvoke = {
   updatesDownload: 'updates:download',
   updatesInstall: 'updates:install',
   updatesReleases: 'updates:releases',
+  updatesReference: 'updates:reference',
 } as const
 
 /** Fire-and-forget channels renderer → main (ipcRenderer.send ↔ ipcMain.on). */
@@ -242,6 +244,8 @@ export interface ManagerApi {
     install(): Promise<void>
     /** Published versions with their release notes, newest first. */
     releases(): Promise<ReleaseNote[]>
+    /** A pull request (or issue) from the notes with its description – the details of a change. */
+    reference(number: number): Promise<ReleaseReference>
     onChanged(cb: (state: UpdateState) => void): Unsubscribe
     onShow(cb: () => void): Unsubscribe
   }

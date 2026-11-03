@@ -2,7 +2,7 @@ import { useLocalStorage } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { toast } from 'vue-sonner'
-import type { ReleaseNote, UpdateState } from '@shared/types'
+import type { ReleaseNote, ReleaseReference, UpdateState } from '@shared/types'
 import { attempt, errorMessage } from '@/lib/errors'
 import { router } from '@/router'
 import { useTerminalsStore } from './terminals'
@@ -76,6 +76,15 @@ export const useUpdatesStore = defineStore('updates', () => {
   }
 
   /** Loads the notes again – the main process keeps them for a few minutes, so this is cheap. */
+  /** Pull request descriptions loaded so far, kept while the app runs (GitHub allows 60 requests an hour). */
+  const references = ref<Record<number, ReleaseReference>>({})
+
+  /** Loads the description of a pull request (or issue) from the notes once; throws if GitHub refuses. */
+  async function loadReference(number: number): Promise<void> {
+    if (references.value[number]) return
+    references.value[number] = await window.api.updates.reference(number)
+  }
+
   async function loadReleases(): Promise<void> {
     releasesLoading.value = true
     try {
@@ -115,11 +124,13 @@ export const useUpdatesStore = defineStore('updates', () => {
     releases,
     releasesLoading,
     releasesError,
+    references,
     hasUpdate,
     unseen,
     load,
     markSeen,
     loadReleases,
+    loadReference,
     check,
     download,
     install,
