@@ -1,17 +1,10 @@
 <script setup lang="ts">
-import {
-  CircleArrowDownIcon,
-  GaugeIcon,
-  HistoryIcon,
-  SearchIcon,
-  SettingsIcon,
-  SparklesIcon,
-  UsersIcon,
-} from '@lucide/vue'
+import { GaugeIcon, HistoryIcon, SearchIcon, SettingsIcon, UsersIcon } from '@lucide/vue'
 import { computed, type Component } from 'vue'
 import TerminalTabs from '@/components/terminal/TerminalTabs.vue'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
+import { UPDATES_ROUTE } from '@/router'
 import { useSettingsStore } from '@/stores/settings'
 import { useUiStore } from '@/stores/ui'
 import { useUpdatesStore } from '@/stores/updates'
@@ -30,9 +23,6 @@ const primary: NavItem[] = [
   { name: 'dashboard', label: 'Usage-Dashboard', icon: GaugeIcon },
   { name: 'accounts', label: 'Accounts', icon: UsersIcon },
 ]
-const secondary: NavItem[] = [
-  { name: 'settings', label: 'Einstellungen', icon: SettingsIcon, tooltip: 'Einstellungen (Strg+,)' },
-]
 
 const settings = useSettingsStore()
 const ui = useUiStore()
@@ -41,13 +31,17 @@ const updates = useUpdatesStore()
 /** With the tabs in the sidebar the rail widens, labels its icons and lists the tabs below them. */
 const expanded = computed(() => settings.settings.appearance.tabPosition === 'sidebar')
 
-/** A waiting update pulses, release notes still unread after an update get a dot. */
-const updatesLabel = computed(() =>
+/**
+ * The updates are a tab of the settings: a waiting update pulses on their button, release notes
+ * still unread after an update get a dot. Either way the button then opens the updates tab.
+ */
+const updatesPending = computed(() => updates.hasUpdate || updates.unseen)
+const settingsTooltip = computed(() =>
   updates.hasUpdate
-    ? `Version ${updates.state.next} ist verfügbar`
+    ? `Einstellungen (Strg+,) · Version ${updates.state.next} ist verfügbar`
     : updates.unseen
-      ? `Neu in Version ${updates.state.current}`
-      : 'Updates und Versionshinweise',
+      ? `Einstellungen (Strg+,) · Neu in Version ${updates.state.current}`
+      : 'Einstellungen (Strg+,)',
 )
 </script>
 
@@ -95,12 +89,11 @@ const updatesLabel = computed(() =>
         :expanded="expanded"
         @click="ui.paletteOpen = true"
       />
-      <RouterLink v-slot="{ href, navigate, isActive }" :to="{ name: 'updates' }" custom>
+      <RouterLink v-slot="{ href, navigate, isActive }" :to="updatesPending ? UPDATES_ROUTE : { name: 'settings' }" custom>
         <NavRailButton
-          :label="updates.hasUpdate ? 'Update verfügbar' : 'Updates'"
-          :icon="updates.hasUpdate ? CircleArrowDownIcon : SparklesIcon"
-          :icon-class="updates.hasUpdate ? 'text-success' : undefined"
-          :tooltip="updatesLabel"
+          label="Einstellungen"
+          :icon="SettingsIcon"
+          :tooltip="settingsTooltip"
           :expanded="expanded"
           :href="href"
           :active="isActive"
@@ -115,23 +108,6 @@ const updatesLabel = computed(() =>
             :class="cn('size-2 rounded-full bg-success', expanded ? 'mr-1' : 'absolute top-1 right-1')"
           />
         </NavRailButton>
-      </RouterLink>
-      <RouterLink
-        v-for="item in secondary"
-        :key="item.name"
-        v-slot="{ href, navigate, isActive }"
-        :to="{ name: item.name }"
-        custom
-      >
-        <NavRailButton
-          :label="item.label"
-          :icon="item.icon"
-          :tooltip="item.tooltip"
-          :expanded="expanded"
-          :href="href"
-          :active="isActive"
-          @click="navigate"
-        />
       </RouterLink>
     </div>
   </nav>

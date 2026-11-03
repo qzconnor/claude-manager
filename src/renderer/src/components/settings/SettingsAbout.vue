@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { attempt } from '@/lib/errors'
+import { UPDATES_ROUTE } from '@/router'
 import { useAppStore } from '@/stores/app'
 
 const app = useAppStore()
@@ -53,7 +54,7 @@ function openDataDir() {
         </TableBody>
       </Table>
       <div class="flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" @click="router.push({ name: 'updates' })">
+        <Button variant="outline" size="sm" @click="router.push(UPDATES_ROUTE)">
           <SparklesIcon data-icon="inline-start" />
           Updates und Versionshinweise
         </Button>

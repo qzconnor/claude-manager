@@ -4,7 +4,7 @@ import { computed, ref } from 'vue'
 import { toast } from 'vue-sonner'
 import type { ReleaseNote, ReleaseReference, UpdateState } from '@shared/types'
 import { attempt, errorMessage } from '@/lib/errors'
-import { router } from '@/router'
+import { router, UPDATES_ROUTE } from '@/router'
 import { useTerminalsStore } from './terminals'
 import { useUiStore } from './ui'
 
@@ -22,6 +22,8 @@ export const useUpdatesStore = defineStore('updates', () => {
   const releasesError = ref<string | null>(null)
   /** Version whose notes were looked at – if the installed one differs, the app was updated. */
   const seenVersion = useLocalStorage<string | null>('claude-manager.seenVersion', null)
+  /** Version installed by an update since the notes were looked at last – highlighted while the app runs. */
+  const justUpdated = ref<string | null>(null)
 
   /** A newer version is offered (also while downloading, or after a failed download). */
   const hasUpdate = computed(
@@ -32,7 +34,7 @@ export const useUpdatesStore = defineStore('updates', () => {
   /** Updated since the notes were last opened – "what's new" is still to be seen. */
   const unseen = computed(() => !!state.value.current && !!seenVersion.value && seenVersion.value !== state.value.current)
 
-  const show = () => void router.push({ name: 'updates' })
+  const show = () => void router.push(UPDATES_ROUTE)
 
   let announced: string | null = null
 
@@ -72,6 +74,7 @@ export const useUpdatesStore = defineStore('updates', () => {
   }
 
   function markSeen(): void {
+    if (unseen.value) justUpdated.value = state.value.current
     seenVersion.value = state.value.current
   }
 
@@ -125,6 +128,7 @@ export const useUpdatesStore = defineStore('updates', () => {
     releasesLoading,
     releasesError,
     references,
+    justUpdated,
     hasUpdate,
     unseen,
     load,

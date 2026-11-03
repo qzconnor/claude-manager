@@ -4,7 +4,12 @@ import DashboardView from '@/views/DashboardView.vue'
 import SessionsView from '@/views/SessionsView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import TerminalsView from '@/views/TerminalsView.vue'
-import UpdatesView from '@/views/UpdatesView.vue'
+
+export const SETTINGS_TABS = ['appearance', 'terminal', 'claude', 'api', 'updates', 'about'] as const
+export type SettingsTab = (typeof SETTINGS_TABS)[number]
+
+/** The updates and release notes, a tab of the settings. */
+export const UPDATES_ROUTE = { name: 'settings', query: { tab: 'updates' satisfies SettingsTab } }
 
 export const router = createRouter({
   history: createWebHashHistory(),
@@ -15,7 +20,7 @@ export const router = createRouter({
     { path: '/dashboard', name: 'dashboard', component: DashboardView },
     { path: '/accounts', name: 'accounts', component: AccountsView },
     { path: '/settings', name: 'settings', component: SettingsView },
-    { path: '/updates', name: 'updates', component: UpdatesView },
+    { path: '/updates', redirect: UPDATES_ROUTE },
     { path: '/:pathMatch(.*)*', redirect: { name: 'terminals' } },
   ],
 })

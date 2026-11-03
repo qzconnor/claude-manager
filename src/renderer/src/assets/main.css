@@ -330,7 +330,7 @@
   }
 }
 
-/* Release notes as GitHub renders them (updates page). The version heading is the card's title. */
+/* Release notes as GitHub renders them (updates tab of the settings). The version heading is the card's title. */
 @layer components {
   .release-notes {
     display: flex;

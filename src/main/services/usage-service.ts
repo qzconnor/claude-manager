@@ -1,11 +1,12 @@
 import { join } from 'node:path'
 import { net } from 'electron'
-import type { AccountTokenStats, AccountUsage, DailyTokenStats, TokenCounts, UsageStatus } from '@shared/types'
+import type { AccountTokenStats, AccountUsage, DailyTokenStats, TokenCounts, UsageStatus, UsageWindow } from '@shared/types'
 import { readJson, writeJsonAtomic } from '../lib/json-file'
 import { TypedEmitter } from '../lib/typed-emitter'
 import { readGlobalConfig, type AccountCredentials, type AccountService } from './account-service'
 import type { IndexerClient } from './indexer-client'
 import { fingerprintOf } from './login-profiles'
+import { renewOAuthLogin, type RenewResult } from './oauth-renewal'
 import type { SettingsService } from './settings-service'
 import { parseUsagePayload } from './usage-parser'
 import type { TokenStatsResult } from '../workers/indexer-protocol'
@@ -16,6 +17,8 @@ const OAUTH_BETA = 'oauth-2025-04-20'
 const MIN_MANUAL_INTERVAL_MS = 60_000
 const RATE_LIMIT_BACKOFF_MS = 5 * 60_000
 const STAGGER_MS = 400
+/** Claude Code is renewing the token itself right now: its new token is picked up shortly after. */
+const RENEW_BUSY_RETRY_MS = 30_000
 
 interface LiveRecord {
   usage: AccountUsage
@@ -24,6 +27,14 @@ interface LiveRecord {
   loginKey: string | null
   /** Fingerprint of the token it was fetched with; unknown for data from the cache file. */
   tokenKey: string | null
+}
+
+/** The last failed attempt to renew an account's expired access token. */
+interface Renewal {
+  /** Fingerprint of the expired access token. A new one (e.g. after signing in) is tried right away. */
+  tokenKey: string
+  result: Exclude<RenewResult, 'renewed'>
+  retryAt: number
 }
 
 interface CacheFile {
@@ -40,6 +51,7 @@ export class UsageService extends TypedEmitter<Events> {
   /** When another login took over an account's files; older data belongs to the previous one. */
   private readonly loginChangedAt = new Map<string, number>()
   private readonly inflight = new Map<string, Promise<void>>()
+  private readonly renewals = new Map<string, Renewal>()
   private timer: NodeJS.Timeout | null = null
   private localTimer: NodeJS.Timeout | null = null
 
@@ -184,6 +196,7 @@ export class UsageService extends TypedEmitter<Events> {
   private async fetchLive(accountId: string, manual: boolean): Promise<void> {
     let creds
     try {
+      await this.renewExpired(accountId, manual)
       // The data is stored with the login it belongs to, so that login has to be known first.
       await this.accounts.resolveLogin(accountId)
       creds = this.accounts.credentials(accountId)
@@ -273,6 +286,36 @@ export class UsageService extends TypedEmitter<Events> {
     this.recompute()
   }
 
+  /**
+   * Renews an expired access token with the refresh token, as Claude Code does when a session
+   * starts. Without this, accounts that aren't in use would show limits from days ago. Only when
+   * their usage is due anyway: tokens last hours, so that is about once per token.
+   */
+  private async renewExpired(accountId: string, manual: boolean): Promise<void> {
+    const creds = this.accounts.credentials(accountId)
+    if (creds.kind !== 'system' && creds.kind !== 'oauth') return
+    if (!creds.accessToken || creds.accessTokenExpiresAt === null || creds.accessTokenExpiresAt > Date.now()) return
+    const now = Date.now()
+    const previous = this.live.get(accountId)
+    if (previous && !isOtherLogin(previous.loginKey, creds.loginKey)) {
+      const fetchedAt = previous.usage.fetchedAt ? Date.parse(previous.usage.fetchedAt) : 0
+      if (now < (manual ? fetchedAt + MIN_MANUAL_INTERVAL_MS : previous.nextAllowedAt)) return
+    }
+    const tokenKey = fingerprintOf(creds.accessToken)
+    const last = this.renewals.get(accountId)
+    if (last?.tokenKey === tokenKey && (last.result === 'rejected' || (!manual && now < last.retryAt))) return
+
+    const result = await renewOAuthLogin(creds.paths.configDir, creds.paths.credentialsFile, this.userAgent)
+    if (result === 'renewed') {
+      this.renewals.delete(accountId)
+      // Shows the account as signed in again and resolves the login of the new token.
+      this.accounts.refresh()
+      return
+    }
+    const wait = result === 'busy' ? RENEW_BUSY_RETRY_MS : this.settings.get().claude.usageRefreshMinutes * 60_000
+    this.renewals.set(accountId, { tokenKey, result, retryAt: now + wait })
+  }
+
   private persist(): void {
     const records = Object.fromEntries([...this.live].map(([id, r]) => [id, { usage: r.usage, loginKey: r.loginKey }]))
     void writeJsonAtomic(this.cacheFile, { version: 2, records } satisfies CacheFile).catch(() => undefined)
@@ -353,14 +396,10 @@ export class UsageService extends TypedEmitter<Events> {
     } else if (creds.kind === 'token' && !creds.secret) {
       result = { ...result, status: 'no-credentials', message: 'Kein Token gespeichert.' }
     } else if (expired) {
-      result = {
-        ...result,
-        status: 'expired',
-        message: 'Access-Token abgelaufen. Claude Code erneuert ihn beim nächsten Start einer Session dieses Kontos.',
-      }
+      result = { ...result, status: 'expired', message: expiredMessage(this.renewals.get(accountId)?.result) }
     }
     result.nextRefreshAt = live ? (this.live.get(accountId)?.usage.nextRefreshAt ?? null) : null
-    return result
+    return withoutPastWindows(result, Date.now())
   }
 
   private recompute(): void {
@@ -374,6 +413,17 @@ export class UsageService extends TypedEmitter<Events> {
       [...next].some(([id, usage]) => JSON.stringify(usage) !== JSON.stringify(this.snapshot.get(id)))
     this.snapshot = next
     if (changed) this.emit('changed', this.getAll())
+  }
+}
+
+function expiredMessage(renewal: Renewal['result'] | undefined): string {
+  switch (renewal) {
+    case 'rejected':
+      return 'Die Anmeldung ist abgelaufen und lässt sich nicht mehr erneuern. Melde dich über „Anmelden“ neu an.'
+    case 'failed':
+      return 'Access-Token abgelaufen, die Erneuerung ist fehlgeschlagen. Neuer Versuch beim nächsten Abruf.'
+    default:
+      return 'Access-Token abgelaufen. Er wird beim nächsten Abruf erneuert.'
   }
 }
 
@@ -398,6 +448,26 @@ function usableToken(creds: AccountCredentials): string | null {
 function worthAsking(record: LiveRecord | undefined, tokenKey: string): boolean {
   if (!record) return true
   return record.tokenKey !== null && record.tokenKey !== tokenKey && record.usage.status !== 'ok'
+}
+
+/**
+ * Older data can describe windows that have reset since: their usage is gone, and the next
+ * window only starts with the next message. Without this, an account that wasn't asked for days
+ * would still show the old percentage with „Reset jetzt“.
+ */
+function withoutPastWindows(usage: AccountUsage, now: number): AccountUsage {
+  const isPast = (window: UsageWindow | null) => Boolean(window?.resetsAt && Date.parse(window.resetsAt) <= now)
+  const reset = (window: UsageWindow): UsageWindow =>
+    isPast(window) ? { ...window, percent: 0, resetsAt: null, severity: null } : window
+  if (!isPast(usage.fiveHour) && !isPast(usage.sevenDay) && !usage.scoped.some(isPast)) return usage
+  return {
+    ...usage,
+    fiveHour: usage.fiveHour && reset(usage.fiveHour),
+    sevenDay: usage.sevenDay && reset(usage.sevenDay),
+    scoped: usage.scoped.map(reset),
+    // The split of the weekly usage by model belongs to the window that is over.
+    breakdown: isPast(usage.sevenDay) ? [] : usage.breakdown,
+  }
 }
 
 function emptyUsage(accountId: string, status: UsageStatus, source: AccountUsage['source']): AccountUsage {

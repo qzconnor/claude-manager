@@ -35,6 +35,7 @@ Die App wurde in acht Schritten gebaut. Jeder Schritt baut auf dem vorherigen au
 - Live-Limits über den OAuth-Usage-Endpunkt (wie cswap). Fallback auf den Cache von Claude Code, Drosselung und Backoff bei Rate-Limits.
 - Token-Verbrauch pro Tag und Modell aus den lokalen Transcripts (inkl. Subagents), Zeitraum 7/14/30/90 Tage.
 - Neue Logins bekommen ihre Limits sofort, nicht erst mit der nächsten Runde. Der Standard-Account fehlt im Dashboard und auf der Accounts-Seite, solange sein Login schon ein eigener Account ist.
+- Accounts, die gerade nicht genutzt werden, bleiben live: Ihr abgelaufener Zugangstoken wird wie in Claude Code mit dem Refresh-Token erneuert (gleiche Sperre, Schreiben nur ohne zwischenzeitliche Änderung). Fenster, deren Reset vorbei ist, stehen auf 0 % statt auf dem alten Wert.
 
 ## 6. Lokale API ✓
 
@@ -67,7 +68,8 @@ Die App wurde in acht Schritten gebaut. Jeder Schritt baut auf dem vorherigen au
 - Tabs schließen sich, wenn Claude Code oder die Shell ohne Fehler endet (z. B. Strg+C). Einstellbar: ohne Fehler, immer, nie. Beendet die App den Prozess selbst, etwa beim Account-Wechsel, bleibt der Tab.
 - Import aus cswap, nur sichtbar, wenn cswap installiert ist und Accounts kennt. Übernommen werden Alias, E-Mail und Organisation aus `sequence.json`, nie cswaps Zugangsdaten. Jeder Account bekommt einen eigenen Browser-Login mit vorausgefüllter E-Mail. Ein Login mit anderer Person oder Organisation wird auf der Karte angezeigt.
 - Die Nachfragen des Hauptprozesses (Beenden mit laufenden Terminals, Fehler von `cm`) erscheinen als Dialog in der App statt als Windows-Fenster. Nur wenn die Oberfläche abgestürzt ist, kommt die Windows-Box als Rückfall, damit sich das Fenster immer schließen lässt.
-- Updates direkt in der App (electron-updater, GitHub-Releases) mit Versionshinweisen. Releases erstellt semantic-release bei jedem Push auf `master` aus den Conventional Commits.
+- Updates direkt in der App (electron-updater, GitHub-Releases) mit Versionshinweisen, als Tab in den Einstellungen. Releases erstellt semantic-release bei jedem Push auf `master` aus den Conventional Commits.
+- Die Einstellungen haben eine Tab-Leiste über die ganze Breite mit Symbolen statt der kleinen Umschalter.
 
 ## Mögliche nächste Schritte
 
