@@ -12,6 +12,7 @@ import type {
   CswapStatus,
   DeepPartial,
   DialogRequest,
+  GitBranch,
   SessionDetail,
   SessionGroup,
   TerminalCreateOptions,
@@ -67,6 +68,8 @@ export const IpcInvoke = {
   usageRefresh: 'usage:refresh',
   usageStats: 'usage:stats',
 
+  gitBranch: 'git:branch',
+
   commandStatus: 'command:status',
   commandSetRegistered: 'command:set-registered',
 
@@ -100,6 +103,8 @@ export const IpcEvent = {
   /** Ask the window to show a terminal tab (e.g. opened through the local API). */
   terminalActivate: 'event:terminal-activate',
   usageChanged: 'event:usage-changed',
+  /** The branch of the repository last asked for changed (e.g. a checkout in the terminal). */
+  gitBranchChanged: 'event:git-branch-changed',
   sessionsChanged: 'event:sessions-changed',
   apiStatusChanged: 'event:api-status-changed',
   updatesChanged: 'event:updates-changed',
@@ -192,6 +197,14 @@ export interface ManagerApi {
     refresh(accountId?: string): Promise<AccountUsage[]>
     stats(accountId: string, days?: number): Promise<AccountTokenStats>
     onChanged(cb: (usage: AccountUsage[]) => void): Unsubscribe
+  }
+  git: {
+    /**
+     * Branch of the repository `cwd` lies in; null without git or outside a repository.
+     * Changes to it are reported through `onBranchChanged` until another `cwd` is asked for.
+     */
+    branch(cwd: string): Promise<GitBranch | null>
+    onBranchChanged(cb: (cwd: string, branch: GitBranch | null) => void): Unsubscribe
   }
   /** The `cm` command line launcher. */
   command: {

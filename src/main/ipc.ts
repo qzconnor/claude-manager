@@ -161,6 +161,10 @@ export function registerIpc(ctx: AppContext): void {
   )
   ctx.usage.on('changed', (usage) => broadcast(IpcEvent.usageChanged, usage))
 
+  // --- git -----------------------------------------------------------------
+  ipcMain.handle(IpcInvoke.gitBranch, (_e, cwd: unknown) => ctx.git.branch(requireString(cwd, 'cwd')))
+  ctx.git.on('changed', (cwd, branch) => broadcast(IpcEvent.gitBranchChanged, cwd, branch))
+
   // --- `cm` command --------------------------------------------------------
   ipcMain.handle(IpcInvoke.commandStatus, () => ctx.command.status())
   ipcMain.handle(IpcInvoke.commandSetRegistered, (_e, registered: unknown) => {

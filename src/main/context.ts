@@ -2,6 +2,7 @@ import type { CommandIntegration } from './cli/command-integration'
 import type { AccountService } from './services/account-service'
 import type { ClaudeCli } from './services/claude-cli'
 import type { CswapImport } from './services/cswap-import'
+import type { GitService } from './services/git-service'
 import type { IndexerClient } from './services/indexer-client'
 import type { SessionHandoff } from './services/session-handoff'
 import type { SessionService } from './services/session-service'
@@ -25,6 +26,8 @@ export interface AppContext {
   /** Continuing sessions with another account's limits. */
   handoff: SessionHandoff
   usage: UsageService
+  /** Branch of the repository a terminal works in, for the title bar. */
+  git: GitService
   command: CommandIntegration
   /** App updates from the GitHub releases. */
   updates: UpdateService

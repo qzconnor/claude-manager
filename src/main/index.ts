@@ -12,6 +12,7 @@ import { AUTOSTART_ARG, setLaunchAtLogin } from './lib/login-item'
 import { AccountService } from './services/account-service'
 import { ClaudeCli } from './services/claude-cli'
 import { CswapImport } from './services/cswap-import'
+import { GitService } from './services/git-service'
 import { IndexerClient } from './services/indexer-client'
 import { LoginProfiles } from './services/login-profiles'
 import { SessionHandoff } from './services/session-handoff'
@@ -59,6 +60,7 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
   const handoff = new SessionHandoff(accounts, sessions, terminals, settings)
   const usage = new UsageService(accounts, settings, indexer, userDataDir, userAgent)
   await usage.init()
+  const git = new GitService()
   const command = new CommandIntegration()
   const updates = new UpdateService(userAgent)
   updates.init()
@@ -78,6 +80,7 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
     sessions,
     handoff,
     usage,
+    git,
     command,
     updates,
     async appInfo(): Promise<AppInfo> {
@@ -273,6 +276,7 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
     restore.dispose()
     terminals.disposeAll()
     usage.dispose()
+    git.dispose()
     sessions.dispose()
     accounts.dispose()
     indexer.dispose()
