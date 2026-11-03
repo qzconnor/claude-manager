@@ -12,7 +12,7 @@ const status = computed(() => {
     return { icon: CircleCheckIcon, tone: 'text-success', text: kind === 'token' || kind === 'apiKey' ? 'Secret hinterlegt' : 'Angemeldet' }
   }
   if (authState === 'expired') {
-    return { icon: ClockAlertIcon, tone: 'text-warning', text: 'Access-Token abgelaufen – Claude Code erneuert ihn beim nächsten Start' }
+    return { icon: ClockAlertIcon, tone: 'text-warning', text: 'Access-Token abgelaufen – wird beim nächsten Usage-Abruf erneuert' }
   }
   return {
     icon: CircleAlertIcon,

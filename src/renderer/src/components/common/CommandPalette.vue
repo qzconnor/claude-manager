@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/command'
 import { useLauncher } from '@/composables/useLauncher'
 import { formatRelative } from '@/lib/format'
+import { UPDATES_ROUTE } from '@/router'
 import { useAccountsStore } from '@/stores/accounts'
 import { useSessionsStore } from '@/stores/sessions'
 import { useTerminalsStore } from '@/stores/terminals'
@@ -116,7 +117,7 @@ function switchTo(id: string) {
           Einstellungen
           <CommandShortcut>Strg+,</CommandShortcut>
         </CommandItem>
-        <CommandItem value="go-updates" @select="run(() => router.push({ name: 'updates' }))">
+        <CommandItem value="go-updates" @select="run(() => router.push(UPDATES_ROUTE))">
           <SparklesIcon />
           Updates und Versionshinweise
         </CommandItem>

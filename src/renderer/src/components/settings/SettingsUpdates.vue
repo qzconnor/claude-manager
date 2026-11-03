@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { CloudOffIcon, ExternalLinkIcon, RefreshCwIcon, ScrollTextIcon } from '@lucide/vue'
-import { computed, onActivated, ref } from 'vue'
-import PageContainer from '@/components/common/PageContainer.vue'
-import PageHeader from '@/components/common/PageHeader.vue'
+import { computed, onActivated, onMounted } from 'vue'
 import ReleaseDetails from '@/components/updates/ReleaseDetails.vue'
 import UpdateStatus from '@/components/updates/UpdateStatus.vue'
 import { Badge } from '@/components/ui/badge'
@@ -17,16 +15,17 @@ import { useUpdatesStore } from '@/stores/updates'
 
 const updates = useUpdatesStore()
 
-/** Version installed by an update since the notes were looked at last – highlighted this time. */
-const justUpdated = ref<string | null>(null)
-
-// The page stays alive in the background, so this runs every time it is shown.
-onActivated(() => {
-  if (updates.unseen) justUpdated.value = updates.state.current
+/**
+ * Runs whenever the tab is shown: when it is opened, and when the settings page comes back
+ * while the tab is open (the page stays alive in the background). Both can happen at once.
+ */
+function shown() {
   updates.markSeen()
   // Every time: a list loaded earlier may be outdated (or empty) by now.
-  void updates.loadReleases()
-})
+  if (!updates.releasesLoading) void updates.loadReleases()
+}
+onMounted(shown)
+onActivated(shown)
 
 const dateFormat = new Intl.DateTimeFormat('de', { day: 'numeric', month: 'long', year: 'numeric' })
 const formatDate = (iso: string) => (iso && !Number.isNaN(Date.parse(iso)) ? dateFormat.format(new Date(iso)) : '')
@@ -50,19 +49,19 @@ function onNotesClick(event: MouseEvent) {
 </script>
 
 <template>
-  <PageContainer class="max-w-4xl">
-    <PageHeader
-      title="Updates"
-      description="Neue Versionen von Claude Manager und was sich darin geändert hat. Gesucht wird beim Start und alle 4 Stunden."
-    >
-      <template #actions>
+  <div class="flex flex-col gap-6">
+    <div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+      <p class="min-w-64 flex-1 text-sm text-muted-foreground">
+        Neue Versionen von Claude Manager und was sich darin geändert hat. Gesucht wird beim Start und alle 4 Stunden.
+      </p>
+      <div class="flex items-center gap-2">
         <Badge v-if="updates.state.current" variant="secondary" class="tabular-nums">Version {{ updates.state.current }}</Badge>
         <Button variant="outline" :disabled="!canCheck" @click="updates.check()">
           <RefreshCwIcon data-icon="inline-start" :class="updates.state.status === 'checking' && 'animate-spin'" />
           Jetzt suchen
         </Button>
-      </template>
-    </PageHeader>
+      </div>
+    </div>
 
     <UpdateStatus />
 
@@ -108,12 +107,14 @@ function onNotesClick(event: MouseEvent) {
         <Card
           v-for="release in updates.releases"
           :key="release.version"
-          :class="cn((release.version === justUpdated || isNewer(release.version)) && 'bg-primary/5 ring-2 ring-primary/50')"
+          :class="
+            cn((release.version === updates.justUpdated || isNewer(release.version)) && 'bg-primary/5 ring-2 ring-primary/50')
+          "
         >
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
               <span class="tabular-nums">{{ release.version }}</span>
-              <Badge v-if="release.version === justUpdated">Gerade aktualisiert</Badge>
+              <Badge v-if="release.version === updates.justUpdated">Gerade aktualisiert</Badge>
               <Badge v-else-if="isInstalled(release.version)" variant="secondary">Installiert</Badge>
               <Badge v-else-if="isNewer(release.version)">Neu</Badge>
             </CardTitle>
@@ -135,5 +136,5 @@ function onNotesClick(event: MouseEvent) {
         </Card>
       </template>
     </section>
-  </PageContainer>
+  </div>
 </template>
