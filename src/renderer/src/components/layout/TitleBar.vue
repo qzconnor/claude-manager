@@ -17,21 +17,20 @@ const tabsInSidebar = computed(() => settings.settings.appearance.tabPosition ==
 </script>
 
 <template>
+  <!-- An unfocused window fades the title bar's content but not the selected tab's background,
+       which has to keep the page's colour to stay joined to it. -->
   <header
-    :class="
-      cn(
-        'app-drag flex h-(--titlebar-height) shrink-0 items-center pr-(--caption-buttons-width) transition-opacity',
-        !app.windowState.focused && 'opacity-75',
-      )
-    "
+    :data-unfocused="!app.windowState.focused || undefined"
+    class="app-drag flex h-(--titlebar-height) shrink-0 items-center pr-(--caption-buttons-width)"
   >
-    <!-- Centred over the nav rail; the tabs start right at its edge, so the logo has the same space on both sides.
+    <!-- Centred over the nav rail; the tabs start right at its edge, so the logo has the same space on both sides,
+         and it moves down with the tabs to sit on their centre line.
          Above the wide sidebar it stays centred over the icons (8 px rail padding + 10 px button padding). -->
     <div
       :class="
         cn(
-          'flex shrink-0 items-center',
-          tabsInSidebar ? 'w-(--sidebar-width) gap-2.5 pl-4' : 'w-13 justify-center',
+          'flex shrink-0 items-center transition-opacity in-data-unfocused:opacity-75',
+          tabsInSidebar ? 'w-(--sidebar-width) gap-2.5 pl-4' : 'w-13 justify-center self-stretch pt-1.5',
         )
       "
     >
@@ -41,6 +40,8 @@ const tabsInSidebar = computed(() => settings.settings.appearance.tabPosition ==
     </div>
     <TerminalTabs v-if="!tabsInSidebar" class="min-w-0" />
     <div class="h-full min-w-8 flex-1" />
-    <TitleBarUsage class="mr-2" />
+    <div class="mr-2 flex items-center transition-opacity in-data-unfocused:opacity-75">
+      <TitleBarUsage />
+    </div>
   </header>
 </template>

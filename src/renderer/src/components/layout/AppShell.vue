@@ -1,15 +1,44 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount } from 'vue'
+import { useElementBounding } from '@vueuse/core'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalWorkspace from '@/components/terminal/TerminalWorkspace.vue'
+import { cn } from '@/lib/utils'
 import { useTerminalsStore } from '@/stores/terminals'
+import { useUiStore } from '@/stores/ui'
 import NavRail from './NavRail.vue'
 import TitleBar from './TitleBar.vue'
 
 const route = useRoute()
 const router = useRouter()
 const terminals = useTerminalsStore()
+const ui = useUiStore()
 const onTerminals = computed(() => route.name === 'terminals')
+
+const main = ref<HTMLElement | null>(null)
+const { left: mainLeft } = useElementBounding(main)
+
+/**
+ * The part of the page's top border below the selected tab in the title bar (px from the page's
+ * left edge). It is left out, and the tab's own side borders carry on into the rest of the line.
+ */
+const borderGap = computed(() => {
+  const edges = ui.selectedTabEdges
+  return edges ? { start: edges.left - mainLeft.value + 1, end: edges.right - mainLeft.value - 1 } : null
+})
+/** A tab over the rounded corner squares it off, so the tab's left border runs straight down the page. */
+const squareCorner = computed(() => borderGap.value !== null && borderGap.value.start < 24)
+const frameMask = computed(() => {
+  if (!borderGap.value) return undefined
+  const { start, end } = borderGap.value
+  // Layer 1 keeps everything below the top line, layer 2 the top line except for the gap.
+  return {
+    maskImage: `linear-gradient(#000, #000), linear-gradient(to right, #000 ${start}px, transparent ${start}px, transparent ${end}px, #000 ${end}px)`,
+    maskPosition: '0 1px, 0 0',
+    maskSize: '100% calc(100% - 1px), 100% 1px',
+    maskRepeat: 'no-repeat',
+  }
+})
 
 // Terminals opened through the local API with `activate: true`.
 const offActivate = window.api.terminals.onActivate((id) => {
@@ -24,7 +53,16 @@ onBeforeUnmount(offActivate)
     <TitleBar />
     <div class="flex min-h-0 flex-1">
       <NavRail />
-      <main class="relative min-w-0 flex-1 overflow-hidden rounded-tl-xl border-t border-l bg-surface">
+      <!-- isolate keeps the pages' own z-indices below the frame. -->
+      <main
+        ref="main"
+        :class="
+          cn(
+            'relative isolate min-w-0 flex-1 overflow-hidden bg-surface',
+            squareCorner ? 'rounded-tl-none' : 'rounded-tl-xl',
+          )
+        "
+      >
         <!-- Terminals stay mounted while other pages are shown so their state survives. -->
         <TerminalWorkspace v-show="onTerminals" class="absolute inset-0" :visible="onTerminals" />
         <!-- No v-if on the child: the compiler would give every route the same key and
@@ -34,6 +72,12 @@ onBeforeUnmount(offActivate)
             <component :is="Component" />
           </KeepAlive>
         </RouterView>
+        <!-- The page's border, drawn on top so it can leave a gap below the selected tab. -->
+        <div
+          aria-hidden="true"
+          class="pointer-events-none absolute inset-0 z-100 rounded-[inherit] border-t border-l"
+          :style="frameMask"
+        />
       </main>
     </div>
   </div>

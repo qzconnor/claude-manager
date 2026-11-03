@@ -9,6 +9,11 @@ export const useUiStore = defineStore('ui', () => {
   const paletteOpen = ref(false)
   /** Incremented to ask the active terminal to open its search bar. */
   const searchRequest = ref(0)
+  /**
+   * Left and right edge (viewport px) of the selected tab in the title bar, as far as it is visible.
+   * The page below opens its top border there, so the tab merges into it.
+   */
+  const selectedTabEdges = ref<{ left: number; right: number } | null>(null)
 
   const confirmState = ref<(ConfirmOptions & { open: boolean }) | null>(null)
   let confirmResolve: ((value: boolean) => void) | null = null
@@ -27,5 +32,5 @@ export const useUiStore = defineStore('ui', () => {
     if (confirmState.value) confirmState.value = { ...confirmState.value, open: false }
   }
 
-  return { paletteOpen, searchRequest, confirmState, confirm, settleConfirm }
+  return { paletteOpen, searchRequest, selectedTabEdges, confirmState, confirm, settleConfirm }
 })

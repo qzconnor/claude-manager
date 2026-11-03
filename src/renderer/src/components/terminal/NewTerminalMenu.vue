@@ -1,119 +1,80 @@
 <script setup lang="ts">
-import { ChevronDownIcon, FolderOpenIcon, HistoryIcon, KeyRoundIcon, PlusIcon, SquareTerminalIcon } from '@lucide/vue'
-import { computed } from 'vue'
-import { useRouter } from 'vue-router'
-import AccountDot from '@/components/common/AccountDot.vue'
-import { Button } from '@/components/ui/button'
-import { ButtonGroup } from '@/components/ui/button-group'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuShortcut,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+import { ChevronDownIcon, ChevronRightIcon, PlusIcon } from '@lucide/vue'
+import { DropdownMenu, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useLauncher } from '@/composables/useLauncher'
-import { useAccountsStore } from '@/stores/accounts'
+import { cn } from '@/lib/utils'
+import NewTerminalMenuContent from './NewTerminalMenuContent.vue'
 
-const router = useRouter()
-const accounts = useAccountsStore()
+/** `vertical`: a row below the tabs in the sidebar instead of a button pair in the title bar. */
+defineProps<{ vertical?: boolean }>()
+
 const launcher = useLauncher()
 
-/** Token / API-key accounts can't use `claude auth login`. */
-const loginAccounts = computed(() => accounts.accounts.filter((a) => a.kind === 'oauth' || a.kind === 'system'))
+/** Borderless and with the hover of a tab, so the buttons blend in with the tab strip. */
+const titleBarButton =
+  'flex h-8 cursor-pointer items-center justify-center rounded-lg transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 aria-expanded:bg-accent aria-expanded:text-foreground'
 </script>
 
 <template>
-  <ButtonGroup class="app-no-drag shrink-0">
+  <div
+    v-if="vertical"
+    class="group/new flex h-8 w-full shrink-0 items-center rounded-lg pr-1 text-xs text-muted-foreground transition-colors has-focus-visible:ring-2 has-focus-visible:ring-ring/50 hover:bg-accent hover:text-foreground has-aria-expanded:bg-accent has-aria-expanded:text-foreground"
+  >
+    <!-- Looks like a tab, so it reads as the next entry of the list. The chevron shows up on hover
+         like the close button of a tab and opens its menu beside the sidebar. -->
     <Tooltip>
       <TooltipTrigger as-child>
-        <Button variant="outline" size="icon" aria-label="Neue Session" @click="launcher.newSession()">
-          <PlusIcon class="size-5" />
-        </Button>
+        <button
+          type="button"
+          class="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 pl-3 text-left outline-none"
+          @click="launcher.newSession()"
+        >
+          <PlusIcon class="size-3.5 shrink-0" />
+          <span class="truncate">Neue Session</span>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right">Neue Session (Strg+Umschalt+T)</TooltipContent>
+    </Tooltip>
+    <DropdownMenu>
+      <DropdownMenuTrigger as-child>
+        <button
+          type="button"
+          aria-label="Weitere Optionen"
+          class="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-0 transition-opacity outline-none group-hover/new:opacity-100 hover:bg-foreground/10 focus-visible:opacity-100 aria-expanded:opacity-100"
+        >
+          <ChevronRightIcon class="size-3.5" />
+        </button>
+      </DropdownMenuTrigger>
+      <NewTerminalMenuContent side="right" :side-offset="12" />
+    </DropdownMenu>
+  </div>
+
+  <div
+    v-else
+    class="app-no-drag flex shrink-0 items-center text-muted-foreground transition-opacity in-data-unfocused:opacity-75"
+  >
+    <!-- Like the new-tab buttons of Windows Terminal: a plus and a narrow chevron, each lit on its own. -->
+    <Tooltip>
+      <TooltipTrigger as-child>
+        <button
+          type="button"
+          aria-label="Neue Session"
+          :class="cn(titleBarButton, 'w-8')"
+          @click="launcher.newSession()"
+        >
+          <PlusIcon class="size-4.5" />
+        </button>
       </TooltipTrigger>
       <TooltipContent>Neue Session (Strg+Umschalt+T)</TooltipContent>
     </Tooltip>
     <DropdownMenu>
       <DropdownMenuTrigger as-child>
-        <Button variant="outline" size="icon" class="w-7" aria-label="Weitere Optionen">
-          <ChevronDownIcon class="size-4.5" />
-        </Button>
+        <button type="button" aria-label="Weitere Optionen" :class="cn(titleBarButton, 'w-6')">
+          <ChevronDownIcon class="size-3.5" />
+        </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" class="w-64" @close-auto-focus.prevent>
-        <DropdownMenuLabel>Neue Claude-Session</DropdownMenuLabel>
-        <DropdownMenuGroup>
-          <DropdownMenuItem
-            v-for="account in accounts.accounts"
-            :key="account.id"
-            @select="launcher.newSession(account.id)"
-          >
-            <AccountDot :color="account.color" />
-            <span class="truncate">{{ account.name }}</span>
-            <DropdownMenuShortcut v-if="account.id === launcher.defaultAccountId()">Standard</DropdownMenuShortcut>
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuGroup>
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
-              <FolderOpenIcon />
-              In Ordner starten…
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent class="w-56">
-              <DropdownMenuItem
-                v-for="account in accounts.accounts"
-                :key="account.id"
-                @select="launcher.newSessionInFolder(account.id)"
-              >
-                <AccountDot :color="account.color" />
-                <span class="truncate">{{ account.name }}</span>
-              </DropdownMenuItem>
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
-              <SquareTerminalIcon />
-              PowerShell mit Account
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent class="w-56">
-              <DropdownMenuItem
-                v-for="account in accounts.accounts"
-                :key="account.id"
-                @select="launcher.shell(account.id)"
-              >
-                <AccountDot :color="account.color" />
-                <span class="truncate">{{ account.name }}</span>
-              </DropdownMenuItem>
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-          <DropdownMenuSub v-if="loginAccounts.length">
-            <DropdownMenuSubTrigger>
-              <KeyRoundIcon />
-              Anmelden
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent class="w-56">
-              <DropdownMenuItem v-for="account in loginAccounts" :key="account.id" @select="launcher.login(account.id)">
-                <AccountDot :color="account.color" />
-                <span class="truncate">{{ account.name }}</span>
-              </DropdownMenuItem>
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuGroup>
-          <DropdownMenuItem @select="router.push({ name: 'sessions' })">
-            <HistoryIcon />
-            Session fortsetzen…
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
-      </DropdownMenuContent>
+      <NewTerminalMenuContent />
     </DropdownMenu>
-  </ButtonGroup>
+  </div>
 </template>

@@ -29,6 +29,7 @@ import {
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { useAccountSwitch } from '@/composables/useAccountSwitch'
 import { useTerminalActions } from '@/composables/useTerminalActions'
+import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
 import { attempt } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
@@ -50,6 +51,15 @@ const sessionAccount = computed(() =>
   props.terminal.accountId === props.terminal.authAccountId ? undefined : accounts.get(props.terminal.accountId),
 )
 const exited = computed(() => props.terminal.status === 'exited')
+
+// The terminal pane lays its own colour over the page's surface; the selected tab in the title bar
+// stacks the same two layers, so it has exactly the colour of the terminal it joins.
+const { containerBackground } = useTerminalAppearance()
+const joinedBackground = computed(() =>
+  !props.vertical && props.selected
+    ? { background: `linear-gradient(${containerBackground.value}, ${containerBackground.value}), var(--surface)` }
+    : undefined,
+)
 // Choices are built when the menu opens, so they reflect the current limits.
 const menuOpen = ref(false)
 const choices = computed(() =>
@@ -125,13 +135,25 @@ function openFolder() {
             :aria-selected="selected"
             :class="
               cn(
-                'app-no-drag group/tab relative flex h-8 shrink-0 cursor-pointer items-center gap-2 rounded-lg pr-1 pl-3 text-xs transition-colors',
-                vertical ? 'w-full' : 'max-w-56 min-w-28',
-                selected
-                  ? 'bg-surface-strong text-foreground shadow-sm ring-1 ring-foreground/10'
-                  : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                'app-no-drag group/tab relative flex shrink-0 cursor-pointer items-center gap-2 pr-1 pl-3 text-xs transition-colors',
+                vertical
+                  ? cn(
+                      'h-8 w-full rounded-lg',
+                      selected
+                        ? 'bg-surface-strong text-foreground shadow-sm ring-1 ring-foreground/10'
+                        : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                    )
+                  : // In the title bar the selected tab has the terminal's colour and the page's border and
+                    // stays open at the bottom, so it joins the terminal below. The others light up as a floating pill.
+                    cn(
+                      'isolate max-w-56 min-w-28 rounded-t-lg border-x border-t',
+                      selected
+                        ? 'border-border text-foreground in-data-unfocused:text-muted-foreground'
+                        : 'border-transparent text-muted-foreground before:absolute before:inset-x-0 before:inset-y-1 before:-z-10 before:rounded-lg before:transition-colors hover:text-foreground hover:before:bg-accent',
+                    ),
               )
             "
+            :style="joinedBackground"
             @click="emit('select')"
             @dblclick="startRename"
             @mousedown="onMouseDown"
