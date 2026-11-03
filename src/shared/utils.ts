@@ -46,6 +46,20 @@ export function canLendCredentials(kind: AccountKind): boolean {
   return kind === 'token' || kind === 'apiKey'
 }
 
+/**
+ * Lower case for the session search, the same in the window and in the indexer. Keeps the length,
+ * so positions found in the result also hold in the original text: only İ would grow
+ * (to i and a combining dot), it becomes a plain i.
+ */
+export function foldCase(text: string): string {
+  return text.replaceAll('İ', 'i').toLowerCase()
+}
+
+/** The words of a search query in lower case; a match has to contain every one of them. */
+export function searchTerms(query: string): string[] {
+  return [...new Set(foldCase(query).split(/\s+/).filter(Boolean))].slice(0, 8)
+}
+
 /** Personal organizations are named "<email>'s Organization". */
 export function isPersonalOrganizationName(name: string): boolean {
   return /'s Organization$/i.test(name)

@@ -1,14 +1,16 @@
 import { watch, type FSWatcher } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
-import type { SessionDetail, SessionGroup, SessionSummary, TranscriptToolDetail } from '@shared/types'
+import type { SessionDetail, SessionGroup, SessionSearchHit, SessionSummary, TranscriptToolDetail } from '@shared/types'
 import { TypedEmitter } from '../lib/typed-emitter'
-import type { ConversationResult, IndexedSession } from '../workers/indexer-protocol'
+import type { ConversationResult, IndexedSession, TranscriptSearchHit } from '../workers/indexer-protocol'
 import type { AccountService } from './account-service'
 import type { IndexerClient } from './indexer-client'
 
 type Events = { changed: [accountId: string] }
 
 const MAX_CONVERSATION_MESSAGES = 600
+/** Hits per account; a search with more is too vague to go through all of them. */
+const MAX_SEARCH_HITS = 200
 const TOOL_USE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 
 export class SessionService extends TypedEmitter<Events> {
@@ -65,6 +67,26 @@ export class SessionService extends TypedEmitter<Events> {
       maxMessages: MAX_CONVERSATION_MESSAGES,
     })
     return { summary, messages: conversation.messages, truncated: conversation.truncated }
+  }
+
+  /** Full-text search through the conversations of all accounts (see the indexer's search index). */
+  async search(query: string): Promise<SessionSearchHit[]> {
+    const groups = await Promise.all(
+      this.accounts.list().map(async (account) => {
+        try {
+          const hits = await this.indexer.request<TranscriptSearchHit[]>({
+            method: 'searchTranscripts',
+            projectsDir: this.accounts.paths(account.id).projectsDir,
+            query,
+            limit: MAX_SEARCH_HITS,
+          })
+          return hits.map((hit): SessionSearchHit => ({ accountId: account.id, ...hit }))
+        } catch {
+          return []
+        }
+      }),
+    )
+    return groups.flat()
   }
 
   /** Complete input and output of one tool call, loaded when it is expanded in the transcript. */

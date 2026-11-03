@@ -142,6 +142,9 @@ export function registerIpc(ctx: AppContext): void {
       requireString(toolUseId, 'toolUseId'),
     ),
   )
+  ipcMain.handle(IpcInvoke.sessionsSearch, (_e, query: unknown) =>
+    ctx.sessions.search(typeof query === 'string' ? query.slice(0, 200) : ''),
+  )
   ipcMain.handle(IpcInvoke.sessionsContinueWith, (_e, accountId: unknown, sessionId: unknown, targetAccountId: unknown) =>
     ctx.handoff.resumeSession(
       requireString(accountId, 'accountId'),

@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import NewTerminalMenu from './NewTerminalMenu.vue'
+import TabSearch from './TabSearch.vue'
 import TerminalTab from './TerminalTab.vue'
 
 /** `vertical`: listed in the sidebar instead of the title bar. */
@@ -81,7 +82,8 @@ watch(
 
 <template>
   <div v-if="vertical" class="flex flex-col gap-1">
-    <span class="shrink-0 px-2.5 py-1 text-xs font-medium text-muted-foreground">Tabs</span>
+    <!-- Takes the place of a "Tabs" heading: it searches them, and the sessions as well. -->
+    <TabSearch vertical />
     <!-- The padding keeps the selected tab's ring from being clipped, -mx-1 lines the tabs up with the nav. -->
     <div
       v-if="terminals.terminals.length > 0"

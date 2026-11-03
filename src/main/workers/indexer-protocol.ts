@@ -6,6 +6,8 @@ export type IndexerRequest =
   | { method: 'tokenStats'; projectsDir: string; days: number }
   | { method: 'readConversation'; filePath: string; maxMessages: number }
   | { method: 'readToolCall'; filePath: string; toolUseId: string }
+  /** An empty query only brings the search index up to date. */
+  | { method: 'searchTranscripts'; projectsDir: string; query: string; limit: number }
 
 export type IndexerResponse =
   | { id: number; ok: true; result: unknown }
@@ -23,6 +25,14 @@ export interface TokenStatsResult {
   days: [string, [number, number, number, number, number]][]
   models: [string, [number, number, number, number, number]][]
   sessionCount: number
+}
+
+/** Newest sessions first. */
+export interface TranscriptSearchHit {
+  sessionId: string
+  role: 'user' | 'assistant'
+  snippet: string
+  matches: number
 }
 
 export interface ConversationResult {

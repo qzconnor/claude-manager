@@ -9,6 +9,7 @@ export type ShortcutAction =
   | 'previous-tab'
   | 'open-settings'
   | 'command-palette'
+  | 'tab-search'
   | 'zoom-in'
   | 'zoom-out'
   | 'zoom-reset'
@@ -23,6 +24,7 @@ export function matchShortcut(e: KeyboardEvent): ShortcutAction | null {
     if (key === 't') return 'new-tab'
     if (key === 'w') return 'close-tab'
     if (key === 'p') return 'command-palette'
+    if (key === 'a') return 'tab-search'
     if (key === 'f') return 'find'
     if (e.key === 'Tab') return 'previous-tab'
     return null

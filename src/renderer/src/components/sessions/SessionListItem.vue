@@ -2,8 +2,9 @@
 import { ArrowRightLeftIcon, CopyIcon, FolderOpenIcon, GitBranchIcon, GitForkIcon, PlayIcon } from '@lucide/vue'
 import { ref } from 'vue'
 import { toast } from 'vue-sonner'
-import type { SessionSummary } from '@shared/types'
+import type { SessionSearchHit, SessionSummary } from '@shared/types'
 import AccountChoiceItems from '@/components/common/AccountChoiceItems.vue'
+import HighlightText from '@/components/common/HighlightText.vue'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -23,7 +24,14 @@ import { formatRelative, shortenPath } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/stores/app'
 
-const props = defineProps<{ session: SessionSummary; selected: boolean; now: number }>()
+const props = defineProps<{
+  session: SessionSummary
+  selected: boolean
+  now: number
+  /** Where a search matched in the conversation. */
+  hit?: SessionSearchHit
+  terms?: string[]
+}>()
 const emit = defineEmits<{ select: [] }>()
 
 const app = useAppStore()
@@ -58,7 +66,7 @@ async function copyId() {
           <div class="flex min-w-0 items-baseline gap-2">
             <!-- ItemTitle is a flex container, so the ellipsis needs its own text box. -->
             <ItemTitle class="min-w-0 flex-1">
-              <span class="truncate">{{ session.title }}</span>
+              <span class="truncate"><HighlightText :text="session.title" :terms="terms ?? []" /></span>
             </ItemTitle>
             <span class="shrink-0 text-xs text-muted-foreground tabular-nums">
               {{ formatRelative(session.updatedAt, now) }}
@@ -74,6 +82,11 @@ async function copyId() {
               {{ session.messageCount }}{{ session.messageCountExact ? '' : '+' }} Nachr.
             </span>
           </ItemDescription>
+          <p v-if="hit" class="line-clamp-2 text-xs text-muted-foreground">
+            <span class="font-medium text-foreground/80">{{ hit.role === 'user' ? 'Du' : 'Claude' }}:</span>{{ ' ' }}
+            <HighlightText :text="hit.snippet" :terms="terms ?? []" />
+            <span v-if="hit.matches > 1" class="tabular-nums"> · {{ hit.matches }} Treffer</span>
+          </p>
         </ItemContent>
       </Item>
     </ContextMenuTrigger>

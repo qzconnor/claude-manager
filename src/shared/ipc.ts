@@ -15,6 +15,7 @@ import type {
   GitBranch,
   SessionDetail,
   SessionGroup,
+  SessionSearchHit,
   TerminalCreateOptions,
   TerminalInfo,
   TranscriptToolDetail,
@@ -62,6 +63,7 @@ export const IpcInvoke = {
   sessionsList: 'sessions:list',
   sessionsGet: 'sessions:get',
   sessionsToolCall: 'sessions:tool-call',
+  sessionsSearch: 'sessions:search',
   sessionsContinueWith: 'sessions:continue-with',
 
   usageGet: 'usage:get',
@@ -188,6 +190,11 @@ export interface ManagerApi {
     get(accountId: string, sessionId: string): Promise<SessionDetail>
     /** Complete input and output of one tool call. */
     toolCall(accountId: string, sessionId: string, toolUseId: string): Promise<TranscriptToolDetail | null>
+    /**
+     * Sessions of all accounts whose prompts and answers contain every word of `query`, newest first.
+     * An empty query only brings the search index up to date, e.g. while the search opens.
+     */
+    search(query: string): Promise<SessionSearchHit[]>
     /** Opens the session in a new tab that runs with `targetAccountId`'s limits. */
     continueWith(accountId: string, sessionId: string, targetAccountId: string): Promise<TerminalInfo>
     onChanged(cb: (accountId: string) => void): Unsubscribe

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import AppLogo from '@/components/common/AppLogo.vue'
+import TabSearch from '@/components/terminal/TabSearch.vue'
 import TerminalTabs from '@/components/terminal/TerminalTabs.vue'
 import TitleBarBranch from './TitleBarBranch.vue'
 import TitleBarUsage from './TitleBarUsage.vue'
@@ -44,6 +45,8 @@ const tabsInSidebar = computed(() => settings.settings.appearance.tabPosition ==
     <div class="mr-2 flex items-center gap-2 transition-opacity in-data-unfocused:opacity-75">
       <TitleBarBranch />
       <TitleBarUsage />
+      <!-- At the end of the tab bar like in a browser; in the sidebar it heads the tabs instead. -->
+      <TabSearch v-if="!tabsInSidebar" />
     </div>
   </header>
 </template>

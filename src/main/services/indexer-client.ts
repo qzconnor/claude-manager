@@ -34,7 +34,10 @@ export class IndexerClient {
   private ensureWorker(): Worker {
     if (this.worker) return this.worker
     const worker = createIndexerWorker({
-      workerData: { cacheFile: join(this.userDataDir, 'cache', 'transcript-index.json') },
+      workerData: {
+        cacheFile: join(this.userDataDir, 'cache', 'transcript-index.json'),
+        searchCacheFile: join(this.userDataDir, 'cache', 'search-index.json'),
+      },
     })
     worker.on('message', (message: IndexerResponse) => {
       const pending = this.pending.get(message.id)

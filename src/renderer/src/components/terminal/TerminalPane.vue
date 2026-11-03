@@ -89,6 +89,13 @@ watch(
   },
 )
 
+watch(
+  () => ui.focusTerminalRequest,
+  () => {
+    if (props.active && !searchOpen.value) term.focus()
+  },
+)
+
 function closeSearch() {
   searchOpen.value = false
   term.clearSearch()

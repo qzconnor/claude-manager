@@ -235,6 +235,18 @@ export interface SessionGroup {
   error: string | null
 }
 
+/** A session whose conversation contains every word of a search. */
+export interface SessionSearchHit {
+  accountId: string
+  sessionId: string
+  /** Who wrote the message the snippet is taken from. */
+  role: 'user' | 'assistant'
+  /** Part of that message around the first match, on one line. */
+  snippet: string
+  /** How often the longest search word occurs in the conversation. */
+  matches: number
+}
+
 export interface TranscriptToolCall {
   /** `tool_use` id: loads the complete call with `sessions.toolCall`. */
   id: string | null

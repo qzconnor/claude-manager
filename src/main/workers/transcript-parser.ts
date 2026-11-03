@@ -237,6 +237,49 @@ export function parseTranscript(buf: Buffer, sessionId: string, withSummary: boo
   }
 }
 
+/** Starts a user's message in the search text. */
+export const SEARCH_USER = '\u0001'
+/** Starts one of Claude's answers in the search text. */
+export const SEARCH_ASSISTANT = '\u0002'
+const SEARCH_MARKERS = /[\u0001\u0002]/g
+/** Tool output arrives as user messages and makes up most of a transcript; it holds nothing typed. */
+const TOOL_RESULT = Buffer.from('"type":"tool_result"', 'latin1')
+
+/**
+ * The conversation as plain text for the full-text search: the user's prompts and Claude's answers,
+ * each message starting with SEARCH_USER or SEARCH_ASSISTANT. Tool calls and their output are left out.
+ * Only complete lines are read; `end` is the offset after the last one, to carry on from there.
+ */
+export function collectSearchText(buf: Buffer): { text: string; end: number } {
+  const parts: string[] = []
+  const end = buf.lastIndexOf(NEWLINE) + 1
+  let start = 0
+  while (start < end) {
+    const lineEnd = buf.indexOf(NEWLINE, start)
+    let contentEnd = lineEnd
+    if (contentEnd > start && buf[contentEnd - 1] === 0x0d) contentEnd--
+    const line = buf.subarray(start, contentEnd)
+    start = lineEnd + 1
+    if (line.length < 2 || SKIP_PREFIXES.some((p) => hasPrefix(line, 0, line.length, p)) || line.includes(TOOL_RESULT)) {
+      continue
+    }
+    let e: Record<string, unknown>
+    try {
+      e = JSON.parse(line.toString('utf8')) as Record<string, unknown>
+    } catch {
+      continue
+    }
+    if (!e || typeof e !== 'object' || e.isSidechain || e.isMeta) continue
+    const message = e.message as { content?: unknown; model?: unknown } | undefined
+    let text = ''
+    if (e.type === 'user') text = cleanPrompt(textOf(message?.content))
+    else if (e.type === 'assistant' && message?.model !== '<synthetic>') text = textOf(message?.content).trim()
+    else continue
+    if (text) parts.push((e.type === 'user' ? SEARCH_USER : SEARCH_ASSISTANT) + text.replace(SEARCH_MARKERS, ' '))
+  }
+  return { text: parts.join(''), end }
+}
+
 function toolSummary(name: string, input: unknown): string {
   if (!input || typeof input !== 'object') return ''
   const i = input as Record<string, unknown>
