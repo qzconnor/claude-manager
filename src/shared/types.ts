@@ -190,6 +190,8 @@ export interface TerminalInfo {
   sessionId: string | null
   /** Set while the session is stopped by a usage limit. */
   limit: SessionLimit | null
+  /** Claude Code works on a turn, as its window title shows (also when started in a shell tab). */
+  busy: boolean
   /** The session's title as in `/resume`, unless `fixedTitle`; without one a default. */
   title: string
   /** The title was given (renamed, or passed when opening) and doesn't follow the session. */
@@ -447,8 +449,10 @@ export interface TerminalSettings {
 export interface ClaudeSettings {
   /** Path to the `claude` executable. Empty = auto-detect from PATH. */
   executablePath: string
-  /** Default working directory for new terminals. Empty = user home. */
+  /** Default working directory for new terminals. Empty = the Downloads folder (`AppInfo.fallbackCwd`). */
   defaultCwd: string
+  /** The question for `defaultCwd` on the first start was answered (or put off). */
+  defaultCwdAsked: boolean
   /** Extra args appended to every interactive launch. */
   defaultArgs: string[]
   /** Minutes between automatic live usage refreshes (min. 2). */
@@ -510,6 +514,8 @@ export interface AppInfo {
   platform: string
   userDataDir: string
   homeDir: string
+  /** Where new sessions start when no folder is set: the Downloads folder. */
+  fallbackCwd: string
   claudeExecutable: string | null
   claudeVersion: string | null
   /** Windows build number (e.g. 26100), used to configure xterm for ConPTY. */
@@ -535,6 +541,8 @@ export interface GitBranch {
 export interface DialogOptions {
   title: string
   description?: string
+  /** Shown in a monospace box below the title, e.g. a folder. */
+  code?: string
   /** `alert` only has a single button. */
   kind?: 'confirm' | 'alert'
   confirmText?: string

@@ -22,11 +22,16 @@ export const useTerminalsStore = defineStore('terminals', () => {
     sync(await window.api.terminals.list())
   }
 
-  async function open(options: TerminalCreateOptions): Promise<TerminalInfo> {
+  /** Null when the user doesn't trust the folder (asked by the app before Claude Code starts). */
+  async function open(options: TerminalCreateOptions): Promise<TerminalInfo | null> {
     const info = await window.api.terminals.create(options)
+    if (info) show(info)
+    return info
+  }
+
+  function show(info: TerminalInfo): void {
     if (!terminals.value.some((t) => t.id === info.id)) terminals.value = [...terminals.value, info]
     activeId.value = info.id
-    return info
   }
 
   function activate(id: string): void {
@@ -59,7 +64,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     activeId.value = info.id
   }
 
-  /** Starts the same command again in a new tab at the same position. */
+  /** Starts the same command again in a new tab at the same position; the old one stays without trust. */
   async function restart(id: string): Promise<void> {
     const old = terminals.value.find((t) => t.id === id)
     if (!old) return
@@ -72,24 +77,28 @@ export const useTerminalsStore = defineStore('terminals', () => {
       resumeSessionId: old.resumeSessionId,
       title: old.fixedTitle ? old.title : null,
     })
+    if (!info) return
     await window.api.terminals.close(id)
     replace(id, index, info)
   }
 
   /** Continues the tab's session with another account's limits, in a new tab at the same position. */
-  async function continueWith(id: string, accountId: string): Promise<TerminalInfo | undefined> {
+  async function continueWith(id: string, accountId: string): Promise<TerminalInfo | null> {
     const index = terminals.value.findIndex((t) => t.id === id)
-    if (index === -1) return undefined
+    if (index === -1) return null
     const info = await window.api.terminals.continueWith(id, accountId)
-    replace(id, index, info)
+    if (info) replace(id, index, info)
     return info
   }
 
   /** Opens a session from the history with another account's limits. */
-  async function continueSession(accountId: string, sessionId: string, targetAccountId: string): Promise<TerminalInfo> {
+  async function continueSession(
+    accountId: string,
+    sessionId: string,
+    targetAccountId: string,
+  ): Promise<TerminalInfo | null> {
     const info = await window.api.sessions.continueWith(accountId, sessionId, targetAccountId)
-    if (!terminals.value.some((t) => t.id === info.id)) terminals.value = [...terminals.value, info]
-    activeId.value = info.id
+    if (info) show(info)
     return info
   }
 

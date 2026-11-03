@@ -13,6 +13,7 @@ import { Switch } from '@/components/ui/switch'
 import { useSetting } from '@/composables/useSetting'
 import { formatArgs, parseArgs } from '@/lib/args'
 import { attempt } from '@/lib/errors'
+import { shortenPath } from '@/lib/format'
 import { useAppStore } from '@/stores/app'
 import NumberControl from './NumberControl.vue'
 import SettingField from './SettingField.vue'
@@ -145,9 +146,13 @@ async function recheck() {
           @change="commitArgs"
         />
       </SettingField>
-      <SettingField for="claude-cwd" label="Standard-Arbeitsordner" description="Leer = Benutzerordner. Accounts können eigene Ordner festlegen.">
+      <SettingField for="claude-cwd" label="Standard-Arbeitsordner" description="Leer = Downloads-Ordner. Accounts können eigene Ordner festlegen.">
         <div class="w-80">
-          <DirectoryInput id="claude-cwd" v-model="defaultCwd" placeholder="Benutzerordner" />
+          <DirectoryInput
+            id="claude-cwd"
+            v-model="defaultCwd"
+            :placeholder="app.info ? shortenPath(app.info.fallbackCwd, app.info.homeDir) : 'Downloads'"
+          />
         </div>
       </SettingField>
       <SettingField

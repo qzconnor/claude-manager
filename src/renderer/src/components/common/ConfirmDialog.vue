@@ -15,7 +15,7 @@ import { useUiStore } from '@/stores/ui'
 
 /**
  * Renders the confirmation requested through `useUiStore().confirm()` and the message boxes
- * of the main process (closing with running terminals, `cm` errors).
+ * of the main process (closing with running terminals, `cm` errors, trusting a folder).
  * Plain buttons instead of AlertDialogAction/Cancel: those close the dialog before our
  * click handler runs, which would settle the promise with `false` first.
  */
@@ -40,10 +40,13 @@ onBeforeUnmount(offDialog)
           <TriangleAlertIcon />
         </AlertDialogMedia>
         <AlertDialogTitle>{{ state.title }}</AlertDialogTitle>
-        <AlertDialogDescription v-if="state.description" class="selectable [overflow-wrap:anywhere]">
+        <AlertDialogDescription v-if="state.description" class="selectable whitespace-pre-line [overflow-wrap:anywhere]">
           {{ state.description }}
         </AlertDialogDescription>
       </AlertDialogHeader>
+      <p v-if="state.code" class="selectable rounded-md bg-muted px-2.5 py-1.5 font-mono text-xs break-all">
+        {{ state.code }}
+      </p>
       <AlertDialogFooter>
         <Button v-if="state.kind !== 'alert'" variant="outline" @click="ui.settleConfirm(false)">
           {{ state.cancelText ?? 'Abbrechen' }}

@@ -54,7 +54,8 @@ export class WindowDialogs {
 
   private deliver(entry: PendingDialog): void {
     const win = BrowserWindow.fromWebContents(entry.contents)
-    if (win) revealWindow(win)
+    // Also out of the background, e.g. after closing through the taskbar: the question must be seen.
+    if (win) revealWindow(win, { steal: true })
     entry.sent = true
     entry.contents.send(IpcEvent.dialogRequest, entry.request)
   }
@@ -82,7 +83,7 @@ export class WindowDialogs {
       type: options.warning ? 'warning' : alert ? 'info' : 'question',
       title: 'Claude Manager',
       message: options.title,
-      detail: options.description,
+      detail: [options.code, options.description].filter(Boolean).join('\n\n') || undefined,
       buttons: alert ? [options.confirmText ?? 'OK'] : [options.confirmText ?? 'OK', options.cancelText ?? 'Abbrechen'],
       defaultId: alert ? 0 : 1,
       cancelId: alert ? 0 : 1,

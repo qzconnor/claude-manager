@@ -86,6 +86,7 @@ function sanitize(s: AppSettings): AppSettings {
     : d.terminal.panelBackground
   s.terminal.diffColors = s.terminal.diffColors === 'original' ? 'original' : 'theme'
   if (!s.terminal.fontFamily.trim()) s.terminal.fontFamily = d.terminal.fontFamily
+  s.claude.defaultCwdAsked = s.claude.defaultCwdAsked === true
   s.claude.usageRefreshMinutes = clamp(s.claude.usageRefreshMinutes, 2, 120, d.claude.usageRefreshMinutes)
   s.claude.defaultArgs = s.claude.defaultArgs.filter((a) => typeof a === 'string' && a.length > 0)
   s.claude.continuePrompt = typeof s.claude.continuePrompt === 'string' ? s.claude.continuePrompt.trim().slice(0, 2000) : d.claude.continuePrompt

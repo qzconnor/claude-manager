@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import { BrowserWindow, screen, shell } from 'electron'
 import type { AppSettings, WindowState } from '@shared/types'
 import { readJsonSync, writeJsonAtomic } from '../lib/json-file'
+import { forceForeground } from './foreground'
 
 export const TITLE_BAR_HEIGHT = 40
 
@@ -28,11 +29,15 @@ export function windowState(win: BrowserWindow): WindowState {
   return { maximized: win.isMaximized(), focused: win.isFocused(), fullscreen: win.isFullScreen() }
 }
 
-/** Brings the window to the front, also out of the minimized state. */
-export function revealWindow(win: BrowserWindow): void {
+/**
+ * Brings the window to the front, also out of the minimized state. `steal`: also when another app
+ * is in front, for a question the user has to see (Windows would only flash the taskbar button).
+ */
+export function revealWindow(win: BrowserWindow, { steal = false } = {}): void {
   if (win.isMinimized()) win.restore()
   win.show()
   win.focus()
+  if (steal) void forceForeground(win)
 }
 
 /** `hidden`: the window only appears with `revealWindow` (start at login into the tray). */

@@ -21,6 +21,8 @@ export function useLauncher() {
   async function launch(options: TerminalCreateOptions): Promise<TerminalInfo | undefined> {
     try {
       const info = await terminals.open(options)
+      // Without trust in the folder no tab opens.
+      if (!info) return undefined
       if (router.currentRoute.value.name !== 'terminals') await router.push({ name: 'terminals' })
       return info
     } catch (error) {

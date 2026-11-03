@@ -152,6 +152,7 @@ export const schemas: Record<string, Schema> = {
     authAccountId: { type: 'string', description: 'Account, dessen Login, Token oder API-Key der Prozess verwendet' },
     sessionId: { ...nullable(str), description: 'Claude-Code-Session, die gerade im Tab läuft' },
     limit: { ...nullable(ref('SessionLimit')), description: 'Gesetzt, solange die Session an einem Nutzungslimit steht' },
+    busy: { type: 'boolean', description: 'Claude Code arbeitet gerade an einer Antwort (laut Fenstertitel)' },
     title: { type: 'string', description: 'Titel der Session wie in /resume, sofern fixedTitle nicht gesetzt ist' },
     fixedTitle: { type: 'boolean', description: 'Titel wurde vergeben (umbenannt oder beim Öffnen) und folgt nicht der Session' },
     cwd: str,
