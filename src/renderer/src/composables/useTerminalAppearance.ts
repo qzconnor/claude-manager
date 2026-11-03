@@ -1,6 +1,6 @@
 import { computed } from 'vue'
 import { TERMINAL_FONT_FALLBACKS } from '@shared/defaults'
-import { sgrBackground } from '@/lib/panel-background'
+import { backgroundReplacements, themeSlotTints, type SlotTints } from '@/lib/claude-backgrounds'
 import { useSettingsStore } from '@/stores/settings'
 import { findTheme } from '@/themes/themes'
 import type { TerminalPalette } from '@/themes/types'
@@ -41,18 +41,12 @@ export function useTerminalAppearance() {
 
   const theme = computed(() => findTheme(store.settings.terminal.colorSchemeId ?? store.settings.appearance.themeId))
   const palette = computed<TerminalPalette>(() => theme.value.terminal)
-
-  /** SGR background that replaces Claude Code's panel gray; null keeps the gray. */
-  const panelBackground = computed<string | null>(() => {
-    switch (store.settings.terminal.panelBackground) {
-      case 'theme':
-        return sgrBackground(theme.value.colors.surface)
-      case 'terminal':
-        return '49'
-      default:
-        return null
-    }
-  })
+  /** See-through colors of the palette slots that Claude's backgrounds are exchanged for. */
+  const slotTints = computed<SlotTints>(() => themeSlotTints(palette.value))
+  /** Which of Claude's backgrounds the output filter exchanges, and for what. */
+  const backgrounds = computed(() =>
+    backgroundReplacements(store.settings.terminal.panelBackground, store.settings.terminal.diffColors),
+  )
 
   const containerBackground = computed(() => {
     const opacity = store.settings.terminal.backgroundOpacity
@@ -61,5 +55,5 @@ export function useTerminalAppearance() {
     return `color-mix(in oklab, ${palette.value.background} ${effective}%, transparent)`
   })
 
-  return { palette, containerBackground, panelBackground }
+  return { palette, slotTints, containerBackground, backgrounds }
 }
