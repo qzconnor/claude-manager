@@ -26,8 +26,14 @@ const props = defineProps<{
   hits?: Map<string, SessionSearchHit>
   /** Words of the search, to highlight them. */
   terms?: string[]
+  /** Selection mode: the checked sessions by `sessionKey`. */
+  selecting?: boolean
+  checked?: Set<string>
 }>()
-const emit = defineEmits<{ select: [session: SessionSummary] }>()
+const emit = defineEmits<{
+  select: [session: SessionSummary]
+  toggle: [session: SessionSummary, range: boolean]
+}>()
 
 const accounts = useAccountsStore()
 const launcher = useLauncher()
@@ -74,7 +80,10 @@ const visible = computed(() => props.sessions.slice(0, limit.value))
         :selected="selected?.accountId === accountId && selected.sessionId === session.id"
         :hit="hits?.get(sessionKey(accountId, session.id))"
         :terms="terms"
+        :selecting="selecting"
+        :checked="checked?.has(sessionKey(accountId, session.id))"
         @select="emit('select', session)"
+        @toggle="emit('toggle', session, $event)"
       />
       <Button v-if="sessions.length > limit" variant="ghost" size="sm" class="self-center" @click="limit += PAGE_SIZE">
         Weitere {{ Math.min(PAGE_SIZE, sessions.length - limit) }} von {{ sessions.length - limit }} anzeigen

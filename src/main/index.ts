@@ -55,7 +55,7 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
   const cli = new ClaudeCli(() => settings.get().claude.executablePath)
   const indexer = new IndexerClient(userDataDir)
   const terminals = new TerminalService(accounts, cli, settings)
-  const sessions = new SessionService(accounts, indexer)
+  const sessions = new SessionService(accounts, indexer, terminals)
   sessions.init()
   const handoff = new SessionHandoff(accounts, sessions, terminals, settings)
   const usage = new UsageService(accounts, settings, indexer, userDataDir, userAgent)

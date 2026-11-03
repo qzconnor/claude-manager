@@ -235,6 +235,25 @@ export interface SessionGroup {
   error: string | null
 }
 
+/** A session in an account's config dir. */
+export interface SessionRef {
+  accountId: string
+  sessionId: string
+}
+
+/** Outcome of moving sessions to the recycle bin. */
+export interface SessionRemoveResult {
+  removed: SessionRef[]
+  /** Size of the removed transcripts. */
+  removedBytes: number
+  /** Open in a tab or in a running Claude Code: these stay. */
+  inUse: SessionRef[]
+  /** Could not be moved (e.g. the file is locked). */
+  failed: SessionRef[]
+  /** Why the first of `failed` could not be moved. */
+  error: string | null
+}
+
 /** A session whose conversation contains every word of a search. */
 export interface SessionSearchHit {
   accountId: string

@@ -76,6 +76,7 @@ const api: ManagerApi = {
     search: (query) => invoke(IpcInvoke.sessionsSearch, query),
     continueWith: (accountId, sessionId, targetAccountId) =>
       invoke(IpcInvoke.sessionsContinueWith, accountId, sessionId, targetAccountId),
+    remove: (sessions) => invoke(IpcInvoke.sessionsRemove, sessions),
     onChanged: (cb) => subscribe(IpcEvent.sessionsChanged, cb),
   },
   usage: {

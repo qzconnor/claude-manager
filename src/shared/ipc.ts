@@ -15,6 +15,8 @@ import type {
   GitBranch,
   SessionDetail,
   SessionGroup,
+  SessionRef,
+  SessionRemoveResult,
   SessionSearchHit,
   TerminalCreateOptions,
   TerminalInfo,
@@ -65,6 +67,7 @@ export const IpcInvoke = {
   sessionsToolCall: 'sessions:tool-call',
   sessionsSearch: 'sessions:search',
   sessionsContinueWith: 'sessions:continue-with',
+  sessionsRemove: 'sessions:remove',
 
   usageGet: 'usage:get',
   usageRefresh: 'usage:refresh',
@@ -197,6 +200,11 @@ export interface ManagerApi {
     search(query: string): Promise<SessionSearchHit[]>
     /** Opens the session in a new tab that runs with `targetAccountId`'s limits. */
     continueWith(accountId: string, sessionId: string, targetAccountId: string): Promise<TerminalInfo>
+    /**
+     * Moves sessions to the recycle bin: transcript, subagents, `/rewind` snapshots.
+     * Sessions open in a tab or a running Claude Code are kept.
+     */
+    remove(sessions: SessionRef[]): Promise<SessionRemoveResult>
     onChanged(cb: (accountId: string) => void): Unsubscribe
   }
   usage: {

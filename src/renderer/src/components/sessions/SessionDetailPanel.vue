@@ -10,6 +10,7 @@ import {
   GitForkIcon,
   MessagesSquareIcon,
   PlayIcon,
+  Trash2Icon,
   TriangleAlertIcon,
 } from '@lucide/vue'
 import { ref } from 'vue'
@@ -33,6 +34,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAccountSwitch } from '@/composables/useAccountSwitch'
 import { useLauncher } from '@/composables/useLauncher'
+import { useSessionRemoval } from '@/composables/useSessionRemoval'
 import { attempt } from '@/lib/errors'
 import { formatBytes, formatDateTime, shortenPath } from '@/lib/format'
 import { useAppStore } from '@/stores/app'
@@ -48,6 +50,7 @@ const props = defineProps<{
 const app = useAppStore()
 const launcher = useLauncher()
 const accountSwitch = useAccountSwitch()
+const removal = useSessionRemoval()
 const choicesOpen = ref(false)
 
 function openFolder() {
@@ -108,6 +111,20 @@ async function copyId() {
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Projektordner öffnen</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger as-child>
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Session löschen"
+                  class="hover:text-destructive"
+                  @click="removal.remove([summary])"
+                >
+                  <Trash2Icon />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Löschen (in den Papierkorb)</TooltipContent>
             </Tooltip>
           </ButtonGroup>
           <Button size="sm" variant="outline" @click="launcher.resume(summary, true)">

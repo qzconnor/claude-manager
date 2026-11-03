@@ -1,10 +1,21 @@
 import { watch, type FSWatcher } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
-import type { SessionDetail, SessionGroup, SessionSearchHit, SessionSummary, TranscriptToolDetail } from '@shared/types'
+import { shell } from 'electron'
+import type {
+  SessionDetail,
+  SessionGroup,
+  SessionRef,
+  SessionRemoveResult,
+  SessionSearchHit,
+  SessionSummary,
+  TranscriptToolDetail,
+} from '@shared/types'
+import { liveSessionIds, sessionFiles } from '../lib/session-files'
 import { TypedEmitter } from '../lib/typed-emitter'
 import type { ConversationResult, IndexedSession, TranscriptSearchHit } from '../workers/indexer-protocol'
 import type { AccountService } from './account-service'
 import type { IndexerClient } from './indexer-client'
+import type { TerminalService } from './terminal-service'
 
 type Events = { changed: [accountId: string] }
 
@@ -12,6 +23,8 @@ const MAX_CONVERSATION_MESSAGES = 600
 /** Hits per account; a search with more is too vague to go through all of them. */
 const MAX_SEARCH_HITS = 200
 const TOOL_USE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
+/** Files moved to the recycle bin at the same time. */
+const TRASH_CONCURRENCY = 6
 
 export class SessionService extends TypedEmitter<Events> {
   private readonly watchers = new Map<string, { dir: string; watcher: FSWatcher }>()
@@ -21,6 +34,7 @@ export class SessionService extends TypedEmitter<Events> {
   constructor(
     private readonly accounts: AccountService,
     private readonly indexer: IndexerClient,
+    private readonly terminals: TerminalService,
   ) {
     super()
     accounts.on('changed', () => this.syncWatchers())
@@ -99,6 +113,64 @@ export class SessionService extends TypedEmitter<Events> {
     }
     if (!filePath) throw new Error('Session nicht gefunden.')
     return this.indexer.request<TranscriptToolDetail | null>({ method: 'readToolCall', filePath, toolUseId })
+  }
+
+  /**
+   * Moves sessions to the recycle bin, so they can still be restored from there.
+   * Sessions open in a tab (also an ended one, it may be resumed) or in a Claude Code running
+   * elsewhere stay: Claude Code would write the transcript again.
+   */
+  async remove(refs: SessionRef[]): Promise<SessionRemoveResult> {
+    const result: SessionRemoveResult = { removed: [], removedBytes: 0, inUse: [], failed: [], error: null }
+    const tabs = new Set(
+      this.terminals.list().flatMap((t) => [t.sessionId, t.resumeSessionId].map((id) => id && `${t.accountId}:${id}`)),
+    )
+    const byAccount = new Map<string, SessionRef[]>()
+    for (const ref of refs) {
+      const list = byAccount.get(ref.accountId)
+      if (list) list.push(ref)
+      else byAccount.set(ref.accountId, [ref])
+    }
+    const jobs: (() => Promise<void>)[] = []
+    for (const [accountId, sessions] of byAccount) {
+      const paths = this.accounts.paths(accountId)
+      // Re-scan first: the file paths are only known for listed sessions.
+      const [group] = await this.list(accountId)
+      const known = new Map(group?.sessions.map((s) => [s.id, s]))
+      const live = await liveSessionIds(paths.sessionsDir)
+      for (const ref of sessions) {
+        const summary = known.get(ref.sessionId)
+        const transcript = this.filePaths.get(`${accountId}:${ref.sessionId}`)
+        if (!summary || !transcript) continue
+        if (tabs.has(`${accountId}:${ref.sessionId}`) || live.has(ref.sessionId)) {
+          result.inUse.push(ref)
+          continue
+        }
+        jobs.push(async () => {
+          try {
+            // The transcript first: once it is gone, the session is gone for Claude Code too.
+            await shell.trashItem(transcript)
+          } catch (error) {
+            result.failed.push(ref)
+            result.error ??= error instanceof Error ? error.message : String(error)
+            return
+          }
+          this.filePaths.delete(`${accountId}:${ref.sessionId}`)
+          result.removed.push(ref)
+          result.removedBytes += summary.sizeBytes
+          for (const extra of await sessionFiles(paths, ref.sessionId, transcript)) {
+            await shell.trashItem(extra).catch(() => undefined)
+          }
+        })
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(TRASH_CONCURRENCY, jobs.length) }, async () => {
+        for (let job = jobs.shift(); job; job = jobs.shift()) await job()
+      }),
+    )
+    for (const accountId of new Set(result.removed.map((r) => r.accountId))) this.emit('changed', accountId)
+    return result
   }
 
   private toSummary(accountId: string, s: IndexedSession): SessionSummary {

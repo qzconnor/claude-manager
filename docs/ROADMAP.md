@@ -28,6 +28,7 @@ Die App wurde in acht Schritten gebaut. Jeder Schritt baut auf dem vorherigen au
 - Worker-Thread indexiert alle Transcripts, inklusive Titel, Prompts, Branch, Modell und Größe. Aktualisiert sich bei Dateiänderungen.
 - Liste gruppiert nach Account, Suche, Detailansicht mit Markdown und Tool-Aufrufen.
 - Fortsetzen (`--resume`) und Abzweigen (`--fork-session`) in einem neuen Tab.
+- Filter nach Zeit (zuletzt aktiv / älter als) und Größe (größer / kleiner als), Mehrfachauswahl zum Aufräumen: Gelöschte Sessions kommen mit Subagents, `/rewind`-Ständen, Umgebung und Aufgabenliste in den Papierkorb. Offene und laufende Sessions bleiben.
 
 ## 5. Usage-Dashboard ✓
 

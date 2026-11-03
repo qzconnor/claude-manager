@@ -1,12 +1,9 @@
 import { computed, ref, watch, type Ref } from 'vue'
-import type { SessionDetail } from '@shared/types'
+import type { SessionDetail, SessionRef } from '@shared/types'
 import { errorMessage } from '@/lib/errors'
 import { useSessionsStore } from '@/stores/sessions'
 
-export interface SessionRef {
-  accountId: string
-  sessionId: string
-}
+export type { SessionRef }
 
 /**
  * Loads the transcript of the selected session and reloads it when the session changes on

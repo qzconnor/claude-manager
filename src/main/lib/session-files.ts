@@ -61,6 +61,45 @@ export async function readLiveSessionId(sessionsDir: string, pid: number, since:
   return data.sessionId
 }
 
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    // EPERM: it exists, it's just not ours.
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+/** Sessions a running Claude Code has open, from `<config>/sessions/<pid>.json`. */
+export async function liveSessionIds(sessionsDir: string): Promise<Set<string>> {
+  const files = await readdir(sessionsDir).catch(() => [])
+  const ids = new Set<string>()
+  for (const file of files) {
+    const pid = Number(/^(\d+)\.json$/.exec(file)?.[1])
+    if (!pid || !isAlive(pid)) continue
+    const data = await readJson<{ pid?: unknown; sessionId?: unknown }>(join(sessionsDir, file))
+    if (data?.pid === pid && typeof data.sessionId === 'string') ids.add(data.sessionId)
+  }
+  return ids
+}
+
+/**
+ * What Claude Code keeps of a session besides the transcript: the folder next to it
+ * (subagents, saved tool output), the snapshots `/rewind` uses, environment and task list.
+ */
+export async function sessionFiles(paths: ClaudePaths, sessionId: string, transcript: string): Promise<string[]> {
+  if (!SESSION_ID_RE.test(sessionId)) return []
+  const candidates = [
+    join(dirname(transcript), sessionId),
+    join(paths.configDir, 'file-history', sessionId),
+    join(paths.configDir, 'session-env', sessionId),
+    join(paths.configDir, 'tasks', sessionId),
+  ]
+  const found = await Promise.all(candidates.map(async (path) => ((await isDirectory(path)) ? path : null)))
+  return found.filter((path): path is string => path !== null)
+}
+
 /**
  * Reports a usage limit when that was the latest answer in the transcript.
  * Limits written before `since` (ms) are ignored: they were hit by an earlier process,
