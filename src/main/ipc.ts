@@ -12,7 +12,11 @@ import type {
 import type { ApiServer } from './api/api-server'
 import type { AppContext } from './context'
 import { listFontFamilies } from './lib/fonts'
+import { SESSION_ID_RE } from './lib/session-files'
 import { windowState } from './window/main-window'
+
+/** Sessions moved to the recycle bin in one go. */
+const MAX_REMOVE = 10_000
 
 function broadcast(channel: string, ...args: unknown[]): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -152,6 +156,15 @@ export function registerIpc(ctx: AppContext): void {
       requireString(targetAccountId, 'targetAccountId'),
     ),
   )
+  ipcMain.handle(IpcInvoke.sessionsRemove, (_e, sessions: unknown) => {
+    if (!Array.isArray(sessions) || sessions.length > MAX_REMOVE) throw new Error('Ungültiger Parameter: sessions')
+    const refs = sessions.map((s: { accountId?: unknown; sessionId?: unknown } | null) => {
+      const sessionId = requireString(s?.sessionId, 'sessionId')
+      if (!SESSION_ID_RE.test(sessionId)) throw new Error('Ungültige Session-ID.')
+      return { accountId: ctx.accounts.get(requireString(s?.accountId, 'accountId')).id, sessionId }
+    })
+    return ctx.sessions.remove(refs)
+  })
   ctx.sessions.on('changed', (accountId) => broadcast(IpcEvent.sessionsChanged, accountId))
 
   // --- usage ---------------------------------------------------------------
