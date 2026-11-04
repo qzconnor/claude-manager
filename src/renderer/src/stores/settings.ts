@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { createDefaultSettings } from '@shared/defaults'
-import type { AppSettings, DeepPartial } from '@shared/types'
+import type { AppSettings, DeepPartial, SettingsImportResult } from '@shared/types'
 
 export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<AppSettings>(createDefaultSettings())
@@ -20,9 +20,21 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value = await window.api.settings.reset(section)
   }
 
+  /** Asks for a file and saves the settings there, without accounts. The path, or null when cancelled. */
+  function exportToFile(): Promise<string | null> {
+    return window.api.settings.export()
+  }
+
+  /** Asks for a file and takes over its settings; null when cancelled. */
+  async function importFromFile(): Promise<SettingsImportResult | null> {
+    const result = await window.api.settings.import()
+    if (result) settings.value = result.settings
+    return result
+  }
+
   window.api.settings.onChanged((next) => {
     settings.value = next
   })
 
-  return { settings, loaded, load, update, reset }
+  return { settings, loaded, load, update, reset, exportToFile, importFromFile }
 })

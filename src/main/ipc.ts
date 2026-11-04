@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
-import { BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell, type IpcMainInvokeEvent } from 'electron'
+import { join } from 'node:path'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell, type IpcMainInvokeEvent } from 'electron'
 import { IpcEvent, IpcInvoke, IpcSend } from '@shared/ipc'
 import type {
   AccountCreateInput,
@@ -17,6 +18,8 @@ import { windowState } from './window/main-window'
 
 /** Sessions moved to the recycle bin in one go. */
 const MAX_REMOVE = 10_000
+
+const SETTINGS_FILE_FILTERS = [{ name: 'Claude-Manager-Einstellungen', extensions: ['json'] }]
 
 function broadcast(channel: string, ...args: unknown[]): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -82,6 +85,28 @@ export function registerIpc(ctx: AppContext): void {
   ipcMain.handle(IpcInvoke.settingsGet, () => ctx.settings.get())
   ipcMain.handle(IpcInvoke.settingsUpdate, (_e, patch: DeepPartial<AppSettings>) => ctx.settings.update(patch ?? {}))
   ipcMain.handle(IpcInvoke.settingsReset, (_e, section?: keyof AppSettings) => ctx.settings.reset(section))
+  ipcMain.handle(IpcInvoke.settingsExport, async (event) => {
+    const now = new Date()
+    const date = [now.getFullYear(), now.getMonth() + 1, now.getDate()].map((n) => String(n).padStart(2, '0')).join('-')
+    const { canceled, filePath } = await dialog.showSaveDialog(senderWindow(event), {
+      title: 'Einstellungen exportieren',
+      defaultPath: join(app.getPath('documents'), `claude-manager-einstellungen-${date}.json`),
+      filters: SETTINGS_FILE_FILTERS,
+    })
+    if (canceled || !filePath) return null
+    await ctx.settings.exportTo(filePath, app.getVersion())
+    return filePath
+  })
+  ipcMain.handle(IpcInvoke.settingsImport, async (event) => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(senderWindow(event), {
+      title: 'Einstellungen importieren',
+      defaultPath: app.getPath('documents'),
+      properties: ['openFile'],
+      filters: SETTINGS_FILE_FILTERS,
+    })
+    const file = filePaths[0]
+    return canceled || !file ? null : ctx.settings.importFrom(file)
+  })
   ctx.settings.on('changed', (settings) => broadcast(IpcEvent.settingsChanged, settings))
 
   // --- accounts ------------------------------------------------------------
