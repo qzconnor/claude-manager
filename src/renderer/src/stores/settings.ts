@@ -4,7 +4,7 @@ import { createDefaultSettings } from '@shared/defaults'
 import type { AppSettings, DeepPartial, SettingsImportResult } from '@shared/types'
 
 export const useSettingsStore = defineStore('settings', () => {
-  const settings = ref<AppSettings>(createDefaultSettings())
+  const settings = ref<AppSettings>(createDefaultSettings(window.api.platform))
   const loaded = ref(false)
 
   async function load(): Promise<void> {

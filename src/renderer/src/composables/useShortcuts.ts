@@ -19,7 +19,7 @@ export function useShortcuts() {
 
   const zoom = (delta: number | null) => {
     const current = settings.settings.terminal.fontSize
-    const next = delta === null ? createDefaultSettings().terminal.fontSize : Math.min(40, Math.max(6, current + delta))
+    const next = delta === null ? createDefaultSettings(window.api.platform).terminal.fontSize : Math.min(40, Math.max(6, current + delta))
     if (next !== current) void settings.update({ terminal: { fontSize: next } })
   }
 

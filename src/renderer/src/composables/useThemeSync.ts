@@ -1,5 +1,6 @@
 import { computed, watchEffect } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
+import { supportsMaterial } from '@/lib/platform'
 import { applyTheme } from '@/themes/apply'
 import { findTheme } from '@/themes/themes'
 
@@ -10,7 +11,7 @@ export function useThemeSync() {
 
   watchEffect(() => {
     const appearance = store.settings.appearance
-    applyTheme(theme.value, appearance, appearance.material !== 'none')
+    applyTheme(theme.value, appearance, supportsMaterial && appearance.material !== 'none')
   })
 
   watchEffect(() => {

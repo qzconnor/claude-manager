@@ -27,6 +27,7 @@ import { useLauncher } from '@/composables/useLauncher'
 import { formatArgs, parseArgs } from '@/lib/args'
 import { errorMessage } from '@/lib/errors'
 import { accountKindLabel } from '@/lib/format'
+import { secretStore } from '@/lib/platform'
 import { useAccountsStore } from '@/stores/accounts'
 
 type CreatableKind = Exclude<AccountKind, 'system'>
@@ -217,9 +218,9 @@ async function submit() {
               </InputGroupAddon>
             </InputGroup>
             <FieldDescription v-if="kind === 'token'">
-              Erzeugen mit <code class="font-mono">claude setup-token</code>. Wird verschlüsselt (Windows DPAPI) gespeichert.
+              Erzeugen mit <code class="font-mono">claude setup-token</code>. Wird verschlüsselt ({{ secretStore }}) gespeichert.
             </FieldDescription>
-            <FieldDescription v-else>Wird verschlüsselt (Windows DPAPI) gespeichert.</FieldDescription>
+            <FieldDescription v-else>Wird verschlüsselt ({{ secretStore }}) gespeichert.</FieldDescription>
             <FieldError v-if="secretError">{{ secretError }}</FieldError>
           </Field>
 

@@ -110,6 +110,12 @@
   --sidebar-width: 15rem;
 }
 
+/* Linux: Chromium draws the caption buttons, as wide as the theme wants them. The Window Controls
+   Overlay reports the free area left of them (none in full screen, where the buttons are hidden). */
+:root[data-platform='linux'] {
+  --caption-buttons-width: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+}
+
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);

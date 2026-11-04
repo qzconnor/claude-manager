@@ -9,6 +9,10 @@ export const SYSTEM_ACCOUNT_ID = 'system'
 export const TERMINAL_FONT_FALLBACKS = [
   'Cascadia Mono',
   'Consolas',
+  // Linux: the monospace fonts of the common distributions.
+  'DejaVu Sans Mono',
+  'Noto Sans Mono',
+  'Liberation Mono',
   'Symbols Nerd Font Mono',
   'JetBrainsMono Nerd Font Mono',
   'CaskaydiaMono Nerd Font Mono',
@@ -48,7 +52,11 @@ export const ACCOUNT_COLORS = [
   '#2dd4bf',
 ]
 
-export function createDefaultSettings(): AppSettings {
+/**
+ * `platform`: `process.platform` of the app. Windows has Cascadia Mono, elsewhere the terminal starts
+ * with the font that ships with the app.
+ */
+export function createDefaultSettings(platform = 'win32'): AppSettings {
   return {
     appearance: {
       themeId: 'ember',
@@ -60,7 +68,7 @@ export function createDefaultSettings(): AppSettings {
       tabPosition: 'top',
     },
     terminal: {
-      fontFamily: 'Cascadia Mono',
+      fontFamily: platform === 'win32' ? 'Cascadia Mono' : 'Geist Mono Variable',
       fontSize: 14,
       lineHeight: 1.2,
       letterSpacing: 0,

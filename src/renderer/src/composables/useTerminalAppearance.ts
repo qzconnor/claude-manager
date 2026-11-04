@@ -1,6 +1,7 @@
 import { computed } from 'vue'
 import { TERMINAL_FONT_FALLBACKS } from '@shared/defaults'
 import { backgroundReplacements, themeSlotTints, type SlotTints } from '@/lib/claude-backgrounds'
+import { supportsMaterial } from '@/lib/platform'
 import { useSettingsStore } from '@/stores/settings'
 import { findTheme } from '@/themes/themes'
 import type { TerminalPalette } from '@/themes/types'
@@ -50,7 +51,7 @@ export function useTerminalAppearance() {
 
   const containerBackground = computed(() => {
     const opacity = store.settings.terminal.backgroundOpacity
-    const materialActive = store.settings.appearance.material !== 'none'
+    const materialActive = supportsMaterial && store.settings.appearance.material !== 'none'
     const effective = materialActive ? opacity : 100
     return `color-mix(in oklab, ${palette.value.background} ${effective}%, transparent)`
   })

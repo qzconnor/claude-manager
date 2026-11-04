@@ -8,8 +8,11 @@ import { CommandIntegration } from './cli/command-integration'
 import { isLaunchRequest, readLaunchRequest, resolveLaunch, type LaunchRequest } from './cli/launch'
 import type { AppContext } from './context'
 import { forwardWindowState, registerApiIpc, registerIpc } from './ipc'
+import { linuxPackage } from './lib/linux'
 import { AUTOSTART_ARG, setLaunchAtLogin } from './lib/login-item'
+import { selectLinuxPasswordStore } from './lib/secrets'
 import { fallbackSessionFolder } from './lib/session-folder'
+import { loadShellEnv } from './lib/shell-env'
 import { AccountService } from './services/account-service'
 import { ClaudeCli } from './services/claude-cli'
 import { CswapImport } from './services/cswap-import'
@@ -36,6 +39,7 @@ if (!app.isPackaged) app.setPath('userData', join(app.getPath('appData'), 'Claud
 // The appId of electron-builder.yml: the installer gives the shortcuts this ID, and Windows only
 // shows notifications (and groups the taskbar button with the pinned one) when they match.
 if (process.platform === 'win32') app.setAppUserModelId('local.claude-manager')
+selectLinuxPasswordStore()
 
 // Started through the `cm` command: a running instance takes the request over.
 const launchRequest = readLaunchRequest(process.argv)
@@ -43,11 +47,12 @@ const launchRequest = readLaunchRequest(process.argv)
 if (!app.requestSingleInstanceLock(launchRequest ? { ...launchRequest } : undefined)) {
   app.quit()
 } else {
-  void bootstrap(launchRequest)
+  // Linux: the PATH & co. of the user's shell, read while Electron starts up (see shell-env.ts).
+  void bootstrap(launchRequest, loadShellEnv())
 }
 
-async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
-  await app.whenReady()
+async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<void>): Promise<void> {
+  await Promise.all([app.whenReady(), shellEnv])
   const userDataDir = app.getPath('userData')
 
   const userAgent = `claude-manager/${app.getVersion()}`
@@ -70,7 +75,8 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
   const usage = new UsageService(accounts, settings, indexer, userDataDir, userAgent)
   await usage.init()
   const git = new GitService()
-  const command = new CommandIntegration()
+  const command = new CommandIntegration(userDataDir)
+  void command.init()
   const updates = new UpdateService(userAgent)
   updates.init()
 
@@ -106,6 +112,7 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
         claudeExecutable: cli.resolve(),
         claudeVersion: (await Promise.all([cli.version(), cli.checkLoginEmail()]))[0],
         windowsBuild: process.platform === 'win32' ? Number(release().split('.')[2]) || null : null,
+        linuxPackage: linuxPackage(),
         packaged: app.isPackaged,
       }
     },
@@ -253,7 +260,7 @@ async function bootstrap(launchRequest: LaunchRequest | null): Promise<void> {
     win.flashFrame(true)
   })
 
-  // Started by Windows at login: with the tray icon the window stays hidden until it is opened.
+  // Started by the system at login: with the tray icon the window stays hidden until it is opened.
   const firstWindow = openWindow({ hidden: process.argv.includes(AUTOSTART_ARG) && tray.visible })
   if (launchRequest) {
     // Wait for the page so it can select the new tab.

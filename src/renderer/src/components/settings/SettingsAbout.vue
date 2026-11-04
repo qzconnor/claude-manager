@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { attempt } from '@/lib/errors'
+import { isWindows } from '@/lib/platform'
 import { UPDATES_ROUTE } from '@/router'
 import { useAppStore } from '@/stores/app'
 
@@ -23,10 +24,18 @@ const rows = computed(() => {
     ['Electron', i.electron],
     ['Chromium', i.chrome],
     ['Node.js', i.node],
-    ['Windows-Build', i.windowsBuild ? String(i.windowsBuild) : '–'],
+    isWindows ? ['Windows-Build', i.windowsBuild ? String(i.windowsBuild) : '–'] : ['System', systemLabel(i.platform, i.linuxPackage)],
     ['Datenordner', i.userDataDir],
   ]
 })
+
+const PACKAGE_LABELS = { appimage: 'AppImage', deb: 'deb-Paket', rpm: 'rpm-Paket' } as const
+
+/** Linux, and how the app is installed there. */
+function systemLabel(platform: string, linuxPackage: keyof typeof PACKAGE_LABELS | null): string {
+  if (platform !== 'linux') return platform
+  return linuxPackage ? `Linux (${PACKAGE_LABELS[linuxPackage]})` : 'Linux'
+}
 
 function openDataDir() {
   if (app.info) void attempt(() => window.api.app.openPath(app.info!.userDataDir), 'Ordner konnte nicht geöffnet werden')
@@ -41,7 +50,7 @@ function openDataDir() {
         {{ app.info?.name ?? 'Claude Manager' }}
       </CardTitle>
       <CardDescription>
-        Verwaltet Claude-Code-Terminals, Accounts, Sessions und Usage. Anmeldedaten werden mit Windows DPAPI verschlüsselt.
+        Verwaltet Claude-Code-Terminals, Accounts, Sessions und Usage. Anmeldedaten werden mit {{ isWindows ? 'Windows DPAPI' : 'dem Schlüsselbund des Systems' }} verschlüsselt.
       </CardDescription>
     </CardHeader>
     <CardContent class="flex flex-col gap-4">

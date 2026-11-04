@@ -14,6 +14,7 @@ import { useSetting } from '@/composables/useSetting'
 import { formatArgs, parseArgs } from '@/lib/args'
 import { attempt } from '@/lib/errors'
 import { shortenPath } from '@/lib/format'
+import { isLinux, isWindows } from '@/lib/platform'
 import { useAppStore } from '@/stores/app'
 import NumberControl from './NumberControl.vue'
 import SettingField from './SettingField.vue'
@@ -75,10 +76,14 @@ const launchAtLogin = useSetting(
 
 const launchAtLoginHint = computed(() => {
   if (app.info && !app.info.packaged) return 'Nur in der installierten App, nicht im Entwicklungs-Build.'
+  if (isLinux && app.info && !app.info.linuxPackage) return 'Nur als AppImage oder aus dem deb- bzw. rpm-Paket.'
   return runInTray.value
     ? 'Startet beim Anmelden ohne Fenster, nur im Infobereich. Die API ist dann sofort erreichbar.'
     : 'Startet beim Anmelden mit Fenster. Zusammen mit „Im Infobereich weiterlaufen“ nur im Infobereich.'
 })
+
+/** Linux needs a file that starts the installation: an AppImage or the executable of a package. */
+const canLaunchAtLogin = computed(() => !app.info || (app.info.packaged && (!isLinux || app.info.linuxPackage !== null)))
 
 const CLOSE_ON_EXIT: { value: CloseOnExit; label: string }[] = [
   { value: 'graceful', label: 'Ohne Fehler' },
@@ -120,7 +125,7 @@ async function recheck() {
       </SettingField>
       <SettingField
         for="claude-path"
-        label="Pfad zur claude.exe"
+        :label="isWindows ? 'Pfad zur claude.exe' : 'Pfad zu claude'"
         :description="app.info?.claudeExecutable ? `Automatisch: ${app.info.claudeExecutable}` : 'Leer lassen für automatische Suche im PATH.'"
       >
         <Input
@@ -212,12 +217,16 @@ async function recheck() {
       <SettingField
         for="run-in-tray"
         label="Im Infobereich weiterlaufen"
-        description="Schließen blendet das Fenster nur aus, Terminals und API laufen weiter. Öffnen per Klick auf das Symbol im Infobereich, Beenden über sein Kontextmenü."
+        :description="
+          isLinux
+            ? 'Schließen blendet das Fenster nur aus, Terminals und API laufen weiter. Öffnen und Beenden über das Menü des Symbols im Infobereich. GNOME zeigt es erst mit der Erweiterung „AppIndicator“, ohne Symbol holt ein erneuter Start der App das Fenster zurück.'
+            : 'Schließen blendet das Fenster nur aus, Terminals und API laufen weiter. Öffnen per Klick auf das Symbol im Infobereich, Beenden über sein Kontextmenü.'
+        "
       >
         <Switch id="run-in-tray" v-model="runInTray" />
       </SettingField>
-      <SettingField for="launch-at-login" label="Mit Windows starten" :description="launchAtLoginHint">
-        <Switch id="launch-at-login" v-model="launchAtLogin" :disabled="app.info ? !app.info.packaged : false" />
+      <SettingField for="launch-at-login" :label="isWindows ? 'Mit Windows starten' : 'Beim Anmelden starten'" :description="launchAtLoginHint">
+        <Switch id="launch-at-login" v-model="launchAtLogin" :disabled="!canLaunchAtLogin" />
       </SettingField>
     </SettingsSection>
   </div>

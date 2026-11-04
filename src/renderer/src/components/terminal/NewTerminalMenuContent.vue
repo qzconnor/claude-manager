@@ -15,6 +15,7 @@ import {
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useLauncher } from '@/composables/useLauncher'
+import { shellLabel } from '@/lib/platform'
 import { useAccountsStore } from '@/stores/accounts'
 
 // The menu behind the new-session chevron; side and alignment fall through to the content.
@@ -57,7 +58,7 @@ const loginAccounts = computed(() => accounts.accounts.filter((a) => a.kind === 
       <DropdownMenuSub>
         <DropdownMenuSubTrigger>
           <SquareTerminalIcon />
-          PowerShell mit Account
+          {{ shellLabel }} mit Account
         </DropdownMenuSubTrigger>
         <DropdownMenuSubContent class="w-56">
           <DropdownMenuItem v-for="account in accounts.accounts" :key="account.id" @select="launcher.shell(account.id)">

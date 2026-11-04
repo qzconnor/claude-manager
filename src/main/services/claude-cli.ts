@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, extname, join } from 'node:path'
+import { withoutAppImageEnv } from '../lib/linux'
 
 /** Environment variables a parent Claude Code session injects — never forwarded to child sessions. */
 const PARENT_SESSION_ENV = [
@@ -17,6 +18,12 @@ const PARENT_SESSION_ENV = [
   'CLAUDE_PID',
   'CLAUDE_EFFORT',
 ]
+
+/**
+ * Variables the Linux desktop sets for the app that was launched (Electron, GNOME): a browser
+ * started from a terminal would think it belongs to Claude Manager.
+ */
+const LAUNCHED_APP_ENV = ['CHROME_DESKTOP', 'GIO_LAUNCHED_DESKTOP_FILE', 'GIO_LAUNCHED_DESKTOP_FILE_PID', 'BAMF_DESKTOP_FILE_HINT']
 
 /** Variables that make Claude Code bypass the account's own login. */
 export const AUTH_OVERRIDE_ENV = [
@@ -40,6 +47,17 @@ function isFile(path: string): boolean {
   } catch {
     return false
   }
+}
+
+/** Quotes one argument for a POSIX shell, for showing a command line. */
+export function quotePosixArg(arg: string): string {
+  return arg.length > 0 && /^[\w@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", `'\\''`)}'`
+}
+
+/** A command line as the user would type it on this system. */
+export function displayCommand(file: string, args: readonly string[]): string {
+  const quote = process.platform === 'win32' ? quoteWindowsArg : quotePosixArg
+  return [file, ...args].map(quote).join(' ')
 }
 
 /** Quotes one argument for a Windows command line (CommandLineToArgvW rules). */
@@ -93,7 +111,10 @@ export class ClaudeCli {
     // Common install locations, in case the app was started without the user's PATH.
     dirs.push(join(home, '.local', 'bin'), join(home, '.claude', 'local'))
     if (isWin && process.env.APPDATA) dirs.push(join(process.env.APPDATA, 'npm'))
-    if (!isWin) dirs.push('/usr/local/bin', '/opt/homebrew/bin')
+    if (!isWin) {
+      dirs.push(join(home, '.npm-global', 'bin'), join(home, '.bun', 'bin'), join(home, '.volta', 'bin'))
+      dirs.push('/usr/local/bin', '/usr/bin', '/opt/homebrew/bin')
+    }
     for (const dir of dirs) {
       for (const name of names) {
         const candidate = join(dir, name)
@@ -160,11 +181,7 @@ export class ClaudeCli {
       const comspec = process.env.ComSpec || 'cmd.exe'
       return { file: comspec, args: `/d /s /c "${inner}"`, display: inner }
     }
-    return {
-      file: exe,
-      args: claudeArgs,
-      display: [exe, ...claudeArgs].map(quoteWindowsArg).join(' '),
-    }
+    return { file: exe, args: claudeArgs, display: displayCommand(exe, claudeArgs) }
   }
 
   /** The process environment without variables that would confuse a child Claude Code session. */
@@ -176,6 +193,13 @@ export class ClaudeCli {
       if (/^(ELECTRON_|VSCODE_|WT_)/.test(key)) continue
       if (key === 'TERM_PROGRAM' || key === 'TERM_PROGRAM_VERSION') continue
       env[key] = value
+    }
+    if (process.platform === 'linux') {
+      // Electron swaps the desktop's name for one its tray icon works with; programs in the terminals get the real one.
+      if (env.ORIGINAL_XDG_CURRENT_DESKTOP) env.XDG_CURRENT_DESKTOP = env.ORIGINAL_XDG_CURRENT_DESKTOP
+      delete env.ORIGINAL_XDG_CURRENT_DESKTOP
+      for (const key of LAUNCHED_APP_ENV) delete env[key]
+      withoutAppImageEnv(env)
     }
     env.TERM = 'xterm-256color'
     env.COLORTERM = 'truecolor'

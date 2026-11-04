@@ -1,17 +1,18 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { toast } from 'vue-sonner'
 import type { CommandStatus } from '@shared/types'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { useSetting } from '@/composables/useSetting'
 import { attempt } from '@/lib/errors'
+import { isWindows } from '@/lib/platform'
 import SettingField from './SettingField.vue'
 import SettingsSection from './SettingsSection.vue'
 
 const EXAMPLES = [
   ['cm', 'Session im aktuellen Ordner'],
-  ['cm C:\\Projekte\\demo', 'Session in einem anderen Ordner'],
+  [isWindows ? 'cm C:\\Projekte\\demo' : 'cm ~/Projekte/demo', 'Session in einem anderen Ordner'],
   ['cm -a Firma', 'mit bestimmtem Account'],
   ['cm -c', 'letzte Session hier fortsetzen'],
   ['cm -r', 'Session auswählen und fortsetzen'],
@@ -26,6 +27,16 @@ const reuseTab = useSetting(
 
 const status = ref<CommandStatus | null>(null)
 const busy = ref(false)
+
+const registerHint = computed(() => {
+  if (status.value && !status.value.available) {
+    return isWindows ? 'Nur in der installierten App verfügbar.' : 'Nur als AppImage oder aus dem deb- bzw. rpm-Paket verfügbar.'
+  }
+  const hint = status.value?.hint
+  if (isWindows) return 'Wird bei der Installation eingerichtet: Benutzer-PATH und App-Pfad für den Explorer.'
+  const base = 'Beim ersten Start eingerichtet: ein kleines Skript in ~/.local/bin, das die App aktuell hält.'
+  return hint ? `${base} ${hint}` : base
+})
 
 onMounted(async () => {
   status.value = (await attempt(() => window.api.command.status(), 'Status von „cm“ unbekannt')) ?? null
@@ -42,16 +53,15 @@ async function setRegistered(registered: boolean) {
 </script>
 
 <template>
-  <SettingsSection title="Befehl „cm“" description="Öffnet eine Claude-Session im Manager – aus jedem Terminal oder der Explorer-Adressleiste.">
-    <SettingField
-      for="command-registered"
-      label="Befehl einrichten"
-      :description="
-        status && !status.available
-          ? 'Nur in der installierten App verfügbar.'
-          : 'Wird bei der Installation eingerichtet: Benutzer-PATH und App-Pfad für den Explorer.'
-      "
-    >
+  <SettingsSection
+    title="Befehl „cm“"
+    :description="
+      isWindows
+        ? 'Öffnet eine Claude-Session im Manager – aus jedem Terminal oder der Explorer-Adressleiste.'
+        : 'Öffnet eine Claude-Session im Manager – aus jedem Terminal.'
+    "
+  >
+    <SettingField for="command-registered" label="Befehl einrichten" :description="registerHint">
       <Spinner v-if="busy" class="text-muted-foreground" />
       <Switch
         id="command-registered"

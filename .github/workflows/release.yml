@@ -1,5 +1,6 @@
-# Every push to master: semantic-release decides the next version from the commits, builds the
-# Windows installer and publishes it as a GitHub release – the app updates itself from there.
+# Every push to master: semantic-release decides the next version from the commits. The Windows
+# installer and the Linux packages are built with it, each on its own system (node-pty is native),
+# and semantic-release publishes them together as one GitHub release – the apps update themselves from there.
 name: Release
 
 on:
@@ -16,9 +17,11 @@ permissions:
   pull-requests: write
 
 jobs:
-  release:
-    name: Release
-    runs-on: windows-latest
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,8 +30,88 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      # Only semantic-release is needed here, not Electron or node-pty.
+      - run: npm ci --ignore-scripts
+      # The dry run only decides the version (.releaserc.json writes it to .release-version), without
+      # a release-worthy commit there is none and nothing is built.
+      - id: next
+        run: |
+          npx semantic-release --dry-run
+          if [ -f .release-version ]; then echo "version=$(cat .release-version)" >> "$GITHUB_OUTPUT"; fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  windows:
+    name: Windows-Build
+    needs: version
+    if: needs.version.outputs.version != ''
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
       # postinstall downloads the Electron binary; cm.exe is built with the .NET Framework's csc.
       - run: npm ci
+      # The version in package.json stays unchanged in the repository, only the build gets the new one.
+      - run: npm version ${{ needs.version.outputs.version }} --no-git-tag-version --allow-same-version
+      - run: npm run release:build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: |
+            release/*/Claude-Manager-*-Setup.exe
+            release/*/Claude-Manager-*-Setup.exe.blockmap
+            release/*/latest.yml
+          if-no-files-found: error
+
+  linux:
+    name: Linux-Build
+    needs: version
+    if: needs.version.outputs.version != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      # rpmbuild for the rpm package; deb and AppImage need nothing beyond the runner.
+      - run: sudo apt-get update && sudo apt-get install -y rpm
+      # postinstall downloads the Electron binary; node-pty has no Linux prebuilds and is compiled here.
+      - run: npm ci
+      - run: npm version ${{ needs.version.outputs.version }} --no-git-tag-version --allow-same-version
+      - run: npm run release:build:linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: |
+            release/*/Claude-Manager-*.AppImage
+            release/*/Claude-Manager-*.deb
+            release/*/Claude-Manager-*.rpm
+            release/*/latest-linux.yml
+          if-no-files-found: error
+
+  release:
+    name: Release
+    needs: [version, windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      # Where .releaserc.json looks for the assets, as if they had been built here.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release/${{ needs.version.outputs.version }}
+          merge-multiple: true
       - run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

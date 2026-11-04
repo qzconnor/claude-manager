@@ -2,6 +2,7 @@ node_modules/
 out/
 release/
 build/bin/
+.release-version
 *.tsbuildinfo
 *.log
 .DS_Store

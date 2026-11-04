@@ -3,6 +3,7 @@ import type { TabPosition, WindowMaterial } from '@shared/types'
 import { Switch } from '@/components/ui/switch'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useSetting } from '@/composables/useSetting'
+import { supportsMaterial } from '@/lib/platform'
 import SettingField from './SettingField.vue'
 import SettingsSection from './SettingsSection.vue'
 import SliderControl from './SliderControl.vue'
@@ -74,11 +75,17 @@ function onMaterial(value: unknown) {
       </SettingField>
     </SettingsSection>
 
-    <SettingsSection title="Fenster" description="Windows-11-Material hinter der App." reset-section="appearance">
-      <SettingField label="Material" description="Acryl ist am stärksten transparent, Mica übernimmt dezent die Farbe des Desktops.">
+    <SettingsSection
+      title="Fenster"
+      :description="supportsMaterial ? 'Windows-11-Material hinter der App.' : 'Schrift und Ecken der Oberfläche.'"
+      reset-section="appearance"
+    >
+      <!-- Acrylic and Mica only exist on Windows 11; elsewhere the window is opaque. -->
+      <SettingField v-if="supportsMaterial" label="Material" description="Acryl ist am stärksten transparent, Mica übernimmt dezent die Farbe des Desktops.">
         <SegmentedControl :model-value="material" :options="MATERIALS" aria-label="Material" @update:model-value="onMaterial" />
       </SettingField>
       <SettingField
+        v-if="supportsMaterial"
         for="keep-material"
         label="Auch ohne Fokus beibehalten"
         description="Windows schaltet das Material sonst ab, sobald ein anderes Fenster aktiv ist."
@@ -86,6 +93,7 @@ function onMaterial(value: unknown) {
         <Switch id="keep-material" v-model="keepActive" :disabled="material === 'none'" />
       </SettingField>
       <SettingField
+        v-if="supportsMaterial"
         for="surface-opacity"
         label="Deckkraft"
         description="Wie stark die Theme-Farbe das Material überdeckt. 100 % = undurchsichtig."

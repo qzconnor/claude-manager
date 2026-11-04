@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { app, Menu, Tray } from 'electron'
+import { app, Menu, nativeImage, Tray, type NativeImage } from 'electron'
 
 export interface TrayActions {
   open: () => void
@@ -23,7 +23,7 @@ export class AppTray {
       this.tray = null
       return
     }
-    const tray = new Tray(iconPath())
+    const tray = new Tray(trayIcon())
     tray.setToolTip('Claude Manager')
     tray.setContextMenu(
       Menu.buildFromTemplate([
@@ -32,6 +32,7 @@ export class AppTray {
         { label: 'Beenden', click: () => this.actions.quit() },
       ]),
     )
+    // Linux desktops open the menu on a click instead (StatusNotifierItem), which has "Öffnen" first.
     tray.on('click', () => this.actions.open())
     this.tray = tray
   }
@@ -41,7 +42,17 @@ export class AppTray {
   }
 }
 
-/** build/icon.ico (all sizes, Windows picks the one for the display scaling); the installer puts it in resources. */
-function iconPath(): string {
-  return app.isPackaged ? join(process.resourcesPath, 'icon.ico') : join(app.getAppPath(), 'build', 'icon.ico')
+/** Files of build/ that the installed app carries in its resources (electron-builder.yml, extraResources). */
+export function resourceIcon(name: 'icon.ico' | 'icon.png'): string {
+  return app.isPackaged ? join(process.resourcesPath, name) : join(app.getAppPath(), 'build', name)
+}
+
+/**
+ * Windows: build/icon.ico with all sizes, Windows picks the one for the display scaling. Linux only
+ * reads PNG; the panel scales the icon to its own size, a smaller copy keeps that sharp and cheap.
+ */
+function trayIcon(): string | NativeImage {
+  if (process.platform !== 'linux') return resourceIcon('icon.ico')
+  const image = nativeImage.createFromPath(resourceIcon('icon.png'))
+  return image.isEmpty() ? image : image.resize({ width: 64, height: 64, quality: 'best' })
 }
