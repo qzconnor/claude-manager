@@ -18,6 +18,7 @@ import type {
   SessionRef,
   SessionRemoveResult,
   SessionSearchHit,
+  SettingsImportResult,
   TerminalCreateOptions,
   TerminalInfo,
   TranscriptToolDetail,
@@ -45,6 +46,8 @@ export const IpcInvoke = {
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
   settingsReset: 'settings:reset',
+  settingsExport: 'settings:export',
+  settingsImport: 'settings:import',
 
   accountsList: 'accounts:list',
   accountsCreate: 'accounts:create',
@@ -152,6 +155,10 @@ export interface ManagerApi {
     get(): Promise<AppSettings>
     update(patch: DeepPartial<AppSettings>): Promise<AppSettings>
     reset(section?: keyof AppSettings): Promise<AppSettings>
+    /** Saves the settings to a file the user picks, without accounts. The path, or null when cancelled. */
+    export(): Promise<string | null>
+    /** Takes over the settings of a file the user picks; null when cancelled. */
+    import(): Promise<SettingsImportResult | null>
     onChanged(cb: (settings: AppSettings) => void): Unsubscribe
   }
   accounts: {

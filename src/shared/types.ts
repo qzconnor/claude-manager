@@ -497,6 +497,13 @@ export interface AppSettings {
   api: ApiSettings
 }
 
+/** Outcome of importing settings from a file. */
+export interface SettingsImportResult {
+  settings: AppSettings
+  /** Settings of the file left as they were: paths that don't exist on this computer. */
+  skipped: string[]
+}
+
 export type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends (infer U)[] ? U[] : T[K] extends object ? DeepPartial<T[K]> : T[K]
 }

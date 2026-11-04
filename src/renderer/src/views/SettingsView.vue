@@ -9,6 +9,7 @@ import SettingsApi from '@/components/settings/SettingsApi.vue'
 import SettingsAppearance from '@/components/settings/SettingsAppearance.vue'
 import SettingsClaude from '@/components/settings/SettingsClaude.vue'
 import SettingsTerminal from '@/components/settings/SettingsTerminal.vue'
+import SettingsTransfer from '@/components/settings/SettingsTransfer.vue'
 import SettingsUpdates from '@/components/settings/SettingsUpdates.vue'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SETTINGS_TABS, type SettingsTab } from '@/router'
@@ -51,7 +52,9 @@ function select(value: unknown) {
 
 <template>
   <PageContainer class="max-w-4xl">
-    <PageHeader title="Einstellungen" description="Änderungen werden sofort übernommen und gespeichert." />
+    <PageHeader title="Einstellungen" description="Änderungen werden sofort übernommen und gespeichert.">
+      <template #actions><SettingsTransfer /></template>
+    </PageHeader>
     <Tabs :model-value="tab" class="gap-6" @update:model-value="select">
       <TabsList
         variant="line"

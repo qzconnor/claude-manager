@@ -70,6 +70,7 @@ Die App wurde in acht Schritten gebaut. Jeder Schritt baut auf dem vorherigen au
 - Die Nachfragen des Hauptprozesses (Beenden mit laufenden Terminals, Fehler von `cm`) erscheinen als Dialog in der App statt als Windows-Fenster. Nur wenn die Oberfläche abgestürzt ist, kommt die Windows-Box als Rückfall, damit sich das Fenster immer schließen lässt.
 - Updates direkt in der App (electron-updater, GitHub-Releases) mit Versionshinweisen, als Tab in den Einstellungen. Releases erstellt semantic-release bei jedem Push auf `master` aus den Conventional Commits.
 - Die Einstellungen haben eine Tab-Leiste über die ganze Breite mit Symbolen statt der kleinen Umschalter.
+- Einstellungen lassen sich als JSON-Datei exportieren und importieren, ohne Accounts. Fremde Pfade, die es hier nicht gibt, bleiben unverändert, der Import ist rückgängig zu machen.
 
 ## Mögliche nächste Schritte
 

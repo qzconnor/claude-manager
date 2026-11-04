@@ -1,11 +1,20 @@
+import { statSync } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDefaultSettings } from '@shared/defaults'
-import type { AppSettings, DeepPartial } from '@shared/types'
-import { mergeKnown } from '@shared/utils'
-import { readJsonSync, writeJsonAtomic } from '../lib/json-file'
+import type { AppSettings, DeepPartial, SettingsImportResult } from '@shared/types'
+import { isPlainObject, mergeKnown } from '@shared/utils'
+import { readJson, readJsonSync, writeJsonAtomic } from '../lib/json-file'
 import { TypedEmitter } from '../lib/typed-emitter'
 
 type Events = { changed: [settings: AppSettings, previous: AppSettings] }
+
+/** Marks a file with exported settings. */
+const EXPORT_FORMAT = 'claude-manager-settings'
+/** Raised only when an older app could no longer read the file. */
+const EXPORT_VERSION = 1
+/** Exported settings are a few KB; anything far bigger isn't such a file. */
+const MAX_IMPORT_BYTES = 1024 * 1024
 
 export class SettingsService extends TypedEmitter<Events> {
   private readonly file: string
@@ -36,6 +45,87 @@ export class SettingsService extends TypedEmitter<Events> {
     await writeJsonAtomic(this.file, this.settings)
     this.emit('changed', this.get(), previous)
     return this.get()
+  }
+
+  /** Saves the settings to a file, e.g. for another computer. Accounts aren't part of them. */
+  async exportTo(file: string, appVersion: string): Promise<void> {
+    const settings = this.get() as unknown as Record<string, unknown>
+    dropLocal(settings)
+    await writeJsonAtomic(file, {
+      format: EXPORT_FORMAT,
+      version: EXPORT_VERSION,
+      appVersion,
+      exportedAt: new Date().toISOString(),
+      settings,
+    })
+  }
+
+  /**
+   * Takes over the settings of an exported file (a settings.json from the data folder works too).
+   * Settings the file doesn't have keep their value, e.g. ones newer than the file.
+   */
+  async importFrom(file: string): Promise<SettingsImportResult> {
+    if ((await stat(file)).size > MAX_IMPORT_BYTES) throw new Error('Die Datei ist zu groß für exportierte Einstellungen.')
+    const data = await readJson<unknown>(file)
+    if (data === null) throw new Error('Die Datei ist kein gültiges JSON.')
+    const imported = migrate(settingsIn(data)) as Record<string, unknown>
+    dropLocal(imported)
+    const skipped = dropMissingPaths(imported)
+    return { settings: await this.update(imported as DeepPartial<AppSettings>), skipped }
+  }
+}
+
+/** The settings in an exported file, or the file itself when it is a settings.json. */
+function settingsIn(data: unknown): Record<string, unknown> {
+  if (isPlainObject(data)) {
+    if (data.format === EXPORT_FORMAT) {
+      if (typeof data.version === 'number' && data.version > EXPORT_VERSION) {
+        throw new Error('Die Datei stammt aus einer neueren Version des Claude Managers. Bitte zuerst aktualisieren.')
+      }
+      if (isPlainObject(data.settings)) return data.settings
+    } else if (!('format' in data) && Object.keys(createDefaultSettings()).some((key) => isPlainObject(data[key]))) {
+      return data
+    }
+  }
+  throw new Error('Die Datei enthält keine Einstellungen des Claude Managers.')
+}
+
+/**
+ * Leaves out what belongs to this installation: the default account (accounts stay where they
+ * are, its id means nothing elsewhere) and whether the question for the default folder was asked.
+ */
+function dropLocal(settings: Record<string, unknown>): void {
+  if (isPlainObject(settings.general)) delete settings.general.defaultAccountId
+  if (isPlainObject(settings.claude)) delete settings.claude.defaultCwdAsked
+}
+
+/**
+ * Leaves out paths of another computer that don't exist here: with a missing claude.exe no
+ * terminal would start. Returns the names of the settings that keep their value.
+ */
+function dropMissingPaths(settings: Record<string, unknown>): string[] {
+  const claude = settings.claude
+  if (!isPlainObject(claude)) return []
+  const paths = [
+    { key: 'executablePath', label: 'Pfad zur claude.exe', directory: false },
+    { key: 'defaultCwd', label: 'Standard-Arbeitsordner', directory: true },
+  ]
+  const skipped: string[] = []
+  for (const { key, label, directory } of paths) {
+    const value = claude[key]
+    if (typeof value !== 'string' || !value.trim() || exists(value.trim(), directory)) continue
+    delete claude[key]
+    skipped.push(label)
+  }
+  return skipped
+}
+
+function exists(path: string, directory: boolean): boolean {
+  try {
+    const stats = statSync(path)
+    return directory ? stats.isDirectory() : stats.isFile()
+  } catch {
+    return false
   }
 }
 
