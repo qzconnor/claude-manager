@@ -106,12 +106,16 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
-      # Where .releaserc.json looks for the assets, as if they had been built here.
+      # Where .releaserc.json looks for the assets, as if they had been built here. The artifacts
+      # already contain the version folder (upload-artifact keeps everything after `release/`).
       - uses: actions/download-artifact@v4
         with:
           pattern: release-*
-          path: release/${{ needs.version.outputs.version }}
+          path: release
           merge-multiple: true
+      # semantic-release only warns about a missing asset and publishes the release without it.
+      - name: Check the assets
+        run: ls -l release/${{ needs.version.outputs.version }}/{Claude-Manager-*-Setup.exe,Claude-Manager-*-Setup.exe.blockmap,latest.yml,Claude-Manager-*.AppImage,Claude-Manager-*.deb,Claude-Manager-*.rpm,latest-linux.yml}
       - run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
