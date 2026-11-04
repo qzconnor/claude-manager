@@ -3,6 +3,7 @@ import { BrowserWindow, screen, shell } from 'electron'
 import type { AppSettings, WindowState } from '@shared/types'
 import { readJsonSync, writeJsonAtomic } from '../lib/json-file'
 import { forceForeground } from './foreground'
+import { resourceIcon } from './tray'
 
 export const TITLE_BAR_HEIGHT = 40
 
@@ -45,6 +46,8 @@ export function createMainWindow(settings: AppSettings, userDataDir: string, { h
   const boundsFile = join(userDataDir, 'window-state.json')
   const saved = restoreBounds(boundsFile)
   const isWin = process.platform === 'win32'
+  // The caption buttons: Windows draws its own, on Linux Chromium draws them in the same place.
+  const captionButtons = isWin || process.platform === 'linux'
 
   const win = new BrowserWindow({
     x: saved.x,
@@ -58,7 +61,9 @@ export function createMainWindow(settings: AppSettings, userDataDir: string, { h
     backgroundColor: isWin && settings.appearance.material !== 'none' ? '#00000000' : '#141416',
     ...(isWin ? { backgroundMaterial: settings.appearance.material } : {}),
     titleBarStyle: 'hidden',
-    titleBarOverlay: isWin ? { color: '#00000000', symbolColor: '#e8e6e3', height: TITLE_BAR_HEIGHT } : false,
+    titleBarOverlay: captionButtons ? { color: '#00000000', symbolColor: '#e8e6e3', height: TITLE_BAR_HEIGHT } : false,
+    // Windows takes the icon from the executable; X11 window managers need it from the window.
+    ...(process.platform === 'linux' ? { icon: resourceIcon('icon.png') } : {}),
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),

@@ -12,6 +12,7 @@ function subscribe<Args extends unknown[]>(channel: string, cb: (...args: Args) 
 const invoke = <T>(channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args) as Promise<T>
 
 const api: ManagerApi = {
+  platform: process.platform,
   app: {
     info: () => invoke(IpcInvoke.appInfo),
     openExternal: (url) => invoke(IpcInvoke.appOpenExternal, url),

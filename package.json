@@ -11,6 +11,7 @@
     "url": "https://github.com/qzconnor/claude-manager.git"
   },
   "main": "./out/main/index.js",
+  "desktopName": "claude-manager.desktop",
   "scripts": {
     "postinstall": "install-electron",
     "dev": "electron-vite dev",
@@ -18,7 +19,9 @@
     "build": "npm run typecheck && electron-vite build",
     "build:launcher": "node scripts/build-launcher.mjs",
     "build:win": "npm run build && npm run build:launcher && electron-builder --win",
+    "build:linux": "npm run build && electron-builder --linux",
     "release:build": "npm run build && npm run build:launcher && electron-builder --win --publish never",
+    "release:build:linux": "npm run build && electron-builder --linux --publish never",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web"
@@ -65,5 +68,10 @@
     "vue-router": "^5.4.0",
     "vue-sonner": "^2.0.9",
     "vue-tsc": "^3.3.13"
+  },
+  "allowScripts": {
+    "node-pty": true,
+    "koffi": true,
+    "electron-winstaller": true
   }
 }

@@ -128,6 +128,8 @@ export type Unsubscribe = () => void
 
 /** The API the preload script exposes as `window.api`. */
 export interface ManagerApi {
+  /** `process.platform` of the app, known right away (unlike `app.info()`). */
+  platform: string
   app: {
     info(): Promise<AppInfo>
     openExternal(url: string): Promise<void>

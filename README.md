@@ -1,24 +1,35 @@
 # Claude Manager
 
-Desktop-App für Windows 11, die mehrere Claude-Code-Instanzen nebeneinander verwaltet: Terminals in Tabs, mehrere Accounts gleichzeitig, eine durchsuchbare Session-Liste (wie `/resume`, gruppiert nach Account), ein Usage-Dashboard und eine lokale API für andere Programme.
+Desktop-App für Windows 11 und Linux, die mehrere Claude-Code-Instanzen nebeneinander verwaltet: Terminals in Tabs, mehrere Accounts gleichzeitig, eine durchsuchbare Session-Liste (wie `/resume`, gruppiert nach Account), ein Usage-Dashboard und eine lokale API für andere Programme.
 
 ## Funktionen
 
-- **Terminals**: xterm.js (WebGL) mit ConPTY. Farben, Emoji inkl. ZWJ-Sequenzen, Box-Drawing und Nerd-Font-Icons werden korrekt dargestellt. Tabs bleiben beim Seitenwechsel erhalten. Suche, Zoom, Kopieren/Einfügen, Umschalt+Enter für Zeilenumbrüche in Claude Code. Dateien lassen sich ins Terminal ziehen: Wie in Windows Terminal wird ihr Pfad eingefügt, Bilder hängt Claude Code dann an. Beendest du Claude mit Strg+C oder `/exit` (bzw. die Shell mit `exit`), schließt sich der Tab. Bei einem Fehler bleibt er offen, einstellbar unter Einstellungen › Claude Code. Auf Wunsch merkt sich die App die offenen Tabs und öffnet sie beim nächsten Start wieder, Claude-Sessions werden dabei fortgesetzt (Einstellungen › Claude Code › Tabs beim Start wiederherstellen).
+- **Terminals**: xterm.js (WebGL) mit ConPTY bzw. einem Pseudo-Terminal unter Linux. Farben, Emoji inkl. ZWJ-Sequenzen, Box-Drawing und Nerd-Font-Icons werden korrekt dargestellt. Tabs bleiben beim Seitenwechsel erhalten. Suche, Zoom, Kopieren/Einfügen, Umschalt+Enter für Zeilenumbrüche in Claude Code. Dateien lassen sich ins Terminal ziehen: Wie in Windows Terminal wird ihr Pfad eingefügt, Bilder hängt Claude Code dann an. Beendest du Claude mit Strg+C oder `/exit` (bzw. die Shell mit `exit`), schließt sich der Tab. Bei einem Fehler bleibt er offen, einstellbar unter Einstellungen › Claude Code. Auf Wunsch merkt sich die App die offenen Tabs und öffnet sie beim nächsten Start wieder, Claude-Sessions werden dabei fortgesetzt (Einstellungen › Claude Code › Tabs beim Start wiederherstellen).
 - **Accounts**: beliebig viele Accounts parallel, auch mehrere Tabs mit demselben Account. Ist ein Account am Limit, läuft die Session mit einem anderen weiter (siehe unten). Accounts aus cswap lassen sich übernehmen.
 - **Sessions**: alle gespeicherten Claude-Code-Sessions, gruppiert nach Account. Suche über Titel, ersten und letzten Prompt, Ordner, Git-Branch und Session-ID, Verlauf mit Markdown und Tool-Aufrufen, die sich aufklappen lassen: vollständige Eingabe und Ergebnis, Fehler rot markiert. Fortsetzen per Doppelklick oder als neue Session abzweigen (`--fork-session`). Filter zeigen nur Sessions der letzten Tage oder solche, die älter sind als eine Woche bis ein Jahr, und nach Größe des Verlaufs die großen (über 1, 10 oder 50 MB) oder die fast leeren (unter 10 KB bis 1 MB). Anzahl und Gesamtgröße der gefilterten Sessions stehen daneben. Mit *Mehrere auswählen* (oder Strg+Klick) lassen sich Sessions markieren, mit Umschalt+Klick als Bereich, und gesammelt löschen, einzelne auch über das Kontextmenü. Sie kommen samt Subagents und `/rewind`-Ständen in den Papierkorb und lassen sich dort wiederherstellen. Sessions, die in einem Tab offen sind oder gerade in Claude Code laufen, bleiben. Der Token-Verbrauch im Dashboard wird aus den Transcripts berechnet, gelöschte Sessions fehlen dort danach.
 - **Usage-Dashboard**: 5-Stunden- und Wochen-Limits (live, wie bei [cswap](https://github.com/realiti4/claude-swap), auch für Accounts, die gerade nicht genutzt werden: ihr abgelaufener Zugangstoken wird dafür erneuert) sowie Token-Verbrauch pro Tag und Modell, berechnet aus den lokalen Transcripts. Ist der Login von `~/.claude` schon als eigener Account hinterlegt (etwa nach dem cswap-Import), lassen Dashboard und Accounts-Seite den Standard-Account weg, damit dieselben Limits nicht doppelt erscheinen. Auf der Accounts-Seite lässt er sich über den Hinweis unter den Karten wieder einblenden. Die Limits des Accounts im aktiven Tab stehen außerdem in der Titelleiste, ein Klick zeigt Details und Reset-Zeiten. Balken und Ringe sind grün (unter 60 %), orange (ab 60 %) und rot (ab 85 %), in den Farben des gewählten Themes.
-- **Befehl `cm`**: öffnet eine Claude-Session im Manager, aus jedem Terminal oder direkt aus der Explorer-Adressleiste (siehe unten).
-- **Darstellung**: Acryl, Mica oder Mica Alt, auch wenn das Fenster nicht im Fokus ist. 11 Themes (u. a. Catppuccin, Tokyo Night, Rosé Pine, Nord, Dracula). Das Terminal folgt dem Theme oder bekommt ein eigenes Farbschema. Schrift, Größe, Zeilenhöhe, Cursor usw. lassen sich mit Live-Vorschau einstellen. Seitenleisten von Claude Code wie `/diff` bekommen statt ihres festen Graus die Flächenfarbe des Themes oder den Terminal-Hintergrund (Einstellungen › Terminal). Die Tabs stehen wahlweise oben in der Titelleiste oder untereinander in der Seitenleiste, deren Symbole dann auch beschriftet sind (Einstellungen › Darstellung › Tabs).
+- **Befehl `cm`**: öffnet eine Claude-Session im Manager, aus jedem Terminal oder unter Windows direkt aus der Explorer-Adressleiste (siehe unten).
+- **Darstellung**: unter Windows Acryl, Mica oder Mica Alt, auch wenn das Fenster nicht im Fokus ist (unter Linux ist das Fenster deckend). 11 Themes (u. a. Catppuccin, Tokyo Night, Rosé Pine, Nord, Dracula). Das Terminal folgt dem Theme oder bekommt ein eigenes Farbschema. Schrift, Größe, Zeilenhöhe, Cursor usw. lassen sich mit Live-Vorschau einstellen. Seitenleisten von Claude Code wie `/diff` bekommen statt ihres festen Graus die Flächenfarbe des Themes oder den Terminal-Hintergrund (Einstellungen › Terminal). Die Tabs stehen wahlweise oben in der Titelleiste oder untereinander in der Seitenleiste, deren Symbole dann auch beschriftet sind (Einstellungen › Darstellung › Tabs).
 - **Einstellungen sichern**: *Exportieren* oben in den Einstellungen speichert alle Einstellungen in einer JSON-Datei, *Importieren* übernimmt sie, etwa auf einem anderen Computer. Accounts und Anmeldedaten gehören nicht dazu, auch der Standard-Account bleibt, wie er ist. Pfade zur `claude.exe` oder zum Standard-Arbeitsordner, die es auf diesem Computer nicht gibt, werden nicht übernommen. Einstellungen, die die Datei nicht kennt (z. B. aus einer älteren Version), behalten ihren Wert. Direkt nach dem Import lässt er sich in der Meldung rückgängig machen.
 - **Lokale API**: REST + Server-Sent Events auf `127.0.0.1`, Doku unter `/docs`, OpenAPI 3.1 unter `/openapi.json`. Siehe [docs/API.md](docs/API.md).
-- **Im Hintergrund**: Beendet Claude eine Antwort oder wartet auf eine Bestätigung, während das Fenster im Hintergrund ist, blinkt das Symbol in der Taskleiste, bis du das Fenster öffnest. Die App erkennt das am Fenstertitel, den Claude Code setzt (`◐`/`◑` beim Arbeiten, `✳` im Leerlauf). Auf Wunsch läuft sie im Infobereich weiter: Schließen blendet das Fenster nur aus, Terminals und API laufen weiter, beendet wird über das Kontextmenü des Symbols. Zusammen mit „Mit Windows starten“ startet sie beim Anmelden ohne Fenster, die API ist also immer erreichbar (Einstellungen › Claude Code › Start und Infobereich). Die Deinstallation entfernt den Autostart wieder.
+- **Im Hintergrund**: Beendet Claude eine Antwort oder wartet auf eine Bestätigung, während das Fenster im Hintergrund ist, blinkt das Symbol in der Taskleiste, bis du das Fenster öffnest. Die App erkennt das am Fenstertitel, den Claude Code setzt (`◐`/`◑` beim Arbeiten, `✳` im Leerlauf). Auf Wunsch läuft sie im Infobereich weiter: Schließen blendet das Fenster nur aus, Terminals und API laufen weiter, beendet wird über das Kontextmenü des Symbols. Zusammen mit „Mit Windows starten“ (unter Linux „Beim Anmelden starten“) startet sie beim Anmelden ohne Fenster, die API ist also immer erreichbar (Einstellungen › Claude Code › Start und Infobereich). Die Deinstallation entfernt den Autostart wieder.
 - **Befehlspalette** (Strg+Umschalt+P) für Aktionen, Navigation, offene Tabs und die letzten Sessions.
 - **Updates**: Die App sucht beim Start und alle 4 Stunden nach einer neuen Version (GitHub-Releases). Ein Update wird mit einem Klick geladen und beim Neustart installiert, laufende Terminals werden vorher abgefragt. Im Tab *Updates* der Einstellungen stehen die Versionshinweise aller Versionen, „Details“ zeigt darunter die Beschreibung des Pull Requests von GitHub. Ein Punkt am Zahnrad in der Navigationsleiste zeigt ein wartendes Update oder ungelesene Neuerungen, ein Klick darauf öffnet dann direkt die Updates.
 
+## Installation
+
+Die Dateien stehen bei jedem [Release](https://github.com/qzconnor/claude-manager/releases/latest) auf GitHub.
+
+- **Windows 11**: `Claude-Manager-<version>-Setup.exe` ausführen.
+- **Debian, Ubuntu, Linux Mint, Pop!_OS**: `sudo apt install ./Claude-Manager-<version>.deb`. Die App steht danach im Anwendungsmenü und unter `/opt/Claude Manager`, auf der Kommandozeile als `claude-manager`.
+- **Fedora, openSUSE, RHEL**: `sudo dnf install ./Claude-Manager-<version>.rpm` (openSUSE: `sudo zypper install ./…`).
+- **Alle anderen Distributionen**: `Claude-Manager-<version>.AppImage` herunterladen, mit `chmod +x Claude-Manager-*.AppImage` ausführbar machen und starten. Es braucht kein libfuse2, nur FUSE 3 (`fusermount3`), das jede aktuelle Distribution mitbringt. Ins Anwendungsmenü kommt es z. B. mit [Gear Lever](https://flathub.org/apps/it.mijorus.gearlever) oder AppImageLauncher.
+
+Updates holt sich die App selbst: Das AppImage ersetzt seine eigene Datei, das deb- und rpm-Paket installiert die App über den Paketmanager, der dafür einmal nach dem Passwort fragt.
+
 ## Befehl `cm`
 
-Der Installer richtet den Befehl `cm` ein. Wie `cmd` funktioniert er auch in der Adressleiste des Explorers: `cm` eintippen, Enter, und im Manager öffnet sich eine Session im angezeigten Ordner. Läuft die App noch nicht, startet sie. Ist der Ordner schon in einem Tab offen, wechselt `cm` nur zu diesem Tab, auch wenn er gerade beim Start wiederhergestellt wurde (abschaltbar unter *Einstellungen → Claude Code*).
+Der Installer richtet den Befehl `cm` ein, unter Linux die App bei ihrem ersten Start. Wie `cmd` funktioniert er auch in der Adressleiste des Explorers: `cm` eintippen, Enter, und im Manager öffnet sich eine Session im angezeigten Ordner. Läuft die App noch nicht, startet sie. Ist der Ordner schon in einem Tab offen, wechselt `cm` nur zu diesem Tab, auch wenn er gerade beim Start wiederhergestellt wurde (abschaltbar unter *Einstellungen → Claude Code*).
 
 | Aufruf | Wirkung |
 |---|---|
@@ -27,12 +38,14 @@ Der Installer richtet den Befehl `cm` ein. Wie `cmd` funktioniert er auch in der
 | `cm -a <account>` | mit Account: Name, E-Mail, ID oder ein eindeutiger Teil des Namens |
 | `cm -c` | letzte Session in diesem Ordner fortsetzen (`claude --continue`) |
 | `cm -r [session-id]` | Session fortsetzen, ohne ID mit der Auswahl von Claude Code |
-| `cm -s` | PowerShell mit der Umgebung des Accounts statt Claude Code |
+| `cm -s` | PowerShell (Linux: die Login-Shell) mit der Umgebung des Accounts statt Claude Code |
 | `cm -n` | immer einen neuen Tab öffnen, auch wenn der Ordner schon offen ist |
 | `cm -- <argumente>` | Argumente an `claude` weitergeben, z. B. `cm -- --model opus` |
 | `cm -h` | Hilfe |
 
 Technisch ist `cm.exe` ein kleiner Launcher (`src/launcher/cm.cs`), der Ordner und Argumente an die laufende App weiterreicht. Er liegt im Unterordner `bin` der Installation, nur dieser Ordner kommt in den Benutzer-PATH. Für die Explorer-Adressleiste trägt der Installer zusätzlich einen App-Pfad unter `HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\cm.exe` ein. Admin-Rechte braucht beides nicht. Die Deinstallation entfernt beides wieder, der restliche PATH bleibt unverändert. In *Einstellungen → Claude Code* lässt sich der Befehl auch nachträglich an- und abmelden.
+
+Unter Linux schreibt die App ein kleines Shell-Skript nach `~/.local/bin/cm` (`src/main/cli/linux-launcher.ts`). Es enthält den Pfad der App, beim AppImage den der AppImage-Datei, und die App hält ihn bei jedem Start aktuell, auch wenn das AppImage verschoben wurde. Ein `cm` eines anderen Programms überschreibt sie nie. `~/.local/bin` steht bei den meisten Distributionen im PATH, sonst weist die Einstellungsseite darauf hin. Hast du den Befehl dort abgemeldet, richtet ihn auch ein späterer Start nicht wieder ein.
 
 ## Account wechseln, wenn ein Limit erreicht ist
 
@@ -68,13 +81,14 @@ Danach meldest du jeden Account einmal über „Anmelden“ an, die E-Mail ist a
 
 ## Sicherheit
 
-- Tokens und API-Keys werden mit Windows DPAPI (Electron `safeStorage`) verschlüsselt gespeichert, nie im Klartext. Entschlüsselt werden sie einmal beim Start und nur im Speicher des Hauptprozesses gehalten. Die UI und die API zeigen nur eine maskierte Vorschau.
+- Tokens und API-Keys werden mit Windows DPAPI bzw. unter Linux mit dem Schlüsselbund verschlüsselt gespeichert (Electron `safeStorage`), nie im Klartext. Unter KDE ist das KWallet, auf allen anderen Desktops der Secret Service (GNOME Keyring, KeePassXC u. a.), auch dort, wo Chromium ihn von sich aus nicht nimmt (sway, Hyprland, i3, MATE, LXQt). Mit `--password-store=…` lässt sich das wie in Chromium überschreiben. Gibt es unter Linux keinen Schlüsselbund, speichert die App keine Tokens und API-Keys, statt auf Chromiums festen Schlüssel auszuweichen. Browser-Logins brauchen keinen, ihre Zugangsdaten verwaltet Claude Code selbst. Entschlüsselt werden sie einmal beim Start und nur im Speicher des Hauptprozesses gehalten. Die UI und die API zeigen nur eine maskierte Vorschau.
 - Die App liest OAuth-Zugangsdaten nur, um die Usage und den Inhaber des Logins abzufragen. Ist der Zugangstoken eines Browser-Logins abgelaufen, erneuert sie ihn mit dem Refresh-Token, so wie Claude Code beim Start einer Session: unter Claude Codes eigener Sperre für den Ordner (`.oauth_refresh.lock`), und geschrieben wird nur, wenn in `.credentials.json` noch derselbe Refresh-Token steht. So verwenden App und Claude Code nie denselben Refresh-Token zweimal. Sonst verändert die App die Zugangsdaten nicht. Im Cache steht nur ein Hash des Tokens, nicht der Token.
-- Die lokale API ist standardmäßig aus. Eingeschaltet lauscht sie nur auf `127.0.0.1`, verlangt einen zufälligen Bearer-Token (ebenfalls DPAPI-verschlüsselt) und lehnt fremde `Host`-Header ab (Schutz vor DNS-Rebinding).
+- Die lokale API ist standardmäßig aus. Eingeschaltet lauscht sie nur auf `127.0.0.1`, verlangt einen zufälligen Bearer-Token (ebenfalls verschlüsselt, ohne Schlüsselbund gilt er nur bis zum Beenden) und lehnt fremde `Host`-Header ab (Schutz vor DNS-Rebinding).
 
 ## Voraussetzungen
 
 - Windows 11 22H2 oder neuer für Acryl/Mica. Mit der Material-Einstellung *Aus* ist der Hintergrund deckend.
+- Linux x64 mit X11 oder Wayland, z. B. Ubuntu 22.04, Debian 12, Fedora 40 oder neuer. Das Symbol im Infobereich zeigt GNOME erst mit der Erweiterung „AppIndicator“ (bei Ubuntu dabei).
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) installiert. Der Pfad wird automatisch erkannt oder in *Einstellungen → Claude Code* gesetzt.
 - Für die Entwicklung: Node.js 22 oder neuer.
 
@@ -85,7 +99,10 @@ npm install
 npm run dev          # App mit Hot Reload starten
 npm run typecheck    # Main/Preload (tsc) und Renderer (vue-tsc) prüfen
 npm run build:win    # Typecheck, Build, cm.exe und NSIS-Installer → release/<version>/
+npm run build:linux  # unter Linux: Typecheck, Build, AppImage, deb und rpm → release/<version>/
 ```
+
+Die Linux-Pakete lassen sich nur unter Linux bauen, weil node-pty dort keine fertigen Binärdateien mitbringt: `npm install` kompiliert es (dafür `python3`, `make` und `g++`; `allowScripts` in der package.json erlaubt das auch unter npm 12, das Install-Skripte sonst blockiert), für das rpm-Paket braucht es zusätzlich `rpmbuild` (Paket `rpm`). Ohne Linux-Rechner geht es z. B. in WSL oder im Container `node:24-bookworm`.
 
 `npm run dev` und `npm start` nutzen ein eigenes Profil (`%APPDATA%\Claude Manager Dev`), damit sie neben der installierten App laufen. Einstellungen und Accounts sind dort getrennt, der Standard-Account (`~/.claude`) ist immer da.
 
@@ -93,7 +110,7 @@ npm run build:win    # Typecheck, Build, cm.exe und NSIS-Installer → release/<
 
 ### Releases
 
-Jeder Push auf `master` startet [semantic-release](https://semantic-release.gitbook.io/) (`.github/workflows/release.yml`). Es liest die Version aus den Commit-Nachrichten ([Conventional Commits](https://www.conventionalcommits.org/de/)), baut den Installer und veröffentlicht ihn mit den Versionshinweisen als GitHub-Release. Von dort holt sich die installierte App ihre Updates.
+Jeder Push auf `master` startet [semantic-release](https://semantic-release.gitbook.io/) (`.github/workflows/release.yml`). Es liest die Version aus den Commit-Nachrichten ([Conventional Commits](https://www.conventionalcommits.org/de/)). Mit ihr bauen ein Windows- und ein Linux-Runner den Installer bzw. AppImage, deb und rpm, danach veröffentlicht semantic-release alles zusammen mit den Versionshinweisen als GitHub-Release. Von dort holt sich die installierte App ihre Updates.
 
 | Commit | Version | Versionshinweise |
 | --- | --- | --- |
@@ -103,16 +120,16 @@ Jeder Push auf `master` startet [semantic-release](https://semantic-release.gitb
 | `feat!: …` oder `BREAKING CHANGE:` im Text | neue Major-Version | |
 | `docs:`, `ci:`, `build:`, `chore:`, `refactor:`, `style:`, `test:` | kein Release | nicht aufgeführt |
 
-Pull Requests per Squash-Merge zusammenführen: Dann wird ihr Titel zur Commit-Nachricht. Deshalb prüft `pr-title.yml` den Titel, und `ci.yml` baut den Installer einmal zur Probe. Die Version in `package.json` bleibt im Repository unverändert: semantic-release setzt sie nur für den Build.
+Pull Requests per Squash-Merge zusammenführen: Dann wird ihr Titel zur Commit-Nachricht. Deshalb prüft `pr-title.yml` den Titel, und `ci.yml` baut den Installer und die Linux-Pakete einmal zur Probe. Die Version in `package.json` bleibt im Repository unverändert: semantic-release setzt sie nur für den Build.
 
 ## Projektstruktur
 
 ```
 src/
-  launcher/        cm.exe: Befehl für Terminal und Explorer-Adressleiste (C#)
+  launcher/        cm.exe: Befehl für Terminal und Explorer-Adressleiste (C#, Windows)
   main/            Electron-Hauptprozess
     api/           lokale HTTP-API (Routen, OpenAPI, Doku-Seite, SSE)
-    cli/           Aufrufe über cm auswerten, Befehl an- und abmelden
+    cli/           Aufrufe über cm auswerten, Befehl an- und abmelden, cm-Skript für Linux
     services/      Accounts, Terminals (node-pty), Sessions, Usage, Einstellungen, Updates
     workers/       Worker-Thread zum Indexieren der Session-Transcripts
     window/        Fenster, Acryl/Mica (inkl. Fokus-Trick)
@@ -147,4 +164,6 @@ Alle anderen Strg-Kombinationen gehen unverändert an das Terminal, weil Claude 
 
 - **Acryl ohne Fokus**: Windows schaltet das Backdrop-Material ab, sobald ein Fenster inaktiv wird. Direkt nach dem Deaktivieren schickt die App `WM_NCACTIVATE` mit „aktiv“ an das eigene Fenster (`SendMessageW` über koffi). DWM zeichnet das Material dann weiter, ohne dass die App den Fokus stiehlt. Ist koffi nicht verfügbar, wird das Material beim Fokuswechsel normal ausgeblendet.
 - **xterm-WebGL-Patch**: Das WebGL-Addon malt Zellen mit Hintergrund-Flags (z. B. gedimmter Text) immer deckend in der Theme-Hintergrundfarbe. Bei unserem transparenten Terminal-Hintergrund wären das schwarze Kästen. Ein kleines Vite-Plugin in `electron.vite.config.ts` korrigiert das beim Build. Passt der Patch nach einem Update nicht mehr, bricht der Build mit einer klaren Meldung ab.
+- **Umgebung unter Linux**: Aus dem Anwendungsmenü gestartet, kennt die App nur die Umgebung der Desktop-Sitzung, ohne das, was `~/.bashrc` oder `~/.zshrc` einrichten (z. B. nvm, `~/.npm-global`, `~/.bun`). Wie VS Code fragt sie deshalb beim Start einmal die Login-Shell nach ihrer Umgebung und übernimmt sie (`src/main/lib/shell-env.ts`), so findet sie `claude` auch dort. Variablen, die das AppImage nur für sich selbst setzt, bekommen Terminals nicht mit.
+- **Chromium-Sandbox unter Linux**: Das deb- und rpm-Paket richten die Sandbox bei der Installation ein (unter Ubuntu 24.04 mit einem AppArmor-Profil). Das AppImage prüft beim Start, ob Benutzer-Namespaces erlaubt sind, und startet sonst ohne Sandbox, statt abzustürzen.
 - **node-pty**: Beim Schließen eines Terminals kann in der Konsole „AttachConsole failed“ erscheinen. Das ist bekanntes, harmloses Rauschen von node-pty 1.1.0: Die Prozesse werden trotzdem beendet, in der gepackten App sieht man nichts davon.

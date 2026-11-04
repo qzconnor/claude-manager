@@ -1,5 +1,5 @@
-# Checks every pull request: the same build as the release (typecheck included, without
-# publishing), so a broken installer never reaches master.
+# Checks every pull request: the same builds as the release (typecheck included, without
+# publishing), so a broken installer or package never reaches master.
 name: CI
 
 on:
@@ -17,3 +17,18 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run release:build
+
+  linux:
+    name: Linux-Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      # rpmbuild for the rpm package.
+      - run: sudo apt-get update && sudo apt-get install -y rpm
+      # node-pty has no Linux prebuilds and is compiled here.
+      - run: npm ci
+      - run: npm run release:build:linux

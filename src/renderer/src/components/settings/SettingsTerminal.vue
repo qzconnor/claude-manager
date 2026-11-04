@@ -4,6 +4,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectSeparator, Select
 import { Switch } from '@/components/ui/switch'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useSetting } from '@/composables/useSetting'
+import { supportsMaterial } from '@/lib/platform'
 import { THEMES } from '@/themes/themes'
 import FontPicker from './FontPicker.vue'
 import NumberControl from './NumberControl.vue'
@@ -156,7 +157,9 @@ function onScheme(value: unknown) {
           </SelectContent>
         </Select>
       </SettingField>
+      <!-- Without a window material (only on Windows) there is nothing to shine through. -->
       <SettingField
+        v-if="supportsMaterial"
         for="terminal-bg"
         label="Hintergrund-Deckkraft"
         description="0 % lässt das Fenster-Material (Acryl) durchscheinen."

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, statSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
+import { userInfo } from 'node:os'
 import { basename, join } from 'node:path'
 import * as pty from 'node-pty'
 import type { CloseOnExit, SessionLimit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
@@ -18,7 +19,7 @@ import {
 import { claudeActivity, TitleReader } from '../lib/terminal-title'
 import { TypedEmitter } from '../lib/typed-emitter'
 import type { AccountService } from './account-service'
-import type { ClaudeCli } from './claude-cli'
+import { displayCommand, type ClaudeCli } from './claude-cli'
 import type { SettingsService } from './settings-service'
 import type { WorkspaceTrust } from './workspace-trust'
 
@@ -472,10 +473,18 @@ function shellCommand(): { file: string; args: string[]; display: string } {
       .map((dir) => join(dir, 'pwsh.exe'))
       .find((candidate) => existsSync(candidate))
     const file = pwsh ?? 'powershell.exe'
-    return { file, args: ['-NoLogo'], display: `${file} -NoLogo` }
+    return { file, args: ['-NoLogo'], display: displayCommand(file, ['-NoLogo']) }
   }
-  const file = process.env.SHELL || '/bin/bash'
-  return { file, args: ['-l'], display: `${file} -l` }
+  let file = process.env.SHELL
+  if (!file) {
+    try {
+      file = userInfo().shell ?? undefined
+    } catch {
+      // No entry in the user database.
+    }
+  }
+  file ||= existsSync('/bin/bash') ? '/bin/bash' : '/bin/sh'
+  return { file, args: ['-l'], display: displayCommand(file, ['-l']) }
 }
 
 function clampSize(value: number | undefined, fallback: number): number {
@@ -483,8 +492,12 @@ function clampSize(value: number | undefined, fallback: number): number {
   return Math.max(1, Math.min(1000, Math.floor(value)))
 }
 
-/** Deletes an environment key case-insensitively (Windows env names are case-insensitive). */
+/** Deletes an environment key; on Windows case-insensitively, like its environment names. */
 function deleteEnv(env: Record<string, string>, key: string): void {
+  if (process.platform !== 'win32') {
+    delete env[key]
+    return
+  }
   const lower = key.toLowerCase()
   for (const existing of Object.keys(env)) {
     if (existing.toLowerCase() === lower) delete env[existing]

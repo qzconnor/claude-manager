@@ -32,6 +32,7 @@ import { useLauncher } from '@/composables/useLauncher'
 import { attempt } from '@/lib/errors'
 import { expectedIdentity, isUnexpectedLogin } from '@/lib/expected-login'
 import { accountKindLabel, identityLabel, planLabel, shortenPath } from '@/lib/format'
+import { shellLabel } from '@/lib/platform'
 import { useAccountsStore } from '@/stores/accounts'
 import { useAppStore } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
@@ -107,7 +108,7 @@ function keepLogin() {
               </DropdownMenuItem>
               <DropdownMenuItem @select="launcher.shell(account.id)">
                 <SquareTerminalIcon />
-                PowerShell mit Account
+                {{ shellLabel }} mit Account
               </DropdownMenuItem>
               <DropdownMenuItem @select="openConfigDir">
                 <FolderOpenIcon />

@@ -77,7 +77,8 @@ export function registerIpc(ctx: AppContext): void {
     const { color, symbolColor, dark } = colors as { color?: unknown; symbolColor?: unknown; dark?: unknown }
     // The acrylic/mica tint follows the native theme.
     nativeTheme.themeSource = dark === false ? 'light' : 'dark'
-    if (process.platform !== 'win32' || typeof color !== 'string' || typeof symbolColor !== 'string') return
+    // The caption buttons of the title bar overlay exist on Windows and Linux (main-window.ts).
+    if (process.platform === 'darwin' || typeof color !== 'string' || typeof symbolColor !== 'string') return
     senderWindow(event).setTitleBarOverlay({ color, symbolColor })
   })
 

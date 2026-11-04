@@ -527,7 +527,9 @@ export interface AppInfo {
   claudeVersion: string | null
   /** Windows build number (e.g. 26100), used to configure xterm for ConPTY. */
   windowsBuild: number | null
-  /** Installed build (not a development build): only it can start with Windows. */
+  /** How the Linux build is installed; `null` elsewhere and for development builds. */
+  linuxPackage: 'appimage' | 'deb' | 'rpm' | null
+  /** Installed build (not a development build): only it can start at login. */
   packaged: boolean
 }
 
@@ -565,11 +567,13 @@ export interface DialogRequest extends DialogOptions {
 
 /** The `cm` command line launcher. */
 export interface CommandStatus {
-  /** cm.exe is part of the installed app (missing in development builds). */
+  /** Windows: cm.exe is part of the installed app. Linux: an installed app (AppImage, deb or rpm). */
   available: boolean
-  /** On the user PATH and registered for the Explorer address bar. */
+  /** Windows: on the user PATH and registered for the Explorer address bar. Linux: ~/.local/bin/cm points to the app. */
   registered: boolean
   launcherPath: string | null
+  /** Why `cm` may not work yet, e.g. ~/.local/bin missing from the PATH. */
+  hint: string | null
 }
 
 export interface ApiStatus {

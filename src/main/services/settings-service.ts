@@ -1,11 +1,14 @@
 import { statSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { createDefaultSettings } from '@shared/defaults'
+import { createDefaultSettings as sharedDefaults } from '@shared/defaults'
 import type { AppSettings, DeepPartial, SettingsImportResult } from '@shared/types'
 import { isPlainObject, mergeKnown } from '@shared/utils'
 import { readJson, readJsonSync, writeJsonAtomic } from '../lib/json-file'
 import { TypedEmitter } from '../lib/typed-emitter'
+
+/** The defaults of this platform (e.g. the terminal font). */
+const createDefaultSettings = () => sharedDefaults(process.platform)
 
 type Events = { changed: [settings: AppSettings, previous: AppSettings] }
 
@@ -100,14 +103,14 @@ function dropLocal(settings: Record<string, unknown>): void {
 }
 
 /**
- * Leaves out paths of another computer that don't exist here: with a missing claude.exe no
+ * Leaves out paths of another computer that don't exist here: with a missing claude executable no
  * terminal would start. Returns the names of the settings that keep their value.
  */
 function dropMissingPaths(settings: Record<string, unknown>): string[] {
   const claude = settings.claude
   if (!isPlainObject(claude)) return []
   const paths = [
-    { key: 'executablePath', label: 'Pfad zur claude.exe', directory: false },
+    { key: 'executablePath', label: process.platform === 'win32' ? 'Pfad zur claude.exe' : 'Pfad zu claude', directory: false },
     { key: 'defaultCwd', label: 'Standard-Arbeitsordner', directory: true },
   ]
   const skipped: string[] = []

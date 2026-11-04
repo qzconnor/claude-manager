@@ -24,15 +24,18 @@
         }
       }
     ],
-    ["@semantic-release/npm", { "npmPublish": false }],
-    ["@semantic-release/exec", { "prepareCmd": "npm run release:build" }],
+    ["@semantic-release/exec", { "verifyReleaseCmd": "echo ${nextRelease.version} > .release-version" }],
     [
       "@semantic-release/github",
       {
         "assets": [
           { "path": "release/*/Claude-Manager-*-Setup.exe", "label": "Windows-Installer" },
           { "path": "release/*/Claude-Manager-*-Setup.exe.blockmap" },
-          { "path": "release/*/latest.yml" }
+          { "path": "release/*/latest.yml" },
+          { "path": "release/*/Claude-Manager-*.AppImage", "label": "Linux (AppImage, alle Distributionen)" },
+          { "path": "release/*/Claude-Manager-*.deb", "label": "Linux (deb, Debian/Ubuntu)" },
+          { "path": "release/*/Claude-Manager-*.rpm", "label": "Linux (rpm, Fedora/openSUSE)" },
+          { "path": "release/*/latest-linux.yml" }
         ],
         "successComment": false,
         "failComment": false,

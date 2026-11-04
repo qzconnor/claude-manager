@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Notification, net } from 'electron'
 import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
 import type { ReleaseNote, ReleaseReference, UpdateState } from '@shared/types'
+import { linuxPackage } from '../lib/linux'
 import { TypedEmitter } from '../lib/typed-emitter'
 import { revealWindow } from '../window/main-window'
 
@@ -39,10 +40,17 @@ interface GitHubIssue {
 /** Links of the notes to a pull request or issue, e.g. `…/qzconnor/claude-manager/issues/17`. */
 const REFERENCE_LINK = new RegExp(`https://github\\.com/${REPO}/(?:issues|pull)/(\\d+)`, 'g')
 
+/**
+ * Only an installed app can update itself. On Linux that is the AppImage (it replaces its own file)
+ * and the deb and rpm packages (installed by the package manager, which asks for the password).
+ */
+function canUpdate(): boolean {
+  return app.isPackaged && (process.platform !== 'linux' || linuxPackage() !== null)
+}
+
 export class UpdateService extends TypedEmitter<Events> {
   private state: UpdateState = {
-    // Only an installed app can update itself.
-    status: app.isPackaged ? 'idle' : 'unsupported',
+    status: canUpdate() ? 'idle' : 'unsupported',
     current: app.getVersion(),
     next: null,
     progress: 0,
@@ -68,10 +76,11 @@ export class UpdateService extends TypedEmitter<Events> {
   }
 
   init(): void {
-    if (!app.isPackaged) return
-    // Downloading is the user's choice; a downloaded update is also installed when quitting.
+    if (!canUpdate()) return
+    // Downloading is the user's choice; a downloaded update is also installed when quitting, except
+    // for deb and rpm: the package manager asks for the password, which shouldn't come up on quitting.
     autoUpdater.autoDownload = false
-    autoUpdater.autoInstallOnAppQuit = true
+    autoUpdater.autoInstallOnAppQuit = linuxPackage() !== 'deb' && linuxPackage() !== 'rpm'
     autoUpdater.logger = null
 
     autoUpdater.on('checking-for-update', () => this.setState({ status: 'checking', error: null }))
@@ -86,7 +95,11 @@ export class UpdateService extends TypedEmitter<Events> {
     autoUpdater.on('update-downloaded', (info: UpdateInfo) =>
       this.setState({ status: 'downloaded', next: info.version, progress: 100 }),
     )
-    autoUpdater.on('error', (error) => this.setState({ status: 'error', error: describeError(error) }))
+    autoUpdater.on('error', (error) => {
+      // E.g. the password for the package manager was not given: the app keeps running.
+      this.installingUpdate = false
+      this.setState({ status: 'error', error: describeError(error) })
+    })
 
     this.timers.push(
       setTimeout(() => void this.check(), FIRST_CHECK_DELAY_MS),
