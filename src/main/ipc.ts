@@ -49,7 +49,10 @@ export function registerIpc(ctx: AppContext): void {
   ipcMain.handle(IpcInvoke.appOpenPath, async (_e, path: unknown) => {
     const target = requireString(path, 'path')
     if (!existsSync(target)) throw new Error(`„${target}“ existiert nicht.`)
-    return shell.openPath(target)
+    // openPath doesn't throw but answers with the reason, e.g. when Linux has no file manager for folders.
+    const error = await shell.openPath(target)
+    if (error) throw new Error(error)
+    return error
   })
   ipcMain.handle(IpcInvoke.appPickDirectory, async (event, defaultPath: unknown) => {
     const result = await dialog.showOpenDialog(senderWindow(event), {

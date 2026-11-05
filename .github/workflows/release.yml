@@ -71,18 +71,23 @@ jobs:
     needs: version
     if: needs.version.outputs.version != ''
     runs-on: ubuntu-latest
+    # node-pty is compiled here and links against the system's glibc. Built on the runner itself
+    # (ubuntu-latest is Ubuntu 26.04 now), it needed glibc 2.42, and v1.16.0 didn't start on Ubuntu 24.04,
+    # Debian 13 or Fedora 42. Debian 12 has glibc 2.36, the module then runs from Ubuntu 22.04 on (checked below).
+    container: node:24-bookworm
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-      # rpmbuild for the rpm package; deb and AppImage need nothing beyond the runner.
-      - run: sudo apt-get update && sudo apt-get install -y rpm
+      # rpmbuild for the rpm package; deb and AppImage need nothing beyond the image.
+      - run: apt-get update && apt-get install -y rpm
       # postinstall downloads the Electron binary; node-pty has no Linux prebuilds and is compiled here.
       - run: npm ci
       - run: npm version ${{ needs.version.outputs.version }} --no-git-tag-version --allow-same-version
       - run: npm run release:build:linux
+      - run: bash scripts/check-linux-glibc.sh release
       - uses: actions/upload-artifact@v4
         with:
           name: release-linux

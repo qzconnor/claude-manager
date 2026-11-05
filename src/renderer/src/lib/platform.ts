@@ -8,5 +8,8 @@ export const supportsMaterial = isWindows
 /** The shell that `shell` terminals start: PowerShell on Windows, the user's login shell elsewhere. */
 export const shellLabel = isWindows ? 'PowerShell' : 'Shell'
 
+/** What opens a folder: the Explorer on Windows, the desktop's file manager elsewhere. */
+export const fileManagerLabel = isWindows ? 'Explorer' : 'Dateimanager'
+
 /** Where Windows keeps secrets, and where Linux does. */
 export const secretStore = isWindows ? 'Windows DPAPI' : 'Schlüsselbund des Systems'
