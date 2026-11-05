@@ -208,7 +208,12 @@ function openFolder() {
         </HoverCardTrigger>
       </ContextMenuTrigger>
       <HoverCardContent :side="vertical ? 'right' : 'bottom'" align="start" :side-offset="vertical ? 12 : 6" class="w-72">
-        <TerminalTabCard :terminal="terminal" :account="account" :session-account="sessionAccount" />
+        <TerminalTabCard
+          :terminal="terminal"
+          :account="account"
+          :session-account="sessionAccount"
+          @open-folder="openFolder"
+        />
       </HoverCardContent>
     </HoverCard>
     <ContextMenuContent class="w-64">

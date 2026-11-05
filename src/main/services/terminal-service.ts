@@ -3,7 +3,7 @@ import { existsSync, statSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { userInfo } from 'node:os'
 import { basename, join } from 'node:path'
-import * as pty from 'node-pty'
+import type * as Pty from 'node-pty'
 import type { CloseOnExit, SessionLimit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
 import { fallbackSessionFolder } from '../lib/session-folder'
 import {
@@ -32,6 +32,26 @@ const TRACK_INTERVAL_MS = 2000
 /** Arguments with which Claude Code picks the session itself. */
 const SESSION_CHOICE_ARG_RE = /^(-c|--continue|-r|--resume|--session-id|--from-pr|--teleport)(=|$)/
 
+let ptyModule: typeof Pty | undefined
+
+/**
+ * node-pty is a native module and is loaded with the first terminal. If it can't be loaded (e.g. on
+ * Linux, compiled against a newer glibc than the system has), only the terminals fail with the reason,
+ * the app still starts. As an import, the error would end the main process before its window, and on
+ * Linux Electron reports errors before `ready` on stderr only: the app would seem to do nothing.
+ */
+function loadPty(): typeof Pty {
+  if (ptyModule) return ptyModule
+  try {
+    ptyModule = require('node-pty') as typeof Pty
+    return ptyModule
+  } catch (error) {
+    console.error('[terminal] node-pty could not be loaded', error)
+    const reason = error instanceof Error ? error.message : String(error)
+    throw new Error(`Terminals können nicht starten, node-pty lässt sich nicht laden: ${reason}`)
+  }
+}
+
 interface TrackedTranscript {
   sessionId: string
   file: string
@@ -45,7 +65,7 @@ interface TerminalRecord {
   info: TerminalInfo
   /** Shown while the session has no title (and for shells and logins). */
   defaultTitle: string
-  process: pty.IPty | null
+  process: Pty.IPty | null
   /** Resolves when the process has exited. */
   exited: Promise<void>
   transcript: TrackedTranscript | null
@@ -165,7 +185,7 @@ export class TerminalService extends TypedEmitter<Events> {
     const command = mode === 'shell' ? shellCommand() : this.cli.command(args)
     const cols = clampSize(options.cols, 120)
     const rows = clampSize(options.rows, 32)
-    const proc = pty.spawn(command.file, command.args, {
+    const proc = loadPty().spawn(command.file, command.args, {
       name: 'xterm-256color',
       cols,
       rows,

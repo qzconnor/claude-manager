@@ -21,6 +21,8 @@ jobs:
   linux:
     name: Linux-Build
     runs-on: ubuntu-latest
+    # Like the release: built on Debian 12, so node-pty doesn't need a newer glibc than common distributions have.
+    container: node:24-bookworm
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,7 +30,8 @@ jobs:
           node-version: 24
           cache: npm
       # rpmbuild for the rpm package.
-      - run: sudo apt-get update && sudo apt-get install -y rpm
+      - run: apt-get update && apt-get install -y rpm
       # node-pty has no Linux prebuilds and is compiled here.
       - run: npm ci
       - run: npm run release:build:linux
+      - run: bash scripts/check-linux-glibc.sh release

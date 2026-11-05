@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { CircleStopIcon, FolderIcon, HardDriveIcon, TriangleAlertIcon } from '@lucide/vue'
+import { CircleStopIcon, FolderIcon, FolderOpenIcon, HardDriveIcon, TriangleAlertIcon } from '@lucide/vue'
 import { computed } from 'vue'
 import type { Account, TerminalInfo } from '@shared/types'
 import AccountDot from '@/components/common/AccountDot.vue'
 import AccountIdentityLine from '@/components/common/AccountIdentityLine.vue'
+import { Button } from '@/components/ui/button'
 import { accountKindLabel, formatReset } from '@/lib/format'
+import { fileManagerLabel } from '@/lib/platform'
 import { limitLabel } from '@/lib/usage'
 
 /** What the hover card of a tab shows: the full title and where the session runs. */
@@ -15,7 +17,9 @@ const props = defineProps<{
   /** Set when the session lies with another account than the one it runs with. */
   sessionAccount?: Account
 }>()
+defineEmits<{ openFolder: [] }>()
 
+const openLabel = `Im ${fileManagerLabel} öffnen`
 const folder = computed(() => props.terminal.cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? props.terminal.cwd)
 </script>
 
@@ -44,6 +48,16 @@ const folder = computed(() => props.terminal.cwd.split(/[\\/]/).filter(Boolean).
           <p class="truncate leading-4 font-medium">{{ folder }}</p>
           <p class="break-all text-muted-foreground">{{ terminal.cwd }}</p>
         </div>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          class="-my-1 -mr-1 text-muted-foreground"
+          :aria-label="openLabel"
+          :title="openLabel"
+          @click="$emit('openFolder')"
+        >
+          <FolderOpenIcon class="size-3.5" />
+        </Button>
       </div>
 
       <div v-if="sessionAccount" class="flex gap-2 text-muted-foreground">
