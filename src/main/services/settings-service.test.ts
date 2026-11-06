@@ -115,6 +115,49 @@ describe('SettingsService loading', () => {
     expect(settings.terminal.padding.top).toBe(defaults().terminal.padding.top)
   })
 
+  it('falls back to the default for a null number that is rounded, not to the minimum', async () => {
+    const settings = (
+      await load({
+        notifications: { nearLimitPercent: null, minBusySeconds: null },
+        api: { port: null },
+        terminal: { scrollback: null, fontWeight: null, fontWeightBold: null },
+      })
+    ).get()
+    const d = defaults()
+    expect(settings.notifications.nearLimitPercent).toBe(d.notifications.nearLimitPercent)
+    expect(settings.notifications.minBusySeconds).toBe(d.notifications.minBusySeconds)
+    expect(settings.api.port).toBe(d.api.port)
+    expect(settings.terminal.scrollback).toBe(d.terminal.scrollback)
+    expect(settings.terminal.fontWeight).toBe(d.terminal.fontWeight)
+    expect(settings.terminal.fontWeightBold).toBe(d.terminal.fontWeightBold)
+  })
+
+  it('starts with the default font when the font family is null', async () => {
+    const service = await load({ terminal: { fontFamily: null } })
+    expect(service.get().terminal.fontFamily).toBe(defaults().terminal.fontFamily)
+  })
+
+  it('replaces null and other types in text settings with the defaults', async () => {
+    const settings = (
+      await load({
+        appearance: { themeId: null },
+        claude: { executablePath: null, defaultCwd: 42 },
+        general: { defaultAccountId: null },
+      })
+    ).get()
+    const d = defaults()
+    expect(settings.appearance.themeId).toBe(d.appearance.themeId)
+    expect(settings.claude.executablePath).toBe(d.claude.executablePath)
+    expect(settings.claude.defaultCwd).toBe(d.claude.defaultCwd)
+    expect(settings.general.defaultAccountId).toBe(d.general.defaultAccountId)
+  })
+
+  it('takes a colour scheme id or null where the default is null', async () => {
+    expect((await load({ terminal: { colorSchemeId: 'dracula' } })).get().terminal.colorSchemeId).toBe('dracula')
+    expect((await load({ terminal: { colorSchemeId: null } })).get().terminal.colorSchemeId).toBeNull()
+    expect((await load({ terminal: { colorSchemeId: 7 } })).get().terminal.colorSchemeId).toBeNull()
+  })
+
   it('keeps the other numbers in their ranges', async () => {
     const settings = (
       await load({
@@ -253,6 +296,35 @@ describe('SettingsService changes', () => {
     expect(stored.notifications).toEqual(result.notifications)
     // A new service reads what was saved.
     expect(new SettingsService(dir).get()).toEqual(result)
+  })
+
+  it('keeps the previous value for null or a wrong type in an update', async () => {
+    const service = new SettingsService(dir)
+    await service.update({ notifications: { nearLimitPercent: 90 }, terminal: { fontFamily: 'Cascadia Mono' } })
+    const result = await service.update({
+      notifications: { nearLimitPercent: null, onDone: false },
+      terminal: { fontFamily: null, fontSize: '16' },
+    } as never)
+    expect(result.notifications.nearLimitPercent).toBe(90)
+    expect(result.notifications.onDone).toBe(false)
+    expect(result.terminal.fontFamily).toBe('Cascadia Mono')
+    expect(result.terminal.fontSize).toBe(defaults().terminal.fontSize)
+  })
+
+  it('can clear the colour scheme again', async () => {
+    const service = new SettingsService(dir)
+    await service.update({ terminal: { colorSchemeId: 'dracula' } })
+    expect((await service.update({ terminal: { colorSchemeId: null } })).terminal.colorSchemeId).toBeNull()
+  })
+
+  it('imports a file with null values without failing', async () => {
+    const service = new SettingsService(dir)
+    const file = join(dir, 'import.json')
+    await writeFile(file, JSON.stringify({ terminal: { fontFamily: null, fontSize: 15 }, appearance: { themeId: null } }))
+    const { settings } = await service.importFrom(file)
+    expect(settings.terminal.fontFamily).toBe(defaults().terminal.fontFamily)
+    expect(settings.terminal.fontSize).toBe(15)
+    expect(settings.appearance.themeId).toBe(defaults().appearance.themeId)
   })
 
   it('resets one section or everything', async () => {

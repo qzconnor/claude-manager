@@ -35,7 +35,8 @@ export class SettingsService extends TypedEmitter<Events> {
 
   async update(patch: DeepPartial<AppSettings>): Promise<AppSettings> {
     const previous = this.settings
-    this.settings = sanitize(mergeKnown(this.settings, patch))
+    // An invalid value in the patch (e.g. null) leaves the setting as it was.
+    this.settings = sanitize(mergeKnown(this.settings, patch), previous)
     await writeJsonAtomic(this.file, this.settings)
     this.emit('changed', this.get(), previous)
     return this.get()
@@ -157,9 +158,37 @@ function migrate(stored: unknown): unknown {
   return stored
 }
 
-/** Keeps every numeric setting in a sane range, whatever the settings file contains. */
-function sanitize(s: AppSettings): AppSettings {
+/**
+ * Puts back every value whose type doesn't match its default, e.g. `null` or a string for a number in
+ * a hand-edited or imported file, with the value from `fallback` (the settings before a change, or the
+ * defaults on start). Settings whose default is null (`terminal.colorSchemeId`) take a string or null.
+ */
+function conform(value: Record<string, unknown>, defaults: Record<string, unknown>, fallback: Record<string, unknown>): void {
+  for (const key of Object.keys(defaults)) {
+    const expected = defaults[key]
+    const actual = value[key]
+    if (isPlainObject(expected)) {
+      if (isPlainObject(actual) && isPlainObject(fallback[key])) conform(actual, expected, fallback[key])
+      else value[key] = structuredClone(fallback[key])
+      continue
+    }
+    const valid =
+      expected === null
+        ? actual === null || typeof actual === 'string'
+        : Array.isArray(expected)
+          ? Array.isArray(actual)
+          : typeof actual === typeof expected
+    if (!valid) value[key] = structuredClone(fallback[key])
+  }
+}
+
+/**
+ * Makes the settings safe to use whatever the file or a patch contains: values of the wrong type go
+ * back to `fallback` (see `conform`), numbers are kept in a sane range and choices to known ones.
+ */
+function sanitize(s: AppSettings, fallback: AppSettings = createDefaultSettings()): AppSettings {
   const d = createDefaultSettings()
+  conform(s as unknown as Record<string, unknown>, d as unknown as Record<string, unknown>, fallback as unknown as Record<string, unknown>)
   const materials = ['acrylic', 'mica', 'tabbed', 'none'] as const
   const cursors = ['block', 'bar', 'underline'] as const
   const closeOnExit = ['graceful', 'always', 'never'] as const

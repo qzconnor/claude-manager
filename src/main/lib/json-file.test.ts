@@ -74,6 +74,17 @@ describe('writeJsonAtomic', () => {
     expect(await readJson(join(dir, 'a.json'))).toBe('a')
     expect(await readJson(join(dir, 'b.json'))).toBe('b')
   })
+
+  // A failed write rejects only for the caller; an unhandled rejection besides would fail this run.
+  it('reports a failed write to the caller only and goes on with the next one', async () => {
+    const target = join(dir, 'busy')
+    await mkdir(join(target, 'inside'), { recursive: true })
+    await expect(writeJsonAtomic(target, { lost: true })).rejects.toThrow()
+    const other = join(dir, 'other.json')
+    await writeJsonAtomic(other, { ok: true })
+    expect(await readJson(other)).toEqual({ ok: true })
+    expect((await readdir(dir)).sort()).toEqual(['busy', 'other.json'])
+  })
 })
 
 describe('writeJsonAtomicSync', () => {
