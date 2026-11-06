@@ -2,6 +2,10 @@ import type {
   Account,
   BrowserActivity,
   BrowserControlState,
+  BrowserCredentials,
+  BrowserDownload,
+  BrowserDownloadAction,
+  BrowserLoginRequest,
   ClaudeInChromeStatus,
   BrowserHighlight,
   BrowserOpenOptions,
@@ -88,6 +92,10 @@ export const IpcInvoke = {
   browserClearData: 'browser:clear-data',
   browserResetViewport: 'browser:reset-viewport',
   browserClaudeInChrome: 'browser:claude-in-chrome',
+  browserDownloads: 'browser:downloads',
+  browserDownloadAction: 'browser:download-action',
+  browserClearDownloads: 'browser:clear-downloads',
+  browserLoginAnswer: 'browser:login-answer',
 
   notificationsTest: 'notifications:test',
 
@@ -151,8 +159,17 @@ export const IpcEvent = {
   terminalReplaced: 'event:terminal-replaced',
   /** A session at a limit went on with another account by itself, or that failed. */
   terminalAutoSwitch: 'event:terminal-auto-switch',
-  /** A shortcut was pressed in a browser page, which the window doesn't see. */
+  /**
+   * A shortcut was pressed in a browser page, which the window doesn't see, or a back or forward
+   * button of the mouse (an app command of the window).
+   */
   browserShortcut: 'event:browser-shortcut',
+  /** The list of the browser's downloads changed (all of it). */
+  browserDownloads: 'event:browser-downloads',
+  /** A page asks for a user name and password. */
+  browserLogin: 'event:browser-login',
+  /** A question for a login is answered or void (the page went elsewhere). */
+  browserLoginDone: 'event:browser-login-done',
   /** Claude did something in a browser, or a running action ended. */
   browserActivity: 'event:browser-activity',
   /** Who drives a browser changed. */
@@ -284,7 +301,7 @@ export interface ManagerApi {
     page(id: string, page: BrowserPage): void
     /** The icon a page names, as a data URL the window can show; null when it is no image. */
     favicon(url: string): Promise<string | null>
-    /** A shortcut pressed in a browser page, which the window doesn't see itself. */
+    /** A shortcut pressed in a browser page, which the window doesn't see itself, or a mouse button for back and forward. */
     onShortcut(cb: (shortcut: Shortcut) => void): Unsubscribe
     /** The page of a browser tab is ready: main can drive it for Claude. */
     attach(id: string, webContentsId: number): void
@@ -301,6 +318,16 @@ export interface ManagerApi {
     resetViewport(id: string): Promise<void>
     /** Which accounts start their sessions with Claude in Chrome, which Claude might take instead. */
     claudeInChrome(): Promise<ClaudeInChromeStatus>
+    /** The browser's downloads, oldest first. */
+    downloads(): Promise<BrowserDownload[]>
+    downloadAction(id: string, action: BrowserDownloadAction): Promise<void>
+    /** Takes the downloads off the list that are no longer running; the files stay. */
+    clearDownloads(): Promise<void>
+    /** The user's answer to a page's question for a login; null cancels it. */
+    answerLogin(id: string, credentials: BrowserCredentials | null): Promise<void>
+    onDownloads(cb: (downloads: BrowserDownload[]) => void): Unsubscribe
+    onLogin(cb: (request: BrowserLoginRequest) => void): Unsubscribe
+    onLoginDone(cb: (id: string) => void): Unsubscribe
     onActivity(cb: (id: string, activity: BrowserActivity) => void): Unsubscribe
     onControl(cb: (id: string, control: BrowserControlState | null) => void): Unsubscribe
     onHighlight(cb: (id: string, highlight: BrowserHighlight) => void): Unsubscribe

@@ -1,7 +1,16 @@
 import type { WebPreferences } from 'electron'
 import { describe, expect, it } from 'vitest'
 import { matchShortcut } from '@shared/shortcuts'
-import { browserUserAgent, faviconType, hardenWebview, mobileUserAgent, toShortcutKey } from './browser-policy'
+import {
+  browserUserAgent,
+  faviconType,
+  hardenWebview,
+  loginHost,
+  mobileUserAgent,
+  popupTitle,
+  toShortcutKey,
+  uniqueFileName,
+} from './browser-policy'
 
 describe('hardenWebview', () => {
   it('takes Node.js and the preload away and puts the page into the browser profile', () => {
@@ -75,5 +84,50 @@ describe('faviconType', () => {
     expect(faviconType(text('Not Found'))).toBeNull()
     expect(faviconType(text('RIFF\0\0\0\0WAVEfmt '))).toBeNull()
     expect(faviconType(bytes())).toBeNull()
+  })
+})
+
+describe('uniqueFileName', () => {
+  const takenOf = (...names: string[]) => (candidate: string) => names.includes(candidate)
+
+  it('keeps a free name and numbers a taken one like Chrome', () => {
+    expect(uniqueFileName('report.pdf', takenOf())).toBe('report.pdf')
+    expect(uniqueFileName('report.pdf', takenOf('report.pdf'))).toBe('report (1).pdf')
+    expect(uniqueFileName('report.pdf', takenOf('report.pdf', 'report (1).pdf'))).toBe('report (2).pdf')
+    expect(uniqueFileName('README', takenOf('README'))).toBe('README (1)')
+  })
+
+  it('keeps double extensions of archives together', () => {
+    expect(uniqueFileName('backup.tar.gz', takenOf('backup.tar.gz'))).toBe('backup (1).tar.gz')
+  })
+
+  it('takes only the name, without folders or characters Windows forbids', () => {
+    expect(uniqueFileName('..\..\evil.exe', takenOf())).toBe('evil.exe')
+    expect(uniqueFileName('a/b/c.txt', takenOf())).toBe('c.txt')
+    expect(uniqueFileName('what?.txt', takenOf())).toBe('what_.txt')
+    expect(uniqueFileName('', takenOf())).toBe('download')
+    expect(uniqueFileName('...', takenOf())).toBe('download')
+  })
+})
+
+describe('popupTitle', () => {
+  it('names the host next to the title, since a popup has no address bar', () => {
+    expect(popupTitle('Sign in', 'https://accounts.example.com/login?x=1')).toBe('Sign in – accounts.example.com')
+    expect(popupTitle('', 'https://accounts.example.com/')).toBe('accounts.example.com')
+    expect(popupTitle('accounts.example.com', 'https://accounts.example.com/')).toBe('accounts.example.com')
+  })
+
+  it('shows the title alone while there is no web address', () => {
+    expect(popupTitle('Loading', 'about:blank')).toBe('Loading')
+    expect(popupTitle('', '')).toBe('Claude Manager')
+  })
+})
+
+describe('loginHost', () => {
+  it("adds the port only when it isn't the scheme's own", () => {
+    expect(loginHost({ host: 'example.com', port: 443 }, 'https://example.com/a')).toBe('example.com')
+    expect(loginHost({ host: 'example.com', port: 80 }, 'http://example.com/a')).toBe('example.com')
+    expect(loginHost({ host: 'localhost', port: 8080 }, 'http://localhost:8080/')).toBe('localhost:8080')
+    expect(loginHost({ host: 'example.com', port: 80 }, 'https://example.com/')).toBe('example.com:80')
   })
 })

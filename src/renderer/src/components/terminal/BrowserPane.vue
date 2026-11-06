@@ -25,7 +25,10 @@ import { attempt } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { useBrowsersStore, type BrowserViewState, type ShownHighlight } from '@/stores/browsers'
 import { useUiStore } from '@/stores/ui'
+import BrowserDownloads from './BrowserDownloads.vue'
+import BrowserFind from './BrowserFind.vue'
 import BrowserLog from './BrowserLog.vue'
+import BrowserLogin from './BrowserLogin.vue'
 
 /**
  * A web page in a part of a tab, with its own address bar. The page runs in a `<webview>` that the
@@ -51,6 +54,16 @@ interface WebviewElement extends HTMLElement {
   reload(): void
   stop(): void
   getWebContentsId(): number
+  findInPage(text: string, options?: { forward?: boolean; findNext?: boolean; matchCase?: boolean }): number
+  stopFindInPage(action: 'clearSelection' | 'keepSelection' | 'activateSelection'): void
+}
+
+/** What the page reports while it searches (`found-in-page`); a result may come in several parts. */
+interface FoundInPage {
+  requestId: number
+  activeMatchOrdinal?: number
+  matches?: number
+  finalUpdate: boolean
 }
 
 const browsers = useBrowsersStore()
@@ -68,6 +81,16 @@ const editing = ref(false)
 const ready = ref(false)
 const state = reactive<BrowserViewState>({ loading: false, canGoBack: false, canGoForward: false, favicon: null })
 const failure = ref<{ description: string; url: string } | null>(null)
+/** The id of the page's contents, once the view is attached: questions and downloads of the page name it. */
+const contentsId = ref<number | null>(null)
+/** The page asks for a user name and password. */
+const loginRequest = computed(() => browsers.loginFor(contentsId.value))
+
+/** The search in the page (Ctrl+F). */
+const findOpen = ref(false)
+const findBar = ref<InstanceType<typeof BrowserFind> | null>(null)
+const findMatches = ref<{ active: number; total: number } | null>(null)
+let findRequest = 0
 /** Counts the documents the view showed: an icon that arrives late for an earlier one is dropped. */
 let documents = 0
 /** Whether the current document named its icon; when it ends without, the site's icon is looked up. */
@@ -85,7 +108,7 @@ const unseenProblem = computed(() =>
   log.value.some((e) => e.id > seenUntil.value && (e.status === 'error' || e.status === 'warning')),
 )
 /** Lines of the log the page caused itself, not Claude. */
-const PAGE_EVENTS = new Set(['console', 'network', 'page-dialog', 'control'])
+const PAGE_EVENTS = new Set(['console', 'network', 'page-dialog', 'control', 'download', 'popup'])
 /** What Claude does right now, else what it did last. */
 const lastStep = computed(() => {
   for (let i = log.value.length - 1; i >= 0; i--) {
@@ -277,12 +300,50 @@ function focusAddress() {
 /** The keyboard goes to the page, or to the address bar while there is none to use. */
 function focusContent() {
   if (blank.value || failure.value) focusAddress()
+  else if (loginRequest.value) return // the question takes it itself
   else view.value?.focus()
 }
 
 function reload() {
   failure.value = null
   if (ready.value) view.value?.reload()
+}
+
+function openFind() {
+  findOpen.value = true
+  void nextTick(() => findBar.value?.focus())
+}
+
+/** F3 and Shift+F3: the next or previous match, or the search when there is none yet. */
+function findAgain(forward: boolean) {
+  if (findOpen.value && findBar.value?.query) findBar.value.step(forward)
+  else openFind()
+}
+
+/** Runs the search in the page: anew for a changed text (`again` false), else to the next match. */
+function search(query: string, forward: boolean, again: boolean) {
+  const el = view.value
+  if (!el || !ready.value) return
+  if (!query) {
+    el.stopFindInPage('clearSelection')
+    findMatches.value = null
+    return
+  }
+  findRequest = el.findInPage(query, { forward, findNext: !again })
+}
+
+function closeFind() {
+  findOpen.value = false
+  findMatches.value = null
+  if (ready.value) view.value?.stopFindInPage('keepSelection')
+  focusContent()
+}
+
+function answerLogin(credentials: { username: string; password: string } | null) {
+  const request = loginRequest.value
+  if (!request) return
+  void attempt(() => browsers.answerLogin(request.id, credentials), 'Anmeldung konnte nicht weitergegeben werden')
+  view.value?.focus()
 }
 
 function openExternal() {
@@ -292,8 +353,13 @@ function openExternal() {
 onMounted(() => {
   const el = view.value
   if (!el) return
+  // Before its first request: a site that asks for a login asks with it.
+  el.addEventListener('did-attach', () => {
+    contentsId.value = el.getWebContentsId()
+  })
   el.addEventListener('dom-ready', () => {
     ready.value = true
+    contentsId.value = el.getWebContentsId()
     // From now on main can drive the page for Claude.
     window.api.browser.attach(props.terminal.id, el.getWebContentsId())
     updateHistory()
@@ -315,6 +381,8 @@ onMounted(() => {
   el.addEventListener('did-navigate', (event) => {
     documents++
     iconNamed = false
+    // The matches were those of the last document.
+    findMatches.value = null
     navigated((event as Event & { url: string }).url)
   })
   el.addEventListener('page-favicon-updated', (event) => {
@@ -326,6 +394,14 @@ onMounted(() => {
     if (isMainFrame) navigated(next)
   })
   el.addEventListener('page-title-updated', report)
+  el.addEventListener('found-in-page', (event) => {
+    const result = (event as Event & { result: FoundInPage }).result
+    if (result.requestId !== findRequest || !findOpen.value) return
+    findMatches.value = {
+      active: result.activeMatchOrdinal ?? findMatches.value?.active ?? 0,
+      total: result.matches ?? findMatches.value?.total ?? 0,
+    }
+  })
   el.addEventListener('did-fail-load', (event) => {
     const { errorCode, errorDescription, validatedURL, isMainFrame } = event as Event & {
       errorCode: number
@@ -342,6 +418,8 @@ onMounted(() => {
     forward: () => ready.value && view.value?.goForward(),
     reload,
     focusAddress,
+    find: openFind,
+    findAgain,
     focusPage: () => view.value?.focus(),
     userClicked,
   })
@@ -532,6 +610,7 @@ watch(
         @blur="editing = false"
         @keydown.esc.prevent="cancelEdit"
       />
+      <BrowserDownloads :contents-id="contentsId" :claude-acting="!!control?.busy" />
       <Button
         v-if="control || log.length > 0"
         type="button"
@@ -607,6 +686,7 @@ watch(
           <p class="max-w-md break-all text-xs text-muted-foreground">{{ failure.url }} · {{ failure.description }}</p>
           <Button variant="outline" size="sm" @click="reload">Erneut versuchen</Button>
         </div>
+        <BrowserLogin v-if="loginRequest" :request="loginRequest" :active="active" @answer="answerLogin" />
 
         <!-- Where Claude acts: the element and what it does. A click shows only its ripple at the pointer. -->
         <Transition leave-active-class="transition-opacity duration-500" leave-to-class="opacity-0">
@@ -788,11 +868,20 @@ watch(
           </template>
         </div>
       </div>
+      <!-- The search in the page, in its corner like Chrome's (clear of its scrollbar). -->
+      <div v-if="findOpen" class="absolute top-2 right-5 z-20 max-w-[calc(100%-1.75rem)] animate-in fade-in slide-in-from-top-1 duration-150">
+        <BrowserFind ref="findBar" :matches="findMatches" @search="search" @close="closeFind" />
+      </div>
       <!-- Over the page's corner (clear of its scrollbar), until closed: it stays while Claude works and the user types elsewhere. -->
       <BrowserLog
         v-if="logOpen"
         :terminal-id="terminal.id"
-        class="absolute top-2 right-5 z-20 overflow-hidden max-h-[min(30rem,calc(100%-1rem))] w-80 max-w-[calc(100%-1.75rem)] rounded-lg border bg-popover text-popover-foreground shadow-xl animate-in fade-in slide-in-from-top-1 duration-150"
+        :class="
+          cn(
+            'absolute right-5 z-20 w-80 max-w-[calc(100%-1.75rem)] overflow-hidden rounded-lg border bg-popover text-popover-foreground shadow-xl animate-in fade-in slide-in-from-top-1 duration-150',
+            findOpen ? 'top-14 max-h-[min(30rem,calc(100%-4rem))]' : 'top-2 max-h-[min(30rem,calc(100%-1rem))]',
+          )
+        "
         @close="logOpen = false"
         @keydown.esc.stop="logOpen = false"
       />

@@ -33,7 +33,7 @@ import { UpdateService } from './services/update-service'
 import { UsageService } from './services/usage-service'
 import { WorkspaceTrust } from './services/workspace-trust'
 import { WindowDialogs } from './window/dialogs'
-import { createMainWindow, revealWindow } from './window/main-window'
+import { createMainWindow, openAppWindows, revealWindow } from './window/main-window'
 import { WindowMaterialController } from './window/material'
 import { AppTray } from './window/tray'
 
@@ -302,7 +302,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   })
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) openWindow()
+    if (openAppWindows().length === 0) openWindow()
   })
 
   app.on('window-all-closed', () => {

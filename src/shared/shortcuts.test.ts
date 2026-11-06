@@ -106,6 +106,15 @@ describe('matchBrowserShortcut', () => {
     expect(matchBrowserShortcut(press({ key: 'F5', ctrl: false }))).toEqual({ action: 'browser-reload' })
   })
 
+  it('searches the page with Ctrl+F and steps through the matches with F3 and Shift+F3', () => {
+    expect(matchBrowserShortcut(press({ key: 'f' }))).toEqual({ action: 'browser-find' })
+    expect(matchBrowserShortcut(press({ key: 'F3', ctrl: false }))).toEqual({ action: 'browser-find-next' })
+    expect(matchBrowserShortcut(press({ key: 'F3', ctrl: false, shift: true }))).toEqual({ action: 'browser-find-previous' })
+    // Ctrl+Shift+F is the app's search, which the window turns into the page's search in a browser.
+    expect(matchBrowserShortcut(press({ key: 'F', shift: true }))).toBeNull()
+    expect(matchBrowserShortcut(press({ key: 'F3' }))).toBeNull()
+  })
+
   it('leaves other combinations and released keys to the page', () => {
     expect(matchBrowserShortcut(press({ key: 'l', shift: true }))).toBeNull()
     expect(matchBrowserShortcut(press({ key: 'l', ctrl: true, alt: true }))).toBeNull()

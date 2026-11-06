@@ -103,6 +103,56 @@ export class PageDriver {
     }
   }
 
+  /**
+   * Drags from one spot to another in `durationMs`, with the left button held. A drag of the page
+   * (HTML drag and drop) is caught before it becomes one of the system, which would hold the app
+   * until the real mouse lets go, and dropped through the DevTools protocol; others (sliders,
+   * sortable lists that follow the pointer) just get the moves and the release. Returns which it was.
+   */
+  async drag(from: { x: number; y: number }, to: { x: number; y: number }, durationMs: number): Promise<'drop' | 'pointer'> {
+    // Filled by the protocol's message once the page started a drag of its own.
+    const caught: { data: Record<string, unknown> | null } = { data: null }
+    const onMessage = (_event: unknown, method: string, params: Record<string, unknown>) => {
+      if (method === 'Input.dragIntercepted') caught.data = params.data as Record<string, unknown>
+    }
+    this.contents.debugger.on('message', onMessage)
+    let entered = false
+    const dragEvent = async (type: 'dragEnter' | 'dragOver' | 'drop', x: number, y: number) => {
+      await this.cdp('Input.dispatchDragEvent', { type, x, y, data: caught.data })
+      entered = true
+    }
+    try {
+      await this.cdp('Input.setInterceptDrags', { enabled: true })
+      await this.mouse({ type: 'mouseMoved', x: from.x, y: from.y })
+      await this.mouse({ type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1 })
+      const steps = Math.max(6, Math.min(40, Math.round(durationMs / 16)))
+      for (let step = 1; step <= steps; step++) {
+        const x = from.x + ((to.x - from.x) * step) / steps
+        const y = from.y + ((to.y - from.y) * step) / steps
+        if (caught.data) await dragEvent(entered ? 'dragOver' : 'dragEnter', x, y)
+        else {
+          await this.mouse({ type: 'mouseMoved', x, y, button: 'left', buttons: 1 })
+          // The page starts its drag with one of the first moves; the protocol reports it a moment later.
+          if (step <= 3) await delay(40)
+          if (caught.data) await dragEvent('dragEnter', x, y)
+        }
+        await delay(Math.max(0, durationMs / steps - 8))
+      }
+      if (caught.data) {
+        await dragEvent('dragOver', to.x, to.y)
+        await dragEvent('drop', to.x, to.y)
+        return 'drop'
+      }
+      await this.mouse({ type: 'mouseReleased', x: to.x, y: to.y, button: 'left', buttons: 0, clickCount: 1 })
+      return 'pointer'
+    } finally {
+      this.contents.debugger.removeListener('message', onMessage)
+      if (!this.contents.isDestroyed() && this.contents.debugger.isAttached()) {
+        await this.cdp('Input.setInterceptDrags', { enabled: false }).catch(() => undefined)
+      }
+    }
+  }
+
   async hover(x: number, y: number): Promise<void> {
     await this.mouse({ type: 'mouseMoved', x, y })
   }
