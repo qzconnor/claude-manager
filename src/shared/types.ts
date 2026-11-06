@@ -514,6 +514,10 @@ export interface NotificationSettings {
   onInput: boolean
   /** The session stopped at a usage limit. */
   onLimit: boolean
+  /** An account's limit reached `nearLimitPercent`: once per account, window and reset, only as a system notification. */
+  onNearLimit: boolean
+  /** Usage of a limit window (%) from which `onNearLimit` warns. */
+  nearLimitPercent: number
   when: NotifyWhen
   /** System notification (Windows: in the notification center). */
   toast: boolean

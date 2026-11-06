@@ -53,6 +53,10 @@ const offActivate = window.api.terminals.onActivate((id) => {
   if (route.name !== 'terminals') void router.push({ name: 'terminals' })
 })
 onBeforeUnmount(offActivate)
+
+// A click on the warning about a limit.
+const offUsageShow = window.api.usage.onShow(() => void router.push({ name: 'dashboard' }))
+onBeforeUnmount(offUsageShow)
 </script>
 
 <template>

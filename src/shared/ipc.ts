@@ -118,6 +118,8 @@ export const IpcEvent = {
   /** Ask the window to show a terminal tab (e.g. opened through the local API). */
   terminalActivate: 'event:terminal-activate',
   usageChanged: 'event:usage-changed',
+  /** A warning about a limit was clicked: the window shows the usage page. */
+  usageShow: 'event:usage-show',
   /** The branch of the repository last asked for changed (e.g. a checkout in the terminal). */
   gitBranchChanged: 'event:git-branch-changed',
   sessionsChanged: 'event:sessions-changed',
@@ -238,6 +240,8 @@ export interface ManagerApi {
     refresh(accountId?: string): Promise<AccountUsage[]>
     stats(accountId: string, days?: number): Promise<AccountTokenStats>
     onChanged(cb: (usage: AccountUsage[]) => void): Unsubscribe
+    /** A warning about a limit was clicked. */
+    onShow(cb: () => void): Unsubscribe
   }
   git: {
     /**

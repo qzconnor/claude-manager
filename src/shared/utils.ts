@@ -1,4 +1,5 @@
-import type { AccountKind } from './types'
+import { SYSTEM_ACCOUNT_ID } from './defaults'
+import type { Account, AccountIdentity, AccountKind } from './types'
 
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -79,4 +80,18 @@ export function limitLabel(type: string | null): string {
     default:
       return 'Nutzungslimit'
   }
+}
+
+/**
+ * The browser login account with the same login as the standard account. Account switchers
+ * like cswap log ~/.claude into one of the other accounts, so the standard account would show
+ * the same limits twice. Setup tokens don't count: they can't read the limits.
+ */
+export function standardTwin(accounts: Account[]): Account | undefined {
+  const standard = accounts.find((a) => a.id === SYSTEM_ACCOUNT_ID)
+  return standard ? accounts.find((a) => a.kind === 'oauth' && sameLogin(a.identity, standard.identity)) : undefined
+}
+
+function sameLogin(a: AccountIdentity, b: AccountIdentity): boolean {
+  return !!a.email && !!b.email && a.email.toLowerCase() === b.email.toLowerCase() && a.organizationUuid === b.organizationUuid
 }

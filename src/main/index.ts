@@ -80,13 +80,11 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   void command.init()
   const updates = new UpdateService(userAgent)
   updates.init()
-  const notifications = new NotificationService(
-    terminals,
-    settings,
-    () => mainWindow,
-    (id) => showTerminal(id),
-  )
-  notifications.init()
+  const notifications = new NotificationService(terminals, accounts, usage, settings, userDataDir, () => mainWindow, {
+    terminal: (id) => showTerminal(id),
+    usage: () => showUsage(),
+  })
+  await notifications.init()
 
   settings.on('changed', (next, previous) => {
     if (next.claude.executablePath !== previous.claude.executablePath) cli.invalidate()
@@ -174,6 +172,14 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     if (!win || win.isDestroyed()) return
     revealWindow(win)
     win.webContents.send(IpcEvent.terminalActivate, id)
+  }
+
+  /** Brings the window to the front with the usage page (a warning about a limit was clicked). */
+  const showUsage = () => {
+    const win = mainWindow
+    if (!win || win.isDestroyed()) return
+    revealWindow(win)
+    win.webContents.send(IpcEvent.usageShow)
   }
 
   /**

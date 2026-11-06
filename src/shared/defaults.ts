@@ -112,6 +112,8 @@ export function createDefaultSettings(platform = 'win32'): AppSettings {
       minBusySeconds: 0,
       onInput: true,
       onLimit: true,
+      onNearLimit: true,
+      nearLimitPercent: 80,
       when: 'background',
       toast: true,
       preview: true,
