@@ -76,6 +76,7 @@ Die App wurde in acht Schritten gebaut. Jeder Schritt baut auf dem vorherigen au
 - Tabs per Drag & Drop umsortieren (Titelleiste und Seitenleiste), Strg+1–8 springt zu einem Tab, Strg+9 zum letzten. Die Reihenfolge gilt auch für die lokale API und das Wiederherstellen beim nächsten Start.
 - Unit-Tests mit Vitest für Parser, Regeln und Hilfsfunktionen von Main, Shared und Renderer; sie laufen in CI unter Windows und Linux.
 - Einstellungen lassen sich als JSON-Datei exportieren und importieren, ohne Accounts. Fremde Pfade, die es hier nicht gibt, bleiben unverändert, der Import ist rückgängig zu machen.
+- Zuletzt genutzte Ordner im Menü neben dem Plus, in der Befehlspalette und auf der leeren Terminal-Seite. Ein Klick startet dort eine Session mit dem Standard-Account, das Untermenü mit einem anderen Account oder als Shell. Die Ordner kommen aus offenen Tabs und gespeicherten Sessions; die Startordner, in denen eine neue Session ohnehin beginnt, fehlen.
 
 ## Mögliche nächste Schritte
 

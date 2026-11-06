@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { FolderOpenIcon, HistoryIcon, PlusIcon } from '@lucide/vue'
+import { FolderIcon, FolderOpenIcon, HistoryIcon, PlusIcon } from '@lucide/vue'
+import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import AccountDot from '@/components/common/AccountDot.vue'
 import AppLogo from '@/components/common/AppLogo.vue'
@@ -7,11 +8,18 @@ import { Button } from '@/components/ui/button'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import { useLauncher } from '@/composables/useLauncher'
+import { useRecentFolders } from '@/composables/useRecentFolders'
+import { shortenPath } from '@/lib/format'
 import { useAccountsStore } from '@/stores/accounts'
+import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
+const app = useAppStore()
 const accounts = useAccountsStore()
 const launcher = useLauncher()
+const recent = useRecentFolders(6)
+
+onMounted(recent.load)
 </script>
 
 <template>
@@ -51,6 +59,24 @@ const launcher = useLauncher()
           <AccountDot :color="account.color" />
           {{ account.name }}
         </Button>
+      </div>
+      <!-- A click starts with the standard account, like "Neue Session". -->
+      <div v-if="recent.folders.value.length" class="flex w-full max-w-sm flex-col gap-0.5 text-left">
+        <p class="px-2 pb-1 text-xs font-medium text-muted-foreground">Zuletzt genutzte Ordner</p>
+        <button
+          v-for="folder in recent.folders.value"
+          :key="folder.path"
+          type="button"
+          :title="`Neue Session in ${folder.path}`"
+          class="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-sm transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+          @click="launcher.newSession(undefined, folder.path)"
+        >
+          <FolderIcon class="size-4 shrink-0 text-muted-foreground" />
+          <span class="max-w-[60%] shrink-0 truncate">{{ folder.name }}</span>
+          <span class="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">
+            {{ folder.parent && shortenPath(folder.parent, app.info?.homeDir) }}
+          </span>
+        </button>
       </div>
       <p class="flex items-center gap-2 text-xs text-muted-foreground">
         Neuer Tab
