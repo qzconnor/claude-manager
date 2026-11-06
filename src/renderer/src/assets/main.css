@@ -427,3 +427,29 @@
     background: var(--muted);
   }
 }
+
+/* A card or row of the settings that the search or the command palette led to: lit up for a moment. */
+@keyframes setting-flash {
+  0%,
+  40% {
+    background-color: color-mix(in oklab, var(--primary) 14%, transparent);
+    box-shadow: 0 0 0 0.5rem color-mix(in oklab, var(--primary) 14%, transparent);
+  }
+}
+@keyframes setting-flash-card {
+  0%,
+  40% {
+    outline-color: var(--primary);
+  }
+}
+@layer components {
+  [data-flash] {
+    border-radius: var(--radius-md);
+    animation: setting-flash 1.8s ease-out;
+  }
+  [data-flash][data-slot='card'] {
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+    animation-name: setting-flash-card;
+  }
+}

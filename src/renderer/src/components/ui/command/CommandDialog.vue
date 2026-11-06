@@ -6,6 +6,9 @@ import { useForwardPropsEmits } from 'reka-ui'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import Command from './Command.vue'
 
+// Attributes and listeners such as @close-auto-focus go to the content, the root renders nothing
+defineOptions({ inheritAttrs: false })
+
 const props = withDefaults(defineProps<DialogRootProps & {
   title?: string
   description?: string
@@ -24,6 +27,7 @@ const forwarded = useForwardPropsEmits(props, emits)
 <template>
   <Dialog v-slot="slotProps" v-bind="forwarded">
     <DialogContent
+      v-bind="$attrs"
       :class="cn('rounded-xl! top-1/3 translate-y-0 overflow-hidden p-0', props.class)"
       :show-close-button="showCloseButton"
     >

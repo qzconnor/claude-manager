@@ -9,10 +9,16 @@ import { ListboxItem, useForwardPropsEmits, useId } from 'reka-ui'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useCommand, useCommandGroup } from '.'
 
-const props = defineProps<ListboxItemProps & { class?: HTMLAttributes['class'] }>()
+const props = defineProps<ListboxItemProps & {
+  class?: HTMLAttributes['class']
+  /** Text the search is matched against instead of the item's content. */
+  filterText?: string
+  /** Only shown while searching; needs `filterText`, as it isn't rendered before. */
+  searchOnly?: boolean
+}>()
 const emits = defineEmits<ListboxItemEmits>()
 
-const delegatedProps = reactiveOmit(props, 'class')
+const delegatedProps = reactiveOmit(props, 'class', 'filterText', 'searchOnly')
 
 const forwarded = useForwardPropsEmits(delegatedProps, emits)
 
@@ -21,15 +27,15 @@ const { filterState, allItems, allGroups } = useCommand()
 const groupContext = useCommandGroup()
 
 const isRender = computed(() => {
-  if (!filterState.search) {
-    return true
+  if (!filterState.search.trim()) {
+    return !props.searchOnly
   }
   else {
     const filteredCurrentItem = filterState.filtered.items.get(id)
     // If the filtered items is undefined means not in the all times map yet
     // Do the first render to add into the map
     if (filteredCurrentItem === undefined) {
-      return true
+      return !props.searchOnly
     }
 
     // Check with filter
@@ -37,14 +43,9 @@ const isRender = computed(() => {
   }
 })
 
-const itemRef = ref()
-const currentElement = useCurrentElement(itemRef)
-onMounted(() => {
-  if (!(currentElement.value instanceof HTMLElement))
-    return
-
+function register(text: string) {
   // textValue to perform filter
-  allItems.value.set(id, currentElement.value.textContent ?? (props.value?.toString() ?? ''))
+  allItems.value.set(id, text)
 
   const groupId = groupContext?.id
   if (groupId) {
@@ -55,6 +56,18 @@ onMounted(() => {
       allGroups.value.get(groupId)?.add(id)
     }
   }
+}
+
+// Known without rendering, so a search-only item is found before it is shown
+if (props.filterText !== undefined)
+  register(props.filterText)
+
+const itemRef = ref()
+const currentElement = useCurrentElement(itemRef)
+onMounted(() => {
+  if (props.filterText !== undefined || !(currentElement.value instanceof HTMLElement))
+    return
+  register(currentElement.value.textContent ?? (props.value?.toString() ?? ''))
 })
 onUnmounted(() => {
   allItems.value.delete(id)

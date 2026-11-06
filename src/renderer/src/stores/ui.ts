@@ -12,6 +12,8 @@ export const useUiStore = defineStore('ui', () => {
   const tabSearchOpen = ref(false)
   /** Incremented to ask the active terminal to open its search bar. */
   const searchRequest = ref(0)
+  /** Incremented to put the keyboard into the search of the settings page. */
+  const settingsSearchRequest = ref(0)
   /** Incremented to give the keyboard back to the active terminal, e.g. after a popup closed. */
   const focusTerminalRequest = ref(0)
   /** A session the sessions page should select, with the search that found it. */
@@ -45,6 +47,7 @@ export const useUiStore = defineStore('ui', () => {
     paletteOpen,
     tabSearchOpen,
     searchRequest,
+    settingsSearchRequest,
     focusTerminalRequest,
     sessionToShow,
     selectedTabEdges,

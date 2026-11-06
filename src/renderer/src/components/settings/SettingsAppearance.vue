@@ -62,12 +62,13 @@ function onMaterial(value: unknown) {
 
 <template>
   <div class="flex flex-col gap-4">
-    <SettingsSection title="Theme" description="Farben für App und Terminal.">
+    <SettingsSection anchor="appearance.theme" title="Theme" description="Farben für App und Terminal.">
       <ThemePicker v-model="themeId" />
     </SettingsSection>
 
-    <SettingsSection title="Tabs" description="Wo die offenen Terminals stehen.">
+    <SettingsSection anchor="appearance.tabs" title="Tabs" description="Wo die offenen Terminals stehen.">
       <SettingField
+        anchor="appearance.tabPosition"
         label="Position"
         description="Oben in der Titelleiste oder untereinander in der Seitenleiste. Dort bekommen auch die Symbole der Navigation eine Beschriftung."
       >
@@ -76,16 +77,18 @@ function onMaterial(value: unknown) {
     </SettingsSection>
 
     <SettingsSection
+      anchor="appearance.window"
       title="Fenster"
       :description="supportsMaterial ? 'Windows-11-Material hinter der App.' : 'Schrift und Ecken der Oberfläche.'"
       reset-section="appearance"
     >
       <!-- Acrylic and Mica only exist on Windows 11; elsewhere the window is opaque. -->
-      <SettingField v-if="supportsMaterial" label="Material" description="Acryl ist am stärksten transparent, Mica übernimmt dezent die Farbe des Desktops.">
+      <SettingField v-if="supportsMaterial" anchor="appearance.material" label="Material" description="Acryl ist am stärksten transparent, Mica übernimmt dezent die Farbe des Desktops.">
         <SegmentedControl :model-value="material" :options="MATERIALS" aria-label="Material" @update:model-value="onMaterial" />
       </SettingField>
       <SettingField
         v-if="supportsMaterial"
+        anchor="appearance.keepMaterial"
         for="keep-material"
         label="Auch ohne Fokus beibehalten"
         description="Windows schaltet das Material sonst ab, sobald ein anderes Fenster aktiv ist."
@@ -94,6 +97,7 @@ function onMaterial(value: unknown) {
       </SettingField>
       <SettingField
         v-if="supportsMaterial"
+        anchor="appearance.surfaceOpacity"
         for="surface-opacity"
         label="Deckkraft"
         description="Wie stark die Theme-Farbe das Material überdeckt. 100 % = undurchsichtig."
@@ -106,10 +110,10 @@ function onMaterial(value: unknown) {
           :format="(v) => `${v} %`"
         />
       </SettingField>
-      <SettingField for="ui-font-size" label="Schriftgröße der Oberfläche">
+      <SettingField anchor="appearance.uiFontSize" for="ui-font-size" label="Schriftgröße der Oberfläche">
         <SliderControl id="ui-font-size" v-model="uiFontSize" :min="12" :max="18" :format="(v) => `${v} px`" />
       </SettingField>
-      <SettingField for="radius" label="Eckenradius">
+      <SettingField anchor="appearance.radius" for="radius" label="Eckenradius">
         <SliderControl id="radius" v-model="radius" :min="0" :max="1.25" :step="0.125" :format="(v) => `${Math.round(v * 16)} px`" />
       </SettingField>
     </SettingsSection>

@@ -59,18 +59,20 @@ async function sendTest() {
 <template>
   <div class="flex flex-col gap-4">
     <SettingsSection
+      anchor="notifications.main"
       title="Benachrichtigungen"
       description="Hinweise auf Tabs, in denen Claude fertig ist oder dich braucht, und auf fast verbrauchte Limits. Einzelne Tabs lassen sich über ihr Kontextmenü stummschalten."
       reset-section="notifications"
     >
       <SettingField
+        anchor="notifications.enabled"
         for="notifications-enabled"
         label="Benachrichtigungen"
         description="Aus: keine Benachrichtigung, kein Blinken, kein Punkt am Tab. Schnell umschalten geht auch mit der Glocke oben rechts in der Titelleiste."
       >
         <Switch id="notifications-enabled" v-model="enabled" />
       </SettingField>
-      <SettingField label="Ausprobieren" description="Zeigt eine Beispiel-Benachrichtigung mit den Einstellungen unten.">
+      <SettingField anchor="notifications.test" label="Ausprobieren" description="Zeigt eine Beispiel-Benachrichtigung mit den Einstellungen unten.">
         <Button variant="outline" size="sm" :disabled="testing || off || !toast" @click="sendTest">
           <Spinner v-if="testing" data-icon="inline-start" />
           <BellRingIcon v-else data-icon="inline-start" />
@@ -79,11 +81,12 @@ async function sendTest() {
       </SettingField>
     </SettingsSection>
 
-    <SettingsSection title="Ereignisse" description="Worauf die App hinweist.">
-      <SettingField for="notify-done" label="Claude ist fertig" description="Claude hat eine Antwort beendet.">
+    <SettingsSection anchor="notifications.events" title="Ereignisse" description="Worauf die App hinweist.">
+      <SettingField anchor="notifications.onDone" for="notify-done" label="Claude ist fertig" description="Claude hat eine Antwort beendet.">
         <Switch id="notify-done" v-model="onDone" :disabled="off" />
       </SettingField>
       <SettingField
+        anchor="notifications.minBusy"
         for="notify-min-busy"
         label="Erst nach längerer Arbeit (Sekunden)"
         description="Schneller fertige Antworten bekommen nur den Punkt am Tab, ohne Benachrichtigung und Blinken. 0 = immer."
@@ -91,6 +94,7 @@ async function sendTest() {
         <NumberControl id="notify-min-busy" v-model="minBusySeconds" :min="0" :max="3600" :step="5" :disabled="off || !onDone" />
       </SettingField>
       <SettingField
+        anchor="notifications.onInput"
         for="notify-input"
         label="Claude braucht dich"
         description="Claude wartet auf eine Erlaubnis für ein Tool, auf die Antwort auf eine Frage oder auf die Freigabe eines Plans."
@@ -98,6 +102,7 @@ async function sendTest() {
         <Switch id="notify-input" v-model="onInput" :disabled="off" />
       </SettingField>
       <SettingField
+        anchor="notifications.onLimit"
         for="notify-limit"
         label="Limit erreicht"
         description="Die Session ist an einem Nutzungslimit stehen geblieben, mit der Uhrzeit des Resets."
@@ -105,6 +110,7 @@ async function sendTest() {
         <Switch id="notify-limit" v-model="onLimit" :disabled="off" />
       </SettingField>
       <SettingField
+        anchor="notifications.onNearLimit"
         for="notify-near-limit"
         label="Limit fast verbraucht"
         :description="`Ein Limit eines Accounts hat die Schwelle unten erreicht: 5-Stunden-Fenster, Woche oder das Wochenlimit eines Modells. Einmal pro Account und Zeitraum, nur als ${toastName}, ein Klick öffnet die Usage-Seite.`"
@@ -112,6 +118,7 @@ async function sendTest() {
         <Switch id="notify-near-limit" v-model="onNearLimit" :disabled="off || !toast" />
       </SettingField>
       <SettingField
+        anchor="notifications.nearLimitPercent"
         for="notify-near-limit-percent"
         label="Schwelle (%)"
         description="Die Werte kommen mit jeder Abfrage der Limits (Usage-Aktualisierung unter Claude Code) und aus laufenden Sessions."
@@ -127,11 +134,12 @@ async function sendTest() {
       </SettingField>
     </SettingsSection>
 
-    <SettingsSection title="Hinweise" description="Wie die App auf den Tab hinweist.">
-      <SettingField label="Benachrichtigen, wenn" :description="whenDescription">
+    <SettingsSection anchor="notifications.hints" title="Hinweise" description="Wie die App auf den Tab hinweist.">
+      <SettingField anchor="notifications.when" label="Benachrichtigen, wenn" :description="whenDescription">
         <SegmentedControl v-model="when" :options="WHEN" :disabled="off" aria-label="Benachrichtigen, wenn" />
       </SettingField>
       <SettingField
+        anchor="notifications.toast"
         for="notify-toast"
         :label="toastName"
         :description="
@@ -143,16 +151,18 @@ async function sendTest() {
         <Switch id="notify-toast" v-model="toast" :disabled="off" />
       </SettingField>
       <SettingField
+        anchor="notifications.preview"
         for="notify-preview"
         label="Vorschau"
         description="Zeigt den Anfang der Antwort, den Befehl, der auf deine Erlaubnis wartet, oder Claudes Frage. Aus: nur Ereignis und Tab."
       >
         <Switch id="notify-preview" v-model="preview" :disabled="off || !toast" />
       </SettingField>
-      <SettingField for="notify-sound" label="Ton" description="Der Benachrichtigungston des Systems.">
+      <SettingField anchor="notifications.sound" for="notify-sound" label="Ton" description="Der Benachrichtigungston des Systems.">
         <Switch id="notify-sound" v-model="sound" :disabled="off || !toast" />
       </SettingField>
       <SettingField
+        anchor="notifications.flash"
         for="notify-flash"
         :label="isWindows ? 'Taskleiste blinkt' : 'Fenster in der Taskleiste markieren'"
         description="Nur, wenn das Fenster im Hintergrund ist, und bis du es nach vorne holst."
@@ -160,6 +170,7 @@ async function sendTest() {
         <Switch id="notify-flash" v-model="flashTaskbar" :disabled="off" />
       </SettingField>
       <SettingField
+        anchor="notifications.unreadDot"
         for="notify-dot"
         label="Punkt am Tab"
         description="Markiert Tabs mit Neuigkeiten, die du noch nicht gesehen hast, auch bei kurzen Antworten und stummgeschalteten Tabs. Orange: Claude wartet auf dich."
