@@ -1,5 +1,6 @@
 import type { CommandIntegration } from './cli/command-integration'
 import type { AccountService } from './services/account-service'
+import type { AutoSwitch } from './services/auto-switch'
 import type { ClaudeCli } from './services/claude-cli'
 import type { CswapImport } from './services/cswap-import'
 import type { GitService } from './services/git-service'
@@ -26,6 +27,8 @@ export interface AppContext {
   sessions: SessionService
   /** Continuing sessions with another account's limits. */
   handoff: SessionHandoff
+  /** Continues sessions at a limit with another account by themselves (setting `claude.autoSwitch`). */
+  autoSwitch: AutoSwitch
   usage: UsageService
   /** Notifications, the flashing taskbar and the unread dot of tabs. */
   notifications: NotificationService

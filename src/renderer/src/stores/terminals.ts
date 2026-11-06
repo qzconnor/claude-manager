@@ -76,12 +76,12 @@ export const useTerminalsStore = defineStore('terminals', () => {
     saveOrder()
   }
 
-  /** Puts the tab that replaces `oldId` at its position and selects it. */
-  function replace(oldId: string, index: number, info: TerminalInfo): void {
+  /** Puts the tab that replaces `oldId` at its position and selects it (unless `select` is false). */
+  function replace(oldId: string, index: number, info: TerminalInfo, select = true): void {
     const list = terminals.value.filter((t) => t.id !== oldId && t.id !== info.id)
     list.splice(Math.min(index, list.length), 0, info)
     terminals.value = list
-    activeId.value = info.id
+    if (select) activeId.value = info.id
     saveOrder()
   }
 
@@ -138,6 +138,13 @@ export const useTerminalsStore = defineStore('terminals', () => {
     activeId.value = tab.id
     return true
   }
+
+  // Main replaced a tab by itself, e.g. switching the account at a limit: the new tab takes the old
+  // one's place, and the selection only if the old one had it. Comes before the old tab closes.
+  window.api.terminals.onReplaced((oldId, info) => {
+    const index = terminals.value.findIndex((t) => t.id === oldId)
+    if (index !== -1) replace(oldId, index, info, activeId.value === oldId)
+  })
 
   window.api.terminals.onChanged((next) => {
     // Keep the local tab order; append unknown terminals (e.g. opened through the API).

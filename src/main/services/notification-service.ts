@@ -7,6 +7,7 @@ import { readJson, writeJsonAtomic } from '../lib/json-file'
 import { nearLimits, type NearLimit, type WarnedWindows } from '../lib/near-limit'
 import { resourceIcon } from '../window/tray'
 import type { AccountService } from './account-service'
+import type { AutoSwitch } from './auto-switch'
 import type { SettingsService } from './settings-service'
 import type { TerminalService, TurnEnd } from './terminal-service'
 import type { UsageService } from './usage-service'
@@ -46,6 +47,7 @@ export class NotificationService {
   private readonly warnedFile: string
   /** Limit windows that were already warned about, kept across restarts. */
   private warned: WarnedWindows = {}
+  private autoSwitch: Pick<AutoSwitch, 'tellsLimit'> | null = null
 
   constructor(
     private readonly terminals: TerminalService,
@@ -91,6 +93,16 @@ export class NotificationService {
     this.checkLimits()
   }
 
+  /**
+   * Sessions that go on with another account by themselves (setting `claude.autoSwitch`): one
+   * notification tells about the limit and the account they continue with, or that the switch failed.
+   */
+  watchAutoSwitch(autoSwitch: AutoSwitch): void {
+    this.autoSwitch = autoSwitch
+    autoSwitch.on('switched', (from, to, target) => this.switched(from, to, target))
+    autoSwitch.on('failed', (from, target, message) => this.switchFailed(from, target, message))
+  }
+
   /** The window tells which tab it shows (null: another page); that tab is seen. */
   setViewing(id: string | null): void {
     this.viewing = id
@@ -118,30 +130,62 @@ export class NotificationService {
   private turnEnded(id: string, turn: TurnEnd): void {
     const settings = this.settings.get().notifications
     if (!settings.enabled || !wanted(settings, turn.kind)) return
+    // The tab goes on with another account (or that failed): the notification about it tells of the limit.
+    if (turn.kind === 'limit' && this.autoSwitch?.tellsLimit(id)) return
     let terminal: TerminalInfo
     try {
       terminal = this.terminals.get(id)
     } catch {
       return
     }
-    const win = this.window()
-    const inBackground = !win || win.isDestroyed() || !win.isVisible() || win.isMinimized() || !win.isFocused()
     const shown = this.viewing === id
 
     // The dot also marks short answers and muted tabs: it doesn't interrupt anybody.
     if (settings.unreadDot && !shown) this.terminals.setAttention(id, turn.kind)
 
     if (terminal.muted) return
-    if (!(inBackground || (settings.when === 'hidden' && !shown))) return
     if (turn.kind === 'done' && turn.busyMs < settings.minBusySeconds * 1000) return
-    if (settings.toast) this.notify(terminal, turn, settings)
+    const { title, detail } = describe(terminal, turn, settings.preview)
+    this.alert(terminal, title, detail, shown, settings)
+  }
+
+  private switched(from: TerminalInfo, to: TerminalInfo, target: Account): void {
+    const settings = this.settings.get().notifications
+    if (!settings.enabled || !settings.onLimit || to.muted) return
+    const limit = `${limitLabel(from.limit?.type ?? null)} von „${this.accountName(from.authAccountId)}“ erreicht`
+    const shown = this.viewing === from.id || this.viewing === to.id
+    this.alert(to, `Weiter mit „${target.name}“`, limit, shown, settings)
+  }
+
+  private switchFailed(from: TerminalInfo, target: Account, message: string): void {
+    const settings = this.settings.get().notifications
+    if (!settings.enabled || !settings.onLimit || from.muted) return
+    const limit = `${limitLabel(from.limit?.type ?? null)} erreicht`
+    this.alert(from, `Wechsel zu „${target.name}“ fehlgeschlagen`, `${limit} · ${message}`, this.viewing === from.id, settings)
+  }
+
+  private accountName(id: string): string {
+    return this.accounts.list().find((account) => account.id === id)?.name ?? 'dem Account'
+  }
+
+  /** Notification and flashing taskbar button, unless the user looks at the tab anyway (setting `when`). */
+  private alert(
+    terminal: TerminalInfo,
+    title: string,
+    detail: string | null,
+    shown: boolean,
+    settings: NotificationSettings,
+  ): void {
+    const win = this.window()
+    const inBackground = !win || win.isDestroyed() || !win.isVisible() || win.isMinimized() || !win.isFocused()
+    if (!(inBackground || (settings.when === 'hidden' && !shown))) return
+    if (settings.toast) this.notify(terminal, title, detail, settings)
     // The taskbar button only flashes for a window in the background; it stops once the window is in front.
     if (settings.flashTaskbar && inBackground && win && !win.isDestroyed()) win.flashFrame(true)
   }
 
-  private notify(terminal: TerminalInfo, turn: TurnEnd, settings: NotificationSettings): void {
+  private notify(terminal: TerminalInfo, title: string, detail: string | null, settings: NotificationSettings): void {
     if (!Notification.isSupported()) return
-    const { title, detail } = describe(terminal, turn, settings.preview)
     const notification = this.create(title, detail ? `${terminal.title}\n${detail}` : terminal.title, settings)
     notification.on('click', () => this.open.terminal(terminal.id))
     // One notification per tab: the newer one replaces the older.

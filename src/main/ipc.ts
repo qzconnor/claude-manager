@@ -5,6 +5,7 @@ import { IpcEvent, IpcInvoke, IpcSend } from '@shared/ipc'
 import type {
   AccountCreateInput,
   AccountUpdateInput,
+  AutoSwitchEvent,
   AppSettings,
   CswapImportInput,
   DeepPartial,
@@ -167,6 +168,13 @@ export function registerIpc(ctx: AppContext): void {
     if (typeof id === 'string' && typeof cols === 'number' && typeof rows === 'number') ctx.terminals.resize(id, cols, rows)
   })
   ctx.terminals.on('changed', (terminals) => broadcast(IpcEvent.terminalsChanged, terminals))
+  ctx.handoff.on('replaced', (oldId, info) => broadcast(IpcEvent.terminalReplaced, oldId, info))
+  ctx.autoSwitch.on('switched', (from, to, target) =>
+    broadcast(IpcEvent.terminalAutoSwitch, { from, to, targetId: target.id, error: null } satisfies AutoSwitchEvent),
+  )
+  ctx.autoSwitch.on('failed', (from, target, error) =>
+    broadcast(IpcEvent.terminalAutoSwitch, { from, to: null, targetId: target.id, error } satisfies AutoSwitchEvent),
+  )
   ctx.terminals.on('data', (id, data, offset) => broadcast(IpcEvent.terminalData, id, data, offset))
   ctx.terminals.on('exit', (id, code) => {
     broadcast(IpcEvent.terminalExit, id, code)

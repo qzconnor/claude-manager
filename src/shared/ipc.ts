@@ -1,5 +1,6 @@
 import type {
   Account,
+  AutoSwitchEvent,
   AccountCreateInput,
   AccountTokenStats,
   AccountUpdateInput,
@@ -121,6 +122,10 @@ export const IpcEvent = {
   terminalExit: 'event:terminal-exit',
   /** Ask the window to show a terminal tab (e.g. opened through the local API). */
   terminalActivate: 'event:terminal-activate',
+  /** A tab was replaced by one that continues its session with another account; before the old one closes. */
+  terminalReplaced: 'event:terminal-replaced',
+  /** A session at a limit went on with another account by itself, or that failed. */
+  terminalAutoSwitch: 'event:terminal-auto-switch',
   usageChanged: 'event:usage-changed',
   /** A warning about a limit was clicked: the window shows the usage page. */
   usageShow: 'event:usage-show',
@@ -222,6 +227,9 @@ export interface ManagerApi {
     onData(cb: (id: string, data: string, offset: number) => void): Unsubscribe
     onExit(cb: (id: string, exitCode: number) => void): Unsubscribe
     onActivate(cb: (id: string) => void): Unsubscribe
+    /** The new tab takes the place of the old one, which closes right after. */
+    onReplaced(cb: (oldId: string, info: TerminalInfo) => void): Unsubscribe
+    onAutoSwitch(cb: (event: AutoSwitchEvent) => void): Unsubscribe
   }
   sessions: {
     list(accountId?: string): Promise<SessionGroup[]>

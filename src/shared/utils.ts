@@ -98,6 +98,7 @@ export function standardTwin(accounts: Account[]): Account | undefined {
   return standard ? accounts.find((a) => a.kind === 'oauth' && sameLogin(a.identity, standard.identity)) : undefined
 }
 
-function sameLogin(a: AccountIdentity, b: AccountIdentity): boolean {
+/** Same e-mail and organization: one login, so the same limits. */
+export function sameLogin(a: AccountIdentity, b: AccountIdentity): boolean {
   return !!a.email && !!b.email && a.email.toLowerCase() === b.email.toLowerCase() && a.organizationUuid === b.organizationUuid
 }

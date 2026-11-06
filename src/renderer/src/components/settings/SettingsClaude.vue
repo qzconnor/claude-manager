@@ -40,6 +40,10 @@ const continuePrompt = useSetting(
   (s) => s.claude.continuePrompt,
   (continuePrompt) => ({ claude: { continuePrompt } }),
 )
+const autoSwitch = useSetting(
+  (s) => s.claude.autoSwitch,
+  (autoSwitch) => ({ claude: { autoSwitch } }),
+)
 const usageRefreshMinutes = useSetting(
   (s) => s.claude.usageRefreshMinutes,
   (usageRefreshMinutes) => ({ claude: { usageRefreshMinutes } }),
@@ -155,6 +159,13 @@ async function recheck() {
             :placeholder="app.info ? shortenPath(app.info.fallbackCwd, app.info.homeDir) : 'Downloads'"
           />
         </div>
+      </SettingField>
+      <SettingField
+        for="auto-switch"
+        label="Bei einem Limit automatisch wechseln"
+        description="Stößt eine Session an ein Limit, läuft sie von selbst mit dem nächsten freien Account weiter, wie mit „Mit … fortsetzen“ im Tab. Ohne freien Account bleibt der Hinweis."
+      >
+        <Switch id="auto-switch" v-model="autoSwitch" />
       </SettingField>
       <SettingField
         for="continue-prompt"
