@@ -168,6 +168,13 @@ describe('parseLaunchArgs', () => {
     expect(() => parseLaunchArgs(['-x'])).toThrow('cm -- --model opus')
   })
 
+  it('refuses a value on a switch instead of dropping it', () => {
+    expect(() => parseLaunchArgs(['-c=foo'])).toThrow('-c nimmt keinen Wert („-c=foo“)')
+    expect(() => parseLaunchArgs(['--continue='])).toThrow('--continue nimmt keinen Wert')
+    expect(() => parseLaunchArgs(['-s=1'])).toThrow('-s nimmt keinen Wert')
+    expect(() => parseLaunchArgs(['--new=yes'])).toThrow('--new nimmt keinen Wert')
+  })
+
   it('refuses a second folder', () => {
     expect(() => parseLaunchArgs(['one', 'two'])).toThrow('Nur ein Ordner möglich')
   })

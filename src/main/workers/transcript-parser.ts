@@ -190,9 +190,11 @@ export function parseTranscript(buf: Buffer, sessionId: string, withSummary: boo
           | undefined
         const messageId = str(message?.id)
         const messageModel = str(message?.model)
-        if (withSummary && !e.isSidechain && messageId && !assistantIds.has(messageId)) {
+        // `<synthetic>` replies come from Claude Code itself (API errors, "No response requested."); the
+        // conversation view and the search leave them out, so the message count does too.
+        if (withSummary && !e.isSidechain && messageId && messageModel !== '<synthetic>' && !assistantIds.has(messageId)) {
           assistantIds.add(messageId)
-          if (messageModel && messageModel !== '<synthetic>') model = messageModel
+          if (messageModel) model = messageModel
         }
         const u = message?.usage
         if (u && messageId && messageModel !== '<synthetic>') {

@@ -112,6 +112,8 @@ interface TerminalRecord {
   turnEndRun: number
   /** Whether the program wants to hear when the terminal turns dark or light. */
   colorScheme: ColorSchemeUpdates
+  /** A view of the tab has had its output, and so answered the queries in it. */
+  viewed: boolean
 }
 
 type Events = {
@@ -279,6 +281,7 @@ export class TerminalService extends TypedEmitter<Events> {
       turnEnding: false,
       turnEndRun: 0,
       colorScheme: new ColorSchemeUpdates(),
+      viewed: false,
     }
     this.terminals.set(id, record)
 
@@ -394,6 +397,18 @@ export class TerminalService extends TypedEmitter<Events> {
   buffer(id: string): { data: string; end: number } {
     const record = this.require(id)
     return { data: record.chunks.join(''), end: record.emitted }
+  }
+
+  /**
+   * The output so far for a view of the tab. `answered`: an earlier view (e.g. before the window
+   * reloaded) already answered the queries in it, such as device attributes or the background color.
+   * The program got its replies or gave up waiting long ago; replies now would reach it as input.
+   */
+  attach(id: string): { data: string; end: number; answered: boolean } {
+    const record = this.require(id)
+    const answered = record.viewed
+    record.viewed = true
+    return { ...this.buffer(id), answered }
   }
 
   disposeAll(): void {

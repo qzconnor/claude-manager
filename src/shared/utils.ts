@@ -29,12 +29,18 @@ export function mergeKnown<T>(base: T, patch: unknown): T {
   return out as T
 }
 
-/** Masks a secret for display: keeps a recognizable prefix and the last 4 characters. */
+/** Characters of a secret that stay hidden at least; with fewer, prefix and end would give it away. */
+const MIN_HIDDEN = 8
+
+/**
+ * Masks a secret for display: keeps a recognizable prefix and the last 4 characters. The Anthropic
+ * prefix (`sk-ant-oat01-`) only tells the kind of key, so it stays even when the rest is hidden.
+ */
 export function maskSecret(secret: string): string {
   const trimmed = secret.trim()
-  if (trimmed.length <= 12) return '••••'
-  const prefixMatch = /^(sk-ant-[a-z]+\d*-)/.exec(trimmed)
-  const prefix = prefixMatch ? prefixMatch[1] : trimmed.slice(0, 4)
+  const anthropic = /^(sk-ant-[a-z]+\d*-)/.exec(trimmed)?.[1]
+  const prefix = anthropic ?? trimmed.slice(0, 4)
+  if (trimmed.length - prefix.length - 4 < MIN_HIDDEN) return anthropic ? `${anthropic}••••` : '••••'
   return `${prefix}…${trimmed.slice(-4)}`
 }
 

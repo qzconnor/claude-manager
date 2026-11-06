@@ -7,17 +7,24 @@ const time = new Intl.DateTimeFormat('de', { hour: '2-digit', minute: '2-digit' 
 const weekdayTime = new Intl.DateTimeFormat('de', { weekday: 'short', hour: '2-digit', minute: '2-digit' })
 const compact = new Intl.NumberFormat('de', { notation: 'compact', maximumFractionDigits: 1 })
 const integer = new Intl.NumberFormat('de')
+const oneDecimal = new Intl.NumberFormat('de', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 
+/**
+ * "vor 5 Minuten", "gestern", from 30 days on the date. A unit is used while its rounded count stays
+ * below the next one: 59.6 minutes are "vor 1 Stunde", 23.6 hours "gestern".
+ */
 export function formatRelative(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return '–'
   const ms = Date.parse(iso)
   if (Number.isNaN(ms)) return '–'
   const diff = (ms - now) / 1000
-  const abs = Math.abs(diff)
-  if (abs < 45) return 'gerade eben'
-  if (abs < 3600) return rtf.format(Math.round(diff / 60), 'minute')
-  if (abs < 86400) return rtf.format(Math.round(diff / 3600), 'hour')
-  if (abs < 86400 * 30) return rtf.format(Math.round(diff / 86400), 'day')
+  if (Math.abs(diff) < 45) return 'gerade eben'
+  const minutes = Math.round(diff / 60)
+  if (Math.abs(minutes) < 60) return rtf.format(minutes, 'minute')
+  const hours = Math.round(diff / 3600)
+  if (Math.abs(hours) < 24) return rtf.format(hours, 'hour')
+  const days = Math.round(diff / 86400)
+  if (Math.abs(days) < 30) return rtf.format(days, 'day')
   return dateTime.format(ms)
 }
 
@@ -62,10 +69,14 @@ export function formatNumber(value: number): string {
   return integer.format(value)
 }
 
+/** Sizes with German digits; a value that rounds up to the next unit is shown in it (1,0 MB, not 1024 KB). */
 export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  if (bytes < 1024) return `${integer.format(bytes)} B`
+  const kb = Math.round(bytes / 1024)
+  if (kb < 1024) return `${integer.format(kb)} KB`
+  const mb = Math.round((bytes / 1024 ** 2) * 10) / 10
+  if (mb < 1024) return `${oneDecimal.format(mb)} MB`
+  return `${oneDecimal.format(bytes / 1024 ** 3)} GB`
 }
 
 /**
