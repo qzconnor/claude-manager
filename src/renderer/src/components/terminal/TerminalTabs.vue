@@ -3,7 +3,7 @@ import { useEventListener, useMutationObserver } from '@vueuse/core'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useTabDrag } from '@/composables/useTabDrag'
-import { useTerminalsStore, type TerminalTab as Tab } from '@/stores/terminals'
+import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import NewTerminalMenu from './NewTerminalMenu.vue'
 import TabSearch from './TabSearch.vue'
@@ -84,8 +84,9 @@ if (!props.vertical) {
   })
 }
 
-function select(tab: Tab) {
-  terminals.activate(tab.focused.id)
+/** A terminal of a tab was clicked: it gets the keyboard. */
+function select(id: string) {
+  terminals.activate(id)
   if (route.name !== 'terminals') void router.push({ name: 'terminals' })
 }
 
@@ -143,7 +144,7 @@ watch(
         :tab="tab"
         :selected="route.name === 'terminals' && tab.id === terminals.activeTab?.id"
         vertical
-        @select="select(tab)"
+        @select="select"
       />
     </div>
     <!-- Stays below the list while it scrolls; -mt-1 gives it the same gap as between two tabs. -->
@@ -164,7 +165,7 @@ watch(
         :key="tab.id"
         :tab="tab"
         :selected="route.name === 'terminals' && tab.id === terminals.activeTab?.id"
-        @select="select(tab)"
+        @select="select"
       />
     </div>
     <NewTerminalMenu />

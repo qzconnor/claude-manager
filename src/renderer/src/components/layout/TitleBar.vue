@@ -5,6 +5,7 @@ import TabSearch from '@/components/terminal/TabSearch.vue'
 import TerminalTabs from '@/components/terminal/TerminalTabs.vue'
 import TitleBarBranch from './TitleBarBranch.vue'
 import TitleBarNotifications from './TitleBarNotifications.vue'
+import TitleBarSplit from './TitleBarSplit.vue'
 import TitleBarUsage from './TitleBarUsage.vue'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/stores/app'
@@ -46,6 +47,7 @@ const tabsInSidebar = computed(() => settings.settings.appearance.tabPosition ==
     <!-- Outside the group on the right, so it can shrink on its own. -->
     <TitleBarBranch />
     <div class="mr-2 flex items-center gap-2 transition-opacity in-data-unfocused:opacity-75">
+      <TitleBarSplit />
       <TitleBarUsage />
       <!-- At the end of the tab bar like in a browser; in the sidebar it heads the tabs instead. -->
       <TabSearch v-if="!tabsInSidebar" />
