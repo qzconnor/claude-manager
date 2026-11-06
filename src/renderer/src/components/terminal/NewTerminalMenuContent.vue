@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { FolderIcon, FolderOpenIcon, HistoryIcon, KeyRoundIcon, SquareTerminalIcon } from '@lucide/vue'
+import {
+  FolderIcon,
+  FolderOpenIcon,
+  GlobeIcon,
+  HistoryIcon,
+  KeyRoundIcon,
+  SquareTerminalIcon,
+} from '@lucide/vue'
 import { injectDropdownMenuRootContext } from 'reka-ui'
 import { computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -149,6 +156,10 @@ function onFolderKey(event: KeyboardEvent, path: string) {
     </DropdownMenuGroup>
     <DropdownMenuSeparator />
     <DropdownMenuGroup>
+      <DropdownMenuItem @select="launcher.browser()">
+        <GlobeIcon />
+        Browser öffnen
+      </DropdownMenuItem>
       <DropdownMenuItem @select="router.push({ name: 'sessions' })">
         <HistoryIcon />
         Session fortsetzen…

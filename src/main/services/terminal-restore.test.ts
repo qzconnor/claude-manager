@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { PaneNode, PaneSplit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
+import type { BrowserOpenOptions, PaneNode, PaneSplit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
 
 // terminal-service (for the default title) pulls in modules that import electron.
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: false } }))
@@ -45,6 +45,7 @@ const terminalEvents = new Emitter()
 const settingsEvents = new Emitter()
 const create = vi.fn<(options: TerminalCreateOptions) => TerminalInfo>()
 const arrange = vi.fn<(layout: PaneNode) => void>()
+const openBrowser = vi.fn<(options: BrowserOpenOptions) => TerminalInfo>()
 
 const terminals = {
   on: (event: string, listener: Listener) => terminalEvents.on(event, listener),
@@ -52,6 +53,7 @@ const terminals = {
   layouts: () => layoutList,
   create,
   arrange,
+  openBrowser,
 } as unknown as TerminalService
 
 const accounts = {
@@ -81,6 +83,7 @@ function info(overrides: Partial<TerminalInfo>): TerminalInfo {
     fixedTitle: false,
     cwd: join(dir, 'project'),
     mode: 'session',
+    url: null,
     resumeSessionId: null,
     status: 'running',
     exitCode: null,
@@ -109,6 +112,8 @@ beforeEach(async () => {
   layoutList = []
   restoreTerminals = true
   arrange.mockReset()
+  openBrowser.mockReset()
+  openBrowser.mockImplementation((options) => info({ id: `browser-${openBrowser.mock.calls.length}`, mode: 'browser', url: options.url ?? null }))
   create.mockReset()
   create.mockImplementation((options) => info({ id: `new-${create.mock.calls.length}`, cwd: options.cwd ?? '' }))
 })
@@ -210,6 +215,23 @@ describe('TerminalRestore on start', () => {
     expect(arrange.mock.calls).toEqual([[split('new-1', 'new-3')]])
   })
 
+  it('opens browsers again at their page, next to the terminals they shared a tab with', async () => {
+    const tab = { accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'shell', sessionId: null, title: 's', fixedTitle: false }
+    await writeFile(
+      file,
+      JSON.stringify([
+        { ...tab, layout: { direction: 'row', ratio: 0.4, first: '0', second: '1' } },
+        { mode: 'browser', url: 'http://localhost:5173/', title: 'Vite App', fixedTitle: false },
+        { mode: 'browser', url: 'https://example.com/', title: 'Docs', fixedTitle: true },
+        // Not a page the browser may show: left out.
+        { mode: 'browser', url: 'file:///C:/Windows/win.ini', title: 'x', fixedTitle: false },
+      ]),
+    )
+    await start().init()
+    expect(openBrowser.mock.calls).toEqual([[{ url: 'http://localhost:5173/', title: null }], [{ url: 'https://example.com/', title: 'Docs' }]])
+    expect(arrange.mock.calls).toEqual([[{ direction: 'row', ratio: 0.4, first: 'new-1', second: 'browser-1' }]])
+  })
+
   it('opens nothing for a file that is no list', async () => {
     await writeFile(file, JSON.stringify({ accountId: 'acc-a' }))
     await start().init()
@@ -268,6 +290,19 @@ describe('TerminalRestore while running', () => {
     terminalEvents.fire('changed', terminalList)
     const saved = (await readSaved()) as { title: string; layout?: PaneNode }[]
     expect(saved.map((t) => t.layout ?? null)).toEqual([{ direction: 'row', ratio: 0.6, first: '0', second: '1' }, null, null, null])
+  })
+
+  it('saves browsers with their page', async () => {
+    await start().init()
+    terminalList = [
+      info({ id: 'a', mode: 'shell' }),
+      info({ id: 'web', mode: 'browser', accountId: '', authAccountId: '', cwd: '', url: 'https://example.com/a', title: 'Example', fixedTitle: false }),
+    ]
+    layoutList = [{ direction: 'column', ratio: 0.5, first: 'a', second: 'web' }]
+    terminalEvents.fire('changed', terminalList)
+    const saved = (await readSaved()) as Record<string, unknown>[]
+    expect(saved[1]).toEqual({ mode: 'browser', url: 'https://example.com/a', title: 'Example', fixedTitle: false })
+    expect(saved[0].layout).toEqual({ direction: 'column', ratio: 0.5, first: '0', second: '1' })
   })
 
   it('does not write unchanged tabs again', async () => {

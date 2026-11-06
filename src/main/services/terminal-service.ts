@@ -4,10 +4,13 @@ import { stat } from 'node:fs/promises'
 import { userInfo } from 'node:os'
 import { basename, join } from 'node:path'
 import type * as Pty from 'node-pty'
+import { BLANK_PAGE, fallbackTitle, isBrowsableUrl } from '@shared/browser'
 import { applyOrder } from '@shared/order'
 import { dropPanes, isSplit, paneIds, removePanes, replacePane, splitPane } from '@shared/panes'
 import type {
   AttentionKind,
+  BrowserOpenOptions,
+  BrowserPage,
   CloseOnExit,
   PaneNode,
   PaneSplit,
@@ -126,6 +129,13 @@ interface TerminalRecord {
   viewed: boolean
 }
 
+/** Options other parts of the app give every session they start, e.g. the browser's MCP server. */
+export interface SessionArgsProvider {
+  args(terminalId: string): string[]
+  /** The session's process is gone: what `args` set up for it can go too. */
+  release(terminalId: string): void
+}
+
 type Events = {
   changed: [terminals: TerminalInfo[]]
   /** `offset` = position of `data` in the terminal's output stream */
@@ -145,6 +155,7 @@ export class TerminalService extends TypedEmitter<Events> {
   private trackAgain = false
   /** Whether the terminal theme is dark, as the window reports it; unknown until it does. */
   private dark: boolean | null = null
+  private sessionArgs: SessionArgsProvider | null = null
 
   constructor(
     private readonly accounts: AccountService,
@@ -154,6 +165,11 @@ export class TerminalService extends TypedEmitter<Events> {
   ) {
     super()
     this.trackTimer = setInterval(() => void this.track(), TRACK_INTERVAL_MS)
+  }
+
+  /** Gives the sessions started from now on more options (see SessionArgsProvider). */
+  setSessionArgs(provider: SessionArgsProvider): void {
+    this.sessionArgs = provider
   }
 
   list(): TerminalInfo[] {
@@ -169,11 +185,12 @@ export class TerminalService extends TypedEmitter<Events> {
     return { ...this.require(id).info }
   }
 
-  /** Running terminals that use the account, for its files or its credentials. */
+  /** Running terminals that use the account, for its files or its credentials. Browsers run nothing. */
   runningCount(accountId?: string): number {
     return [...this.terminals.values()].filter(
       (t) =>
         t.info.status === 'running' &&
+        t.info.mode !== 'browser' &&
         (!accountId || t.info.accountId === accountId || t.info.authAccountId === accountId),
     ).length
   }
@@ -204,7 +221,9 @@ export class TerminalService extends TypedEmitter<Events> {
 
     const cwd = this.resolveCwd(options.cwd ?? account.defaultCwd ?? settings.claude.defaultCwd)
 
+    const id = randomUUID()
     const args: string[] = []
+    let provided = false
     let sessionId: string | null = null
     if (mode === 'login') {
       args.push('auth', 'login')
@@ -222,6 +241,10 @@ export class TerminalService extends TypedEmitter<Events> {
         // Name the session up front so the tab knows it before Claude Code reports it.
         sessionId = randomUUID()
         args.push('--session-id', sessionId)
+      }
+      if (mode === 'session' && this.sessionArgs) {
+        args.push(...this.sessionArgs.args(id))
+        provided = true
       }
       // Before the extra args: an option there that takes several values would swallow it.
       const prompt = options.prompt?.trim()
@@ -245,19 +268,24 @@ export class TerminalService extends TypedEmitter<Events> {
     const command = mode === 'shell' ? shellCommand() : this.cli.command(args)
     const cols = clampSize(options.cols, 120)
     const rows = clampSize(options.rows, 32)
-    const proc = loadPty().spawn(command.file, command.args, {
-      name: 'xterm-256color',
-      cols,
-      rows,
-      cwd,
-      env,
-      useConpty: true,
-      // The ConPTY of Windows Terminal that comes with node-pty. Unlike the one of Windows, it passes
-      // queries such as the background color (OSC 11) on to the terminal.
-      useConptyDll: process.platform === 'win32' && settings.terminal.modernConpty,
-    })
+    let proc: Pty.IPty
+    try {
+      proc = loadPty().spawn(command.file, command.args, {
+        name: 'xterm-256color',
+        cols,
+        rows,
+        cwd,
+        env,
+        useConpty: true,
+        // The ConPTY of Windows Terminal that comes with node-pty. Unlike the one of Windows, it passes
+        // queries such as the background color (OSC 11) on to the terminal.
+        useConptyDll: process.platform === 'win32' && settings.terminal.modernConpty,
+      })
+    } catch (error) {
+      if (provided) this.sessionArgs?.release(id)
+      throw error
+    }
 
-    const id = randomUUID()
     const defaultTitle = defaultTerminalTitle(mode, auth.name, cwd)
     const fixedTitle = options.title?.trim().slice(0, 120) || null
     const info: TerminalInfo = {
@@ -273,6 +301,7 @@ export class TerminalService extends TypedEmitter<Events> {
       fixedTitle: fixedTitle !== null,
       cwd,
       mode,
+      url: null,
       resumeSessionId: options.resumeSessionId ?? null,
       status: 'running',
       exitCode: null,
@@ -281,30 +310,8 @@ export class TerminalService extends TypedEmitter<Events> {
       commandLine: command.display,
     }
     let markExited!: () => void
-    const record: TerminalRecord = {
-      info,
-      defaultTitle,
-      process: proc,
-      exited: new Promise((resolve) => (markExited = resolve)),
-      transcript: null,
-      chunks: [],
-      size: 0,
-      emitted: 0,
-      pending: '',
-      flushTimer: null,
-      killed: false,
-      titles: new TitleReader(),
-      busySince: 0,
-      turnEnding: false,
-      turnEndRun: 0,
-      colorScheme: new ColorSchemeUpdates(),
-      viewed: false,
-    }
-    this.terminals.set(id, record)
-    if (options.replaces && this.terminals.has(options.replaces)) this.takePlace(id, options.replaces)
-    else if (options.split && this.terminals.has(options.split.terminalId)) {
-      this.addPane(options.split.terminalId, id, options.split.direction === 'column' ? 'column' : 'row')
-    }
+    const record = newRecord(info, defaultTitle, proc, new Promise((resolve) => (markExited = resolve)))
+    this.add(record, options)
 
     proc.onData((data) => this.handleData(record, data))
     proc.onExit(({ exitCode }) => {
@@ -313,6 +320,7 @@ export class TerminalService extends TypedEmitter<Events> {
       record.info.status = 'exited'
       record.info.exitCode = exitCode
       record.info.busy = false
+      if (provided) this.sessionArgs?.release(id)
       markExited()
       this.emit('exit', id, exitCode)
       if (!record.killed && closesOnExit(this.settings.get().general.closeOnExit, exitCode)) this.close(id)
@@ -323,6 +331,54 @@ export class TerminalService extends TypedEmitter<Events> {
     // A resumed session already has its title: show it right away, not with the next round.
     if (mode === 'session') this.trackSoon()
     return { ...info }
+  }
+
+  /**
+   * A browser in a new tab or next to a terminal: a web page instead of a process. The window shows
+   * it and reports what it shows (`setBrowserPage`); it runs until it is closed.
+   */
+  openBrowser(options: BrowserOpenOptions = {}): TerminalInfo {
+    const url = options.url?.trim() || BLANK_PAGE
+    if (!isBrowsableUrl(url)) throw new Error('Der Browser öffnet nur http- und https-Adressen.')
+    const fixedTitle = options.title?.trim().slice(0, 120) || null
+    const defaultTitle = fallbackTitle(url)
+    const info: TerminalInfo = {
+      id: randomUUID(),
+      accountId: '',
+      authAccountId: '',
+      sessionId: null,
+      limit: null,
+      busy: false,
+      attention: null,
+      muted: false,
+      title: fixedTitle ?? defaultTitle,
+      fixedTitle: fixedTitle !== null,
+      cwd: '',
+      mode: 'browser',
+      url,
+      resumeSessionId: null,
+      status: 'running',
+      exitCode: null,
+      pid: 0,
+      createdAt: new Date().toISOString(),
+      commandLine: '',
+    }
+    this.add(newRecord(info, defaultTitle, null, Promise.resolve()), options)
+    this.emitChanged()
+    return { ...info }
+  }
+
+  /** What a browser shows now; its tab follows the page's title unless it was given one. */
+  setBrowserPage(id: string, page: BrowserPage): void {
+    const record = this.terminals.get(id)
+    if (record?.info.mode !== 'browser' || !isBrowsableUrl(page.url)) return
+    const title = page.title.replace(/\s+/g, ' ').trim().slice(0, 120)
+    record.defaultTitle = title || fallbackTitle(page.url)
+    const next = record.info.fixedTitle ? record.info.title : record.defaultTitle
+    if (record.info.url === page.url && record.info.title === next) return
+    record.info.url = page.url
+    record.info.title = next
+    this.emitChanged()
   }
 
   write(id: string, data: string): void {
@@ -670,6 +726,16 @@ export class TerminalService extends TypedEmitter<Events> {
     return true
   }
 
+  /** Takes a new terminal in: in the place of `replaces`, next to the one it splits, or as a tab at the end. */
+  private add(record: TerminalRecord, options: Pick<TerminalCreateOptions, 'replaces' | 'split'>): void {
+    const { id } = record.info
+    this.terminals.set(id, record)
+    if (options.replaces && this.terminals.has(options.replaces)) this.takePlace(id, options.replaces)
+    else if (options.split && this.terminals.has(options.split.terminalId)) {
+      this.addPane(options.split.terminalId, id, options.split.direction === 'column' ? 'column' : 'row')
+    }
+  }
+
   /** The new terminal `id` goes where `oldId` is, in the order and in its tab; `oldId` is left with a tab of its own. */
   private takePlace(id: string, oldId: string): void {
     const ids = [...this.terminals.keys()].filter((key) => key !== id)
@@ -705,10 +771,33 @@ function closesOnExit(setting: CloseOnExit, exitCode: number): boolean {
   return setting === 'always' || (setting === 'graceful' && exitCode === 0)
 }
 
+function newRecord(info: TerminalInfo, defaultTitle: string, process: Pty.IPty | null, exited: Promise<void>): TerminalRecord {
+  return {
+    info,
+    defaultTitle,
+    process,
+    exited,
+    transcript: null,
+    chunks: [],
+    size: 0,
+    emitted: 0,
+    pending: '',
+    flushTimer: null,
+    killed: false,
+    titles: new TitleReader(),
+    busySince: 0,
+    turnEnding: false,
+    turnEndRun: 0,
+    colorScheme: new ColorSchemeUpdates(),
+    viewed: false,
+  }
+}
+
 /** Tab title when none was given; the account is the one whose limits the tab uses. */
 export function defaultTerminalTitle(mode: TerminalInfo['mode'], accountName: string, cwd: string): string {
   if (mode === 'login') return `Anmeldung · ${accountName}`
   if (mode === 'shell') return `Shell · ${accountName}`
+  if (mode === 'browser') return fallbackTitle(null)
   return `${accountName} · ${basename(cwd) || cwd}`
 }
 

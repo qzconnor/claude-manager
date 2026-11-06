@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { isBrowsableUrl } from '@shared/browser'
 import { isSplit, mapPanes, paneIds, parsePaneNode, removePanes } from '@shared/panes'
 import type { PaneNode } from '@shared/types'
 import { readJsonSync, writeJsonAtomicSync } from '../lib/json-file'
@@ -7,7 +8,7 @@ import type { AccountService } from './account-service'
 import type { SettingsService } from './settings-service'
 import { defaultTerminalTitle, type TerminalService } from './terminal-service'
 
-/** What is remembered of a tab. Login tabs are not. */
+/** What is remembered of a terminal. Login tabs are not. */
 interface SavedTerminal {
   accountId: string
   authAccountId: string
@@ -26,6 +27,17 @@ interface SavedTerminal {
    */
   layout?: PaneNode
 }
+
+/** What is remembered of a browser: its page. Older versions skip it, the others take its space. */
+interface SavedBrowser {
+  mode: 'browser'
+  url: string
+  title: string
+  fixedTitle: boolean
+  layout?: PaneNode
+}
+
+type SavedTab = SavedTerminal | SavedBrowser
 
 /**
  * Remembers the open tabs and opens them again on the next start (setting `general.restoreTerminals`).
@@ -75,6 +87,11 @@ export class TerminalRestore {
     /** Index in the file → id of the terminal opened for it. */
     const opened = new Map<string, string>()
     for (const [index, tab] of saved.entries()) {
+      if (isSavedBrowser(tab)) {
+        const info = this.terminals.openBrowser({ url: tab.url, title: tab.fixedTitle ? tab.title : null })
+        opened.set(String(index), info.id)
+        continue
+      }
       if (!isSavedTerminal(tab) || !accounts.has(tab.accountId)) continue
       // Without the lending account the session runs with its own login again.
       const auth = accounts.get(tab.authAccountId) ?? accounts.get(tab.accountId)!
@@ -96,7 +113,7 @@ export class TerminalRestore {
       }
     }
     for (const tab of saved) {
-      const layout = parsePaneNode((tab as SavedTerminal | null)?.layout)
+      const layout = parsePaneNode((tab as SavedTab | null)?.layout)
       if (!layout) continue
       // Terminals that didn't open leave their space to the others.
       const missing = new Set(paneIds(layout).filter((index) => !opened.has(index)))
@@ -125,8 +142,8 @@ export class TerminalRestore {
     }
   }
 
-  private snapshot(): SavedTerminal[] {
-    const terminals = this.terminals.list().flatMap((t) => (t.mode === 'login' ? [] : [{ ...t, mode: t.mode }]))
+  private snapshot(): SavedTab[] {
+    const terminals = this.terminals.list().filter((t) => t.mode !== 'login')
     const index = new Map(terminals.map((t, i) => [t.id, String(i)]))
     /** Id of a tab's first terminal → how the tab shares its space, by index. Login tabs are left out. */
     const layouts = new Map<string, PaneNode>()
@@ -134,17 +151,23 @@ export class TerminalRestore {
       const saved = removePanes(split, new Set(paneIds(split).filter((id) => !index.has(id))))
       if (isSplit(saved)) layouts.set(paneIds(saved)[0], mapPanes(saved, (id) => index.get(id)!))
     }
-    return terminals.map((t) => ({
-      accountId: t.accountId,
-      authAccountId: t.authAccountId,
-      cwd: t.cwd,
-      mode: t.mode,
-      sessionId: t.sessionId,
-      title: t.title,
-      fixedTitle: t.fixedTitle,
-      muted: t.muted,
-      ...(layouts.has(t.id) ? { layout: layouts.get(t.id) } : {}),
-    }))
+    return terminals.map((t): SavedTab => {
+      const layout = layouts.has(t.id) ? { layout: layouts.get(t.id) } : {}
+      if (t.mode === 'browser') {
+        return { mode: 'browser', url: t.url ?? '', title: t.title, fixedTitle: t.fixedTitle, ...layout }
+      }
+      return {
+        accountId: t.accountId,
+        authAccountId: t.authAccountId,
+        cwd: t.cwd,
+        mode: t.mode === 'shell' ? 'shell' : 'session',
+        sessionId: t.sessionId,
+        title: t.title,
+        fixedTitle: t.fixedTitle,
+        muted: t.muted,
+        ...layout,
+      }
+    })
   }
 }
 
@@ -160,5 +183,17 @@ function isSavedTerminal(value: unknown): value is SavedTerminal {
     typeof t.title === 'string' &&
     (t.fixedTitle === undefined || typeof t.fixedTitle === 'boolean') &&
     (t.muted === undefined || typeof t.muted === 'boolean')
+  )
+}
+
+function isSavedBrowser(value: unknown): value is SavedBrowser {
+  if (!value || typeof value !== 'object') return false
+  const t = value as Record<string, unknown>
+  return (
+    t.mode === 'browser' &&
+    typeof t.url === 'string' &&
+    isBrowsableUrl(t.url) &&
+    typeof t.title === 'string' &&
+    typeof t.fixedTitle === 'boolean'
   )
 }

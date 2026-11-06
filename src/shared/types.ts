@@ -209,6 +209,85 @@ export interface SessionLimit {
   message: string
 }
 
+/**
+ * What runs in a part of a tab: a Claude Code session, a login, a shell, or (`browser`) a web page
+ * without a process, whose `url` is set instead.
+ */
+export type TerminalMode = 'session' | 'login' | 'shell' | 'browser'
+
+/** A browser in a new tab or next to a terminal (see `TerminalInfo.url`). */
+export interface BrowserOpenOptions {
+  /** http(s); the empty page when missing. */
+  url?: string | null
+  title?: string | null
+  /** Opens in the tab of `terminalId`, next to it: to the right (`row`) or below (`column`). */
+  split?: { terminalId: string; direction: SplitDirection } | null
+}
+
+/** What a browser shows, as its page reports it. */
+export interface BrowserPage {
+  url: string
+  title: string
+}
+
+/** How an action of Claude in a browser went; `warning`: the page reported an error by itself. */
+export type BrowserActivityStatus = 'running' | 'done' | 'error' | 'warning'
+
+/** One line of the log next to a browser that Claude drives. */
+export interface BrowserActivity {
+  /** Counts up per browser; the update of a running action keeps its id. */
+  id: number
+  /** When it started (ISO). */
+  at: string
+  /** The tool (`click`, `navigate` …); `console`, `network` and `page-dialog` for what the page did, `control` for the user taking over. */
+  kind: string
+  /** In words, e.g. „Klickt auf „Anmelden““. */
+  label: string
+  status: BrowserActivityStatus
+  /** The error, or what came out of it. */
+  detail: string | null
+  durationMs: number | null
+  /** A small picture of the page, when Claude took a screenshot (JPEG data URL). */
+  image: string | null
+}
+
+/** Who drives a browser tab. */
+/** The page size a Claude session gave a browser (CSS pixels), instead of the size of its part of the tab. */
+export interface BrowserViewport {
+  width: number
+  height: number
+  /** Phone mode: touch, a phone's user agent, the page's viewport meta tag. */
+  mobile: boolean
+  /** The page's zoom when the size was set: its view is this much larger in the window. */
+  zoom: number
+}
+
+export interface BrowserControlState {
+  /** The terminal of the Claude session that uses the browser. */
+  sessionId: string
+  sessionTitle: string
+  /** An action runs right now. */
+  busy: boolean
+  /** Claude acted a moment ago: the page keeps its size and is drawn even while its tab is hidden. */
+  active: boolean
+  /** The user took the browser over; Claude's next action waits until it is handed back. */
+  takenOver: boolean
+  /** The size Claude gave the page; null: it fills its part of the tab. */
+  viewport: BrowserViewport | null
+}
+
+/** Where Claude acts in the page, for the highlight over it; in pixels of the view. */
+export interface BrowserHighlight {
+  label: string
+  rect: { x: number; y: number; width: number; height: number } | null
+  /** Where Claude's mouse pointer goes, gliding from its last spot; null: it stays where it is. */
+  point: { x: number; y: number } | null
+  /** The pointer clicks once it is at `point`. */
+  click: boolean
+  /** How long the pointer takes to get to `point` (ms); main acts once it is there. */
+  moveMs: number
+}
+
 export interface TerminalInfo {
   id: string
   /** Account whose config dir holds the session. */
@@ -229,8 +308,11 @@ export interface TerminalInfo {
   title: string
   /** The title was given (renamed, or passed when opening) and doesn't follow the session. */
   fixedTitle: boolean
+  /** Empty for a browser, as are the account ids. */
   cwd: string
-  mode: 'session' | 'login' | 'shell'
+  mode: TerminalMode
+  /** The page a browser shows; null for terminals. */
+  url: string | null
   resumeSessionId: string | null
   status: TerminalStatus
   exitCode: number | null
@@ -510,6 +592,25 @@ export interface ClaudeSettings {
   continuePrompt: string
   /** A session that hits a limit continues by itself with the next free account. */
   autoSwitch: boolean
+  /** Sessions the app starts get its browser as a tool (an MCP server of the app, `--mcp-config`). */
+  browserTools: boolean
+  /** Claude Code uses the browser without asking before every action (`--allowedTools`). */
+  browserToolsAllowed: boolean
+  /**
+   * Sessions the app starts with its browser run without Claude in Chrome (`--no-chrome`), so Claude
+   * takes the app's browser instead of the user's Chrome. Claude Code's own setting stays as it is.
+   */
+  noClaudeInChrome: boolean
+  /** The hint in sessions that start with Claude in Chrome was put away for good. */
+  claudeInChromeHintDismissed: boolean
+}
+
+/** Where Claude Code connects Claude in Chrome when a session starts (unless it gets `--no-chrome`). */
+export interface ClaudeInChromeStatus {
+  /** The accounts whose Claude Code has "Enabled by default" on. */
+  accounts: { id: string; name: string }[]
+  /** CLAUDE_CODE_ENABLE_CFC turns it on for every session the app starts. */
+  env: boolean
 }
 
 /**

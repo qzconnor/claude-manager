@@ -63,6 +63,7 @@ function terminal(overrides: Partial<TerminalInfo>): TerminalInfo {
     fixedTitle: false,
     cwd: WORK,
     mode: 'session',
+    url: null,
     resumeSessionId: null,
     status: 'running',
     exitCode: null,

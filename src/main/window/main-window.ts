@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import { BrowserWindow, screen, shell } from 'electron'
 import type { AppSettings, WindowState } from '@shared/types'
 import { readJsonSync, writeJsonAtomic } from '../lib/json-file'
+import { guardBrowserGuests } from './browser-guests'
 import { forceForeground } from './foreground'
 import { resourceIcon } from './tray'
 
@@ -71,8 +72,11 @@ export function createMainWindow(settings: AppSettings, userDataDir: string, { h
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: false,
+      // The browser tabs; every view is hardened before it starts (browser-guests.ts).
+      webviewTag: true,
     },
   })
+  guardBrowserGuests(win)
   win.setMenu(null)
   if (saved.maximized) {
     // Maximizing also shows the window, so a hidden one does it when it appears.

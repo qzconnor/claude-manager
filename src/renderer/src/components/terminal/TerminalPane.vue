@@ -8,14 +8,17 @@ import { useTerminal } from '@/composables/useTerminal'
 import { useTerminalActions } from '@/composables/useTerminalActions'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
 import { formatArgs } from '@/lib/args'
+import { cn } from '@/lib/utils'
+import { useBrowsersStore } from '@/stores/browsers'
 import { useSettingsStore } from '@/stores/settings'
 import { useUiStore } from '@/stores/ui'
+import TerminalChromeBanner from './TerminalChromeBanner.vue'
 import TerminalLimitBanner from './TerminalLimitBanner.vue'
 import TerminalSearch from './TerminalSearch.vue'
 
-/** `active`: has the keyboard while the terminals page is shown. `focused`: marked as the part with the keyboard, in a split tab. */
+/** `active`: has the keyboard while the terminals page is shown. `dimmed`: a part of a split tab without the keyboard. */
 // Placed by TerminalWorkspace (absolute, with its share of the tab).
-const props = defineProps<{ terminal: TerminalInfo; active: boolean; focused?: boolean }>()
+const props = defineProps<{ terminal: TerminalInfo; active: boolean; dimmed?: boolean }>()
 /** The terminal was clicked or took the keyboard: it should become the active one. */
 const emit = defineEmits<{ focus: [] }>()
 
@@ -29,7 +32,7 @@ const term = useTerminal({
   container,
   active: toRef(props, 'active'),
 })
-const { containerBackground } = useTerminalAppearance()
+const { containerBackground, inactiveVeil } = useTerminalAppearance()
 const settings = useSettingsStore()
 const ui = useUiStore()
 const { closeTerminal, restartTerminal } = useTerminalActions()
@@ -84,6 +87,18 @@ const limit = computed(() => {
   return current.resetsAt && Date.parse(current.resetsAt) <= now.value ? null : current
 })
 
+// A session with the app's browser that also starts with Claude in Chrome: Claude might take Chrome.
+const browsers = useBrowsersStore()
+if (props.terminal.mode === 'session') browsers.refreshChromeStatus()
+const chromeHint = computed(() => {
+  const claude = settings.settings.claude
+  // Started without it already (the setting was on then).
+  if (props.terminal.mode !== 'session' || exited.value || /(^|\s)--no-chrome(\s|$)/.test(props.terminal.commandLine)) return false
+  if (!claude.browserTools || claude.noClaudeInChrome || claude.claudeInChromeHintDismissed) return false
+  const status = browsers.chromeStatus
+  return !!status && (status.env || status.accounts.some((account) => account.id === props.terminal.accountId))
+})
+
 watch(
   () => ui.searchRequest,
   () => {
@@ -122,20 +137,30 @@ function closeSearch() {
          the container and is cut at the edge of the pane. -->
     <div ref="container" class="flex size-full flex-col justify-end *:shrink-0" />
 
-    <div v-if="limit" class="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center px-4">
+    <div
+      v-if="limit || chromeHint"
+      class="pointer-events-none absolute inset-x-0 top-3 z-10 flex flex-col items-center gap-2 px-4"
+    >
       <TerminalLimitBanner
+        v-if="limit"
         class="pointer-events-auto"
         :terminal="terminal"
         :limit="limit"
         @dismiss="dismissedLimit = limitKey"
       />
+      <TerminalChromeBanner v-if="chromeHint" class="pointer-events-auto" :terminal="terminal" />
     </div>
 
     <div v-if="searchOpen" class="absolute top-3 right-5 z-10">
       <TerminalSearch ref="search" :find-next="term.findNext" :find-previous="term.findPrevious" @close="closeSearch" />
     </div>
 
-    <div v-if="focused" aria-hidden="true" class="pointer-events-none absolute inset-0 z-20 ring-1 ring-primary/50 ring-inset" />
+    <!-- In a split tab the parts without the keyboard step back. -->
+    <div
+      aria-hidden="true"
+      :class="cn('pointer-events-none absolute inset-0 z-20 transition-opacity duration-150', dimmed ? 'opacity-100' : 'opacity-0')"
+      :style="{ background: inactiveVeil }"
+    />
 
     <div
       v-if="dragging"

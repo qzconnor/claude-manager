@@ -51,6 +51,11 @@ export default defineConfig({
     },
     // Pre-bundling would bypass the transform above in dev.
     optimizeDeps: { exclude: ['@xterm/addon-webgl'] },
-    plugins: [xtermWebglTransparency(), vue(), tailwindcss()],
+    plugins: [
+      xtermWebglTransparency(),
+      // <webview> is Electron's element for the browser tabs, not a Vue component.
+      vue({ template: { compilerOptions: { isCustomElement: (tag) => tag === 'webview' } } }),
+      tailwindcss(),
+    ],
   },
 })

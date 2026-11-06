@@ -14,7 +14,7 @@ const app = useAppStore()
 const terminals = useTerminalsStore()
 
 /** Only while the terminals are shown, like the selected tab. */
-const cwd = computed(() => (route.name === 'terminals' ? (terminals.active?.cwd ?? null) : null))
+const cwd = computed(() => (route.name === 'terminals' ? terminals.workingTerminal?.cwd || null : null))
 const branch = ref<GitBranch | null>(null)
 
 // Answers for a tab that is no longer active are dropped.

@@ -50,20 +50,33 @@ export function useLauncher() {
         title: fork ? `Fork · ${session.title}` : null,
       }),
     login: (accountId: string) => launch({ accountId, mode: 'login' }),
+    /** A browser in a new tab, or next to a terminal (`split`); the empty page asks for an address. */
+    async browser(url?: string | null, split?: TerminalCreateOptions['split']) {
+      try {
+        const info = await terminals.openBrowser({ url, split })
+        if (router.currentRoute.value.name !== 'terminals') await router.push({ name: 'terminals' })
+        return info
+      } catch (error) {
+        toastError(error, 'Browser konnte nicht geöffnet werden')
+        return undefined
+      }
+    },
     shell: (accountId: string, cwd?: string | null) => launch({ accountId, mode: 'shell', cwd }),
     /**
      * Splits the part of `from` in its tab: the new terminal comes to the right (`row`) or below
      * (`column`) and runs like `from`, a new session or a shell with the same account in the same folder.
-     * Next to a login, a new session of the default account starts.
+     * A browser passes on the terminal beside it. Next to a login or a lone browser, a new session of
+     * the default account starts.
      */
     split(from: TerminalInfo, direction: SplitDirection) {
       const split = { terminalId: from.id, direction }
-      if (from.mode === 'login') return launch({ accountId: defaultAccountId(), split })
+      const like = terminals.workingTerminalOf(from)
+      if (!like || like.mode === 'login') return launch({ accountId: defaultAccountId(), split })
       return launch({
-        accountId: from.accountId,
-        authAccountId: from.authAccountId,
-        cwd: from.cwd,
-        mode: from.mode,
+        accountId: like.accountId,
+        authAccountId: like.authAccountId,
+        cwd: like.cwd,
+        mode: like.mode === 'shell' ? 'shell' : 'session',
         split,
       })
     },

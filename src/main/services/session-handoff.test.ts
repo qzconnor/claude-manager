@@ -73,6 +73,7 @@ function tab(overrides: Partial<TerminalInfo>): TerminalInfo {
     fixedTitle: false,
     cwd,
     mode: 'session',
+    url: null,
     resumeSessionId: null,
     status: 'running',
     exitCode: null,
@@ -271,6 +272,38 @@ describe('SessionHandoff.continueTerminal', () => {
     await expect(service.continueTerminal('old', 'token')).rejects.toThrow('dialog failed')
     await service.continueTerminal('old', 'token')
     expect(terminalFns.create).toHaveBeenCalledOnce()
+  })
+})
+
+describe('SessionHandoff.restartTerminal', () => {
+  it('goes on with the conversation in the same place and account', async () => {
+    await writeTranscript()
+    const service = handoff()
+    service.on('replaced', (oldId, info) => steps.push(`replaced ${oldId} by ${info.id}`))
+    const result = await service.restartTerminal('old')
+    expect(result?.id).toBe('new')
+    expect(createdOptions()).toEqual({ accountId: 'own', cwd, resumeSessionId: S, title: null, muted: false, replaces: 'old' })
+    expect(steps).toEqual(['stop old', 'create', 'replaced old by new', 'close old'])
+  })
+
+  it('keeps a lent login', async () => {
+    tabs.set('old', tab({ authAccountId: 'token' }))
+    await writeTranscript()
+    await handoff().restartTerminal('old')
+    expect(createdOptions()).toEqual({ accountId: 'own', authAccountId: 'token', cwd, resumeSessionId: S, title: null, muted: false, replaces: 'old' })
+  })
+
+  it('sends no continue prompt, even at a limit', async () => {
+    tabs.set('old', tab({ limit: { type: 'five_hour', resetsAt: null, message: 'limit' } }))
+    await writeTranscript()
+    await handoff().restartTerminal('old')
+    expect(createdOptions().prompt).toBeUndefined()
+  })
+
+  it('only restarts Claude sessions', async () => {
+    tabs.set('old', tab({ mode: 'shell' }))
+    await expect(handoff().restartTerminal('old')).rejects.toThrow()
+    expect(terminalFns.stop).not.toHaveBeenCalled()
   })
 })
 

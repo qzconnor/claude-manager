@@ -152,6 +152,26 @@
   --surface-strong: oklch(0.2 0 0 / 85%);
 }
 
+/* Claude's click in a browser page: a ring that widens from the pointer's tip and fades. */
+@keyframes browser-click {
+  from {
+    scale: 0.3;
+    opacity: 0.9;
+  }
+  to {
+    scale: 1.7;
+    opacity: 0;
+  }
+}
+@keyframes browser-click-fade {
+  from {
+    opacity: 0.9;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -215,6 +235,29 @@
   .glass {
     background: var(--surface);
     backdrop-filter: blur(24px) saturate(140%);
+  }
+  /* Text a light runs across, while work is under way. */
+  .text-shimmer {
+    background: linear-gradient(90deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%) 0 0 / 250% 100%;
+    background-clip: text;
+    color: transparent;
+    animation: text-shimmer 1.8s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .text-shimmer {
+      animation: none;
+      background: none;
+      color: var(--foreground);
+    }
+  }
+}
+
+@keyframes text-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0% 0;
   }
 }
 

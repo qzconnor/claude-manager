@@ -27,7 +27,7 @@ export function useRecentFolders(limit: MaybeRefOrGetter<number>) {
   const folders = computed(() => {
     const uses: FolderUse[] = []
     for (const terminal of terminals.terminals) {
-      if (terminal.mode !== 'login') uses.push({ path: terminal.cwd, at: terminal.createdAt })
+      if (terminal.mode !== 'login' && terminal.mode !== 'browser') uses.push({ path: terminal.cwd, at: terminal.createdAt })
     }
     for (const group of sessions.groups) {
       for (const session of group.sessions) if (session.cwd) uses.push({ path: session.cwd, at: session.updatedAt })

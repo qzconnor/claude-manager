@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { matchShortcut } from './shortcuts'
+import { matchBrowserShortcut, matchShortcut, type ShortcutKey } from './shortcuts'
 
 interface Keys {
   key: string
@@ -14,7 +14,7 @@ interface Keys {
 
 /** Just the fields matchShortcut reads; there is no KeyboardEvent in node. */
 function press({ key, code = '', ctrl = true, shift = false, alt = false, meta = false, type = 'keydown', keyCode = 0 }: Keys) {
-  return { key, code, ctrlKey: ctrl, shiftKey: shift, altKey: alt, metaKey: meta, type, keyCode } as KeyboardEvent
+  return { key, code, ctrlKey: ctrl, shiftKey: shift, altKey: alt, metaKey: meta, type, keyCode } as ShortcutKey
 }
 
 describe('matchShortcut', () => {
@@ -96,5 +96,25 @@ describe('matchShortcut', () => {
     it('is not triggered with Shift', () => {
       expect(matchShortcut(press({ key: '!', code: 'Digit1', shift: true }))).toBeNull()
     })
+  })
+})
+
+describe('matchBrowserShortcut', () => {
+  it('knows the keys of the browser around a page', () => {
+    expect(matchBrowserShortcut(press({ key: 'l' }))).toEqual({ action: 'browser-address' })
+    expect(matchBrowserShortcut(press({ key: 'R' }))).toEqual({ action: 'browser-reload' })
+    expect(matchBrowserShortcut(press({ key: 'F5', ctrl: false }))).toEqual({ action: 'browser-reload' })
+  })
+
+  it('leaves other combinations and released keys to the page', () => {
+    expect(matchBrowserShortcut(press({ key: 'l', shift: true }))).toBeNull()
+    expect(matchBrowserShortcut(press({ key: 'l', ctrl: true, alt: true }))).toBeNull()
+    expect(matchBrowserShortcut(press({ key: 'l', ctrl: false }))).toBeNull()
+    expect(matchBrowserShortcut(press({ key: 'l', type: 'keyup' }))).toBeNull()
+  })
+
+  it('finds the split keys by their character when the key code is unknown (main process)', () => {
+    const { keyCode: _, ...plus } = press({ key: '+', code: 'NumpadAdd', ctrl: false, alt: true, shift: true })
+    expect(matchShortcut(plus)).toEqual({ action: 'split-right' })
   })
 })

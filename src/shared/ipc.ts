@@ -1,5 +1,11 @@
 import type {
   Account,
+  BrowserActivity,
+  BrowserControlState,
+  ClaudeInChromeStatus,
+  BrowserHighlight,
+  BrowserOpenOptions,
+  BrowserPage,
   AutoSwitchEvent,
   AccountCreateInput,
   AccountTokenStats,
@@ -30,6 +36,7 @@ import type {
   UpdateState,
   WindowState,
 } from './types'
+import type { Shortcut } from './shortcuts'
 
 /** Request/response channels (ipcRenderer.invoke ↔ ipcMain.handle). */
 export const IpcInvoke = {
@@ -68,9 +75,19 @@ export const IpcInvoke = {
   terminalsRename: 'terminals:rename',
   terminalsAttach: 'terminals:attach',
   terminalsContinueWith: 'terminals:continue-with',
+  terminalsRestartSession: 'terminals:restart-session',
   terminalsSetMuted: 'terminals:set-muted',
   terminalsLayouts: 'terminals:layouts',
   terminalsArrange: 'terminals:arrange',
+  terminalsOpenBrowser: 'terminals:open-browser',
+  browserFavicon: 'browser:favicon',
+  browserLog: 'browser:log',
+  browserClearLog: 'browser:clear-log',
+  browserTakeOver: 'browser:take-over',
+  browserControls: 'browser:controls',
+  browserClearData: 'browser:clear-data',
+  browserResetViewport: 'browser:reset-viewport',
+  browserClaudeInChrome: 'browser:claude-in-chrome',
 
   notificationsTest: 'notifications:test',
 
@@ -111,6 +128,10 @@ export const IpcSend = {
   terminalColorScheme: 'terminals:color-scheme',
   /** Order of the tabs in the window, after one was moved. */
   terminalReorder: 'terminals:reorder',
+  /** What a browser tab shows now (url and title of its page). */
+  browserPage: 'browser:page',
+  /** The page of a browser tab is ready to be driven (the id of its `<webview>`'s contents). */
+  browserAttach: 'browser:attach',
   /** The page listens for dialog requests (see src/main/window/dialogs.ts). */
   dialogsReady: 'dialogs:ready',
   dialogAnswer: 'dialogs:answer',
@@ -130,6 +151,18 @@ export const IpcEvent = {
   terminalReplaced: 'event:terminal-replaced',
   /** A session at a limit went on with another account by itself, or that failed. */
   terminalAutoSwitch: 'event:terminal-auto-switch',
+  /** A shortcut was pressed in a browser page, which the window doesn't see. */
+  browserShortcut: 'event:browser-shortcut',
+  /** Claude did something in a browser, or a running action ended. */
+  browserActivity: 'event:browser-activity',
+  /** Who drives a browser changed. */
+  browserControl: 'event:browser-control',
+  /** Where Claude acts in a page right now. */
+  browserHighlight: 'event:browser-highlight',
+  /** Claude is about to type: the page needs the window's keyboard. */
+  browserFocus: 'event:browser-focus',
+  /** The user clicked into a browser page, which the window doesn't see. */
+  browserUserClick: 'event:browser-user-click',
   usageChanged: 'event:usage-changed',
   /** A warning about a limit was clicked: the window shows the usage page. */
   usageShow: 'event:usage-show',
@@ -208,6 +241,8 @@ export interface ManagerApi {
     arrange(layout: PaneNode): Promise<void>
     /** Null when Claude Code shouldn't trust the folder (the user said no in the app's question). */
     create(options: TerminalCreateOptions): Promise<TerminalInfo | null>
+    /** A browser in a new tab or next to a terminal. */
+    openBrowser(options: BrowserOpenOptions): Promise<TerminalInfo>
     write(id: string, data: string): void
     resize(id: string, cols: number, rows: number): void
     /** Kill the process but keep the tab (shows exit state). */
@@ -226,6 +261,8 @@ export interface ManagerApi {
      * Null when the folder isn't trusted for that account: the tab then stays as it is.
      */
     continueWith(id: string, accountId: string): Promise<TerminalInfo | null>
+    /** Starts the session again in its place, going on with its conversation (new launch options apply). */
+    restartSession(id: string): Promise<TerminalInfo | null>
     /** A muted tab sends no notifications and doesn't flash the taskbar. */
     setMuted(id: string, muted: boolean): Promise<void>
     /** Tells which terminals the window shows (none: another page): their news counts as seen. */
@@ -241,6 +278,36 @@ export interface ManagerApi {
     /** The new tab takes the place of the old one, which closes right after. */
     onReplaced(cb: (oldId: string, info: TerminalInfo) => void): Unsubscribe
     onAutoSwitch(cb: (event: AutoSwitchEvent) => void): Unsubscribe
+  }
+  browser: {
+    /** What a browser tab shows now; its tab takes the page's title unless it was given one. */
+    page(id: string, page: BrowserPage): void
+    /** The icon a page names, as a data URL the window can show; null when it is no image. */
+    favicon(url: string): Promise<string | null>
+    /** A shortcut pressed in a browser page, which the window doesn't see itself. */
+    onShortcut(cb: (shortcut: Shortcut) => void): Unsubscribe
+    /** The page of a browser tab is ready: main can drive it for Claude. */
+    attach(id: string, webContentsId: number): void
+    /** What Claude did in the browser so far, oldest first. */
+    log(id: string): Promise<BrowserActivity[]>
+    clearLog(id: string): Promise<void>
+    /** The user takes the browser over from Claude, or hands it back. */
+    takeOver(id: string, takenOver: boolean): Promise<void>
+    /** Who drives which browser, by the browser's id. */
+    controls(): Promise<Record<string, BrowserControlState>>
+    /** Logs the browser out everywhere: cookies, the sites' stored data and the cache. */
+    clearData(): Promise<void>
+    /** The page fills its part of the tab again, instead of the size Claude gave it. */
+    resetViewport(id: string): Promise<void>
+    /** Which accounts start their sessions with Claude in Chrome, which Claude might take instead. */
+    claudeInChrome(): Promise<ClaudeInChromeStatus>
+    onActivity(cb: (id: string, activity: BrowserActivity) => void): Unsubscribe
+    onControl(cb: (id: string, control: BrowserControlState | null) => void): Unsubscribe
+    onHighlight(cb: (id: string, highlight: BrowserHighlight) => void): Unsubscribe
+    /** Claude is about to type into the page: it needs the window's keyboard for a moment. */
+    onFocus(cb: (id: string) => void): Unsubscribe
+    /** The user clicked into the page (Claude's clicks aside): its part of the tab should become active. */
+    onUserClick(cb: (id: string) => void): Unsubscribe
   }
   sessions: {
     list(accountId?: string): Promise<SessionGroup[]>

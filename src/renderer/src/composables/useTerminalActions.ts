@@ -12,7 +12,8 @@ export function useTerminalActions() {
   async function closeTerminal(id: string): Promise<void> {
     const terminal = terminals.terminals.find((t) => t.id === id)
     if (!terminal) return
-    if (terminal.status === 'running' && settings.settings.general.confirmCloseRunning) {
+    // A browser runs no process that could lose work.
+    if (terminal.status === 'running' && terminal.mode !== 'browser' && settings.settings.general.confirmCloseRunning) {
       const ok = await ui.confirm({
         title: 'Terminal schließen?',
         description: `„${terminal.title}“ läuft noch. Die Session wird beendet, kann aber später über „Sessions“ fortgesetzt werden.`,
@@ -27,7 +28,7 @@ export function useTerminalActions() {
   /** Closes every terminal of the tab, after one question for all of them that still run. */
   async function closeTab(tab: TerminalTab): Promise<void> {
     if (tab.panes.length === 1) return closeTerminal(tab.panes[0].id)
-    const running = tab.panes.filter((p) => p.status === 'running')
+    const running = tab.panes.filter((p) => p.status === 'running' && p.mode !== 'browser')
     if (running.length > 0 && settings.settings.general.confirmCloseRunning) {
       const ok = await ui.confirm({
         title: 'Tab schließen?',

@@ -6,6 +6,7 @@ import TerminalWorkspace from '@/components/terminal/TerminalWorkspace.vue'
 import { useAccountSwitch } from '@/composables/useAccountSwitch'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
 import { cn } from '@/lib/utils'
+import { useBrowsersStore } from '@/stores/browsers'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import NavRail from './NavRail.vue'
@@ -14,8 +15,11 @@ import TitleBar from './TitleBar.vue'
 const route = useRoute()
 const router = useRouter()
 const terminals = useTerminalsStore()
+const browsers = useBrowsersStore()
 const ui = useUiStore()
 const onTerminals = computed(() => route.name === 'terminals')
+/** On another page the terminals stay drawn, unseen, while Claude drives a browser (see TerminalWorkspace). */
+const drawnUnseen = computed(() => !onTerminals.value && browsers.anyActive)
 
 const main = ref<HTMLElement | null>(null)
 const { left: mainLeft } = useElementBounding(main)
@@ -87,7 +91,12 @@ onBeforeUnmount(offUsageShow)
         "
       >
         <!-- Terminals stay mounted while other pages are shown so their state survives. -->
-        <TerminalWorkspace v-show="onTerminals" class="absolute inset-0" :visible="onTerminals" />
+        <TerminalWorkspace
+          v-show="onTerminals || drawnUnseen"
+          :class="cn('absolute inset-0', drawnUnseen && 'pointer-events-none -z-10 opacity-0')"
+          :aria-hidden="drawnUnseen || undefined"
+          :visible="onTerminals"
+        />
         <!-- No v-if on the child: the compiler would give every route the same key and
              KeepAlive would mix up the cached pages. The terminals route renders an empty view. -->
         <RouterView v-slot="{ Component }">

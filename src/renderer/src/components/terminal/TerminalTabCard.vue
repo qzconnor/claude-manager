@@ -10,6 +10,7 @@ import { accountKindLabel, formatReset } from '@/lib/format'
 import { fileManagerLabel } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { limitLabel } from '@/lib/usage'
+import BrowserFavicon from './BrowserFavicon.vue'
 
 /** What the hover card of a tab shows: the full title and where the session runs. */
 const props = defineProps<{
@@ -48,7 +49,11 @@ const folder = computed(() => props.terminal.cwd.split(/[\\/]/).filter(Boolean).
         </div>
       </div>
 
-      <div class="flex gap-2">
+      <div v-if="terminal.mode === 'browser'" class="flex gap-2">
+        <BrowserFavicon :terminal-id="terminal.id" class="mt-px size-3.5 shrink-0 text-muted-foreground" />
+        <p class="min-w-0 flex-1 break-all text-muted-foreground">{{ terminal.url === 'about:blank' ? 'Leere Seite' : terminal.url }}</p>
+      </div>
+      <div v-else class="flex gap-2">
         <FolderIcon class="mt-px size-3.5 shrink-0 text-muted-foreground" />
         <div class="min-w-0 flex-1">
           <p class="truncate leading-4 font-medium">{{ folder }}</p>

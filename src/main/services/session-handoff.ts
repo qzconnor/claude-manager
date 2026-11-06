@@ -36,11 +36,27 @@ export class SessionHandoff extends TypedEmitter<Events> {
   async continueTerminal(terminalId: string, targetId: string): Promise<TerminalInfo | null> {
     const old = this.terminals.get(terminalId)
     if (old.mode !== 'session') throw new Error('Nur Claude-Code-Sessions können den Account wechseln.')
-    if (!old.sessionId) throw new Error('Welche Session in diesem Tab läuft, ist noch nicht bekannt.')
     const target = this.accounts.get(targetId)
     if (target.id === old.authAccountId && old.status === 'running') {
       throw new Error(`Der Tab läuft schon über „${target.name}“.`)
     }
+    return this.handOver(old, target, true)
+  }
+
+  /**
+   * Starts the tab's session again in its place with the same account, and it goes on with its
+   * conversation: changed launch options (such as `--no-chrome`) apply to it. Null as above.
+   */
+  async restartTerminal(terminalId: string): Promise<TerminalInfo | null> {
+    const old = this.terminals.get(terminalId)
+    if (old.mode !== 'session') throw new Error('Nur Claude-Code-Sessions lassen sich mit ihrem Verlauf neu starten.')
+    return this.handOver(old, this.accounts.get(old.authAccountId), false)
+  }
+
+  /** `carryOn`: a session that stopped at its limit gets the continue prompt. */
+  private async handOver(old: TerminalInfo, target: Account, carryOn: boolean): Promise<TerminalInfo | null> {
+    const terminalId = old.id
+    if (!old.sessionId) throw new Error('Welche Session in diesem Tab läuft, ist noch nicht bekannt.')
     if (this.switching.has(terminalId)) throw new Error('Der Wechsel läuft bereits.')
     this.switching.add(terminalId)
     try {
@@ -57,7 +73,7 @@ export class SessionHandoff extends TypedEmitter<Events> {
       await this.terminals.stop(terminalId)
       const options = await this.prepare(old.accountId, old.sessionId, cwd, target)
       // The session stopped at its limit: let Claude carry on where it was, so nobody has to type.
-      if (old.limit && options.resumeSessionId) options.prompt = this.settings.get().claude.continuePrompt || null
+      if (carryOn && old.limit && options.resumeSessionId) options.prompt = this.settings.get().claude.continuePrompt || null
       const info = this.terminals.create({
         ...options,
         title: old.fixedTitle ? old.title : null,

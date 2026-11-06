@@ -22,7 +22,7 @@ import { useTerminalsStore } from '@/stores/terminals'
 import { useUsageStore } from '@/stores/usage'
 
 /**
- * Plan limits of the account behind the active terminal, shown in the title bar.
+ * Plan limits of the account behind the active terminal (beside a browser: its tab's terminal), shown in the title bar.
  * Hidden when no terminal is open or the account has no limit data (tokens, API keys).
  */
 const router = useRouter()
@@ -33,7 +33,7 @@ const now = useClock(30_000)
 const open = ref(false)
 
 const account = computed(() => {
-  const terminal = terminals.active
+  const terminal = terminals.workingTerminal
   return terminal ? accounts.get(terminal.authAccountId) : undefined
 })
 const usage = computed(() => (account.value ? usageStore.byAccount.get(account.value.id) : undefined))

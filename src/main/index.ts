@@ -4,6 +4,9 @@ import { app, BrowserWindow, nativeTheme } from 'electron'
 import { IpcEvent } from '@shared/ipc'
 import type { AppInfo } from '@shared/types'
 import { ApiServer } from './api/api-server'
+import { BrowserControl } from './browser/browser-control'
+import { BrowserTools } from './browser/browser-tools'
+import { BrowserMcpServer } from './browser/mcp-server'
 import { CommandIntegration } from './cli/command-integration'
 import { isLaunchRequest, readLaunchRequest, resolveLaunch, type LaunchRequest } from './cli/launch'
 import type { AppContext } from './context'
@@ -71,6 +74,13 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     return win && !win.isDestroyed() ? dialogs.show(win, options) : null
   })
   const terminals = new TerminalService(accounts, cli, settings, trust)
+  const browser = new BrowserControl(terminals)
+  // Claude sessions the app starts get the browser's MCP server: before the tabs are restored.
+  const browserMcp = new BrowserMcpServer(userDataDir, settings, new BrowserTools(browser), app.getVersion())
+  await browserMcp
+    .start()
+    .then(() => terminals.setSessionArgs(browserMcp))
+    .catch((error) => console.error('[browser-mcp] server could not start', error))
   const sessions = new SessionService(accounts, indexer, terminals)
   sessions.init()
   const handoff = new SessionHandoff(accounts, sessions, terminals, settings)
@@ -102,6 +112,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     cli,
     indexer,
     terminals,
+    browser,
     sessions,
     handoff,
     autoSwitch,
@@ -307,6 +318,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     // Before the tabs close, otherwise an empty list would be remembered.
     restore.dispose()
     terminals.disposeAll()
+    browserMcp.dispose()
     usage.dispose()
     git.dispose()
     sessions.dispose()
