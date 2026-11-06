@@ -41,7 +41,7 @@ onBeforeUnmount(off)
 const tooltip = computed(() =>
   branch.value?.detached
     ? `Kein Branch ausgecheckt (Commit ${branch.value.name}) · ${cwd.value}`
-    : `Git-Branch · ${cwd.value}`,
+    : `Git-Branch ${branch.value?.name} · ${cwd.value}`,
 )
 </script>
 
@@ -53,12 +53,17 @@ const tooltip = computed(() =>
     leave-active-class="transition-opacity duration-150"
   >
     <!-- Wrapper element: Transition needs one root, the tooltip renders trigger + portal.
-         Looks like the usage button next to it, but is only a label. -->
-    <div v-if="branch" class="app-no-drag flex shrink-0">
+         The name is shown in full while there is room. When the title bar runs short, the branch gives
+         way before the tabs (high shrink factor) down to 12rem, then the tabs scroll as before. -->
+    <div
+      v-if="branch"
+      class="mr-2 flex min-w-48 shrink-1000 justify-end transition-opacity in-data-unfocused:opacity-75"
+    >
       <Tooltip>
         <TooltipTrigger as-child>
+          <!-- Looks like the usage button next to it, but is only a label. -->
           <div
-            class="flex h-7 max-w-48 items-center gap-1.5 rounded-[min(var(--radius-md),12px)] border border-border bg-background px-2.5 text-[0.8rem] text-muted-foreground dark:border-input dark:bg-input/30"
+            class="app-no-drag flex h-7 min-w-0 items-center gap-1.5 rounded-[min(var(--radius-md),12px)] border border-border bg-background/40 px-2.5 text-[0.8rem] text-muted-foreground dark:border-input dark:bg-input/30"
           >
             <GitCommitHorizontalIcon v-if="branch.detached" class="size-3.5 shrink-0" />
             <GitBranchIcon v-else class="size-3.5 shrink-0" />

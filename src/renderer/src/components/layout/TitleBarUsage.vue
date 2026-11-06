@@ -78,7 +78,7 @@ function openDashboard() {
           <Button
             variant="outline"
             size="sm"
-            class="app-no-drag gap-3 px-2.5 font-normal text-muted-foreground"
+            class="app-no-drag gap-3 bg-background/40 px-2.5 font-normal text-muted-foreground"
             :aria-label="`Nutzungslimits ${who ? `${account.name}, ${who}` : account.name}: ${label}`"
           >
             <span v-for="item in summary" :key="item.key" class="flex items-center gap-1.5">

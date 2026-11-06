@@ -43,8 +43,9 @@ const tabsInSidebar = computed(() => settings.settings.appearance.tabPosition ==
     </div>
     <TerminalTabs v-if="!tabsInSidebar" class="min-w-0" />
     <div class="h-full min-w-8 flex-1" />
+    <!-- Outside the group on the right, so it can shrink on its own. -->
+    <TitleBarBranch />
     <div class="mr-2 flex items-center gap-2 transition-opacity in-data-unfocused:opacity-75">
-      <TitleBarBranch />
       <TitleBarUsage />
       <!-- At the end of the tab bar like in a browser; in the sidebar it heads the tabs instead. -->
       <TabSearch v-if="!tabsInSidebar" />

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useEventListener, useMutationObserver } from '@vueuse/core'
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
@@ -17,23 +17,56 @@ const terminals = useTerminalsStore()
 const ui = useUiStore()
 const strip = ref<HTMLElement | null>(null)
 
+/** Width of the fade at an edge of the strip behind which more tabs are scrolled away. */
+const FADE = 24
+const overflow = ref({ start: false, end: false })
+/** Fades out tabs cut by the edge of the strip instead of cutting them off hard. */
+const stripMask = computed(() => {
+  const { start, end } = overflow.value
+  if (!start && !end) return undefined
+  const from = start ? 'transparent' : 'black'
+  const to = end ? 'transparent' : 'black'
+  return { maskImage: `linear-gradient(to right, ${from}, black ${FADE}px, black calc(100% - ${FADE}px), ${to})` }
+})
+
 /** Tells the page below where the selected tab sits, clipped to the visible part of the strip. */
 function measureSelected() {
-  const tab = strip.value?.querySelector('[role="tab"][aria-selected="true"]')
-  if (!strip.value || !tab) {
+  const el = strip.value
+  overflow.value = el
+    ? { start: el.scrollLeft > 1, end: el.scrollLeft + el.clientWidth < el.scrollWidth - 1 }
+    : { start: false, end: false }
+  const tab = el?.querySelector('[role="tab"][aria-selected="true"]')
+  if (!el || !tab) {
     ui.selectedTabEdges = null
     return
   }
-  const bounds = strip.value.getBoundingClientRect()
+  const bounds = el.getBoundingClientRect()
   const rect = tab.getBoundingClientRect()
   const left = Math.max(rect.left, bounds.left)
   const right = Math.min(rect.right, bounds.right)
   ui.selectedTabEdges = right > left ? { left, right } : null
 }
 
+/** Scrolls the strip so a tab is fully visible and clear of the fades, as far as the strip is wide enough. */
+function reveal(id: string | null) {
+  const el = strip.value
+  const tab = id ? el?.querySelector<HTMLElement>(`[data-terminal-id="${CSS.escape(id)}"]`) : null
+  if (!el || !tab) return
+  const bounds = el.getBoundingClientRect()
+  const rect = tab.getBoundingClientRect()
+  const margin = Math.max(0, Math.min(FADE, (bounds.width - rect.width) / 2))
+  if (rect.left < bounds.left + margin) el.scrollLeft -= bounds.left + margin - rect.left
+  else if (rect.right > bounds.right - margin) el.scrollLeft += rect.right - (bounds.right - margin)
+}
+
 // In the title bar the tab moves when tabs are added, closed, renamed (other width) or scrolled.
 if (!props.vertical) {
-  const resizeObserver = new ResizeObserver(measureSelected)
+  const resizeObserver = new ResizeObserver((entries) => {
+    // A narrower window keeps the selected tab in view. Tabs changing width (new title) don't,
+    // so a strip scrolled by hand stays where it is.
+    if (entries.some((entry) => entry.target === strip.value)) reveal(terminals.activeId)
+    measureSelected()
+  })
   const observeTabs = () => {
     resizeObserver.disconnect()
     if (!strip.value) return
@@ -72,9 +105,11 @@ watch(
   (id) => {
     if (!id) return
     void nextTick(() => {
-      strip.value
-        ?.querySelector(`[data-terminal-id="${CSS.escape(id)}"]`)
-        ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      if (props.vertical) {
+        strip.value?.querySelector(`[data-terminal-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' })
+      } else {
+        reveal(id)
+      }
     })
   },
 )
@@ -112,6 +147,7 @@ watch(
       ref="strip"
       role="tablist"
       class="no-scrollbar flex min-w-0 gap-0.5 overflow-x-auto"
+      :style="stripMask"
     >
       <TerminalTab
         v-for="terminal in terminals.terminals"
