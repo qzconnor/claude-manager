@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useLauncher } from '@/composables/useLauncher'
 import { useTerminalsStore } from '@/stores/terminals'
 
-/** Buttons that split the active terminal; only while the terminals are shown, like the branch beside it. */
+/** Buttons that split the active terminal, beside the bell; only while the terminals are shown. */
 const route = useRoute()
 const terminals = useTerminalsStore()
 const launcher = useLauncher()
