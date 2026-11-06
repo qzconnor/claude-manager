@@ -44,7 +44,7 @@ if (!globalThis.__cm) (() => {
   const INTERACTIVE_CONTAINERS = new Set(['listbox', 'combobox', 'tab', 'treeitem'])
   const NAME_FROM_CONTENT = new Set([
     'link', 'button', 'heading', 'tab', 'option', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'treeitem',
-    'cell', 'columnheader', 'checkbox', 'radio', 'switch', 'clickable',
+    'cell', 'columnheader', 'checkbox', 'radio', 'switch', 'clickable', 'draggable',
   ])
   /** Roles that become one line of text when nothing in them can be used. */
   const COLLAPSE = new Set(['paragraph', 'listitem', 'cell', 'columnheader', 'blockquote', 'figure', 'article', 'group', 'alert', 'status'])
@@ -75,15 +75,25 @@ if (!globalThis.__cm) (() => {
     return null
   }
 
+  /** Cursors that say an element can be clicked or dragged. */
+  const HOT_CURSORS = new Set(['pointer', 'grab', 'move'])
+
   function interactive(el, role) {
     if (INTERACTIVE.has(role)) return true
+    if (draggable(el)) return true
     if (role) return false
     const tabindex = el.getAttribute('tabindex')
     if (tabindex !== null && Number(tabindex) >= 0) return true
     if (el.hasAttribute('onclick')) return true
-    // Clickable by its look: the pointer starts here, not at a parent it inherits it from.
+    // Clickable or draggable by its look: the cursor starts here, not at a parent it inherits it from.
     const parent = el.parentElement
-    return styleOf(el).cursor === 'pointer' && (!parent || styleOf(parent).cursor !== 'pointer')
+    const cursor = styleOf(el).cursor
+    return HOT_CURSORS.has(cursor) && (!parent || styleOf(parent).cursor !== cursor)
+  }
+
+  /** An element the page lets the mouse drag (HTML drag and drop); links and images are by default. */
+  function draggable(el) {
+    return el.getAttribute('draggable') === 'true'
   }
 
   function labelledBy(el) {
@@ -166,11 +176,12 @@ if (!globalThis.__cm) (() => {
     }
   }
 
-  function describe(el, role, hot) {
+  /** One line of the snapshot: hot elements show their value; those withRef (all hot ones) get a ref. */
+  function describe(el, role, hot, withRef = hot) {
     const name = cut(nameOf(el, role || 'clickable'), MAX_NAME)
     let line = role || 'clickable'
     if (name) line += ' ' + quote(name)
-    if (hot) line += ' [ref=' + refOf(el) + ']'
+    if (withRef) line += ' [ref=' + refOf(el) + ']'
     for (const state of states(el, role)) line += ' [' + state + ']'
     const value = hot ? valueOf(el, role) : ''
     if (value) line += ': ' + quote(cut(value, MAX_TEXT))
@@ -247,8 +258,9 @@ if (!globalThis.__cm) (() => {
     if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') return visitFrame(el)
     const role = roleOf(el)
     if (interactive(el, role)) {
-      const item = { text: describe(el, role, true), children: [], hot: true }
-      if (INTERACTIVE_CONTAINERS.has(role) || !NAME_FROM_CONTENT.has(role || 'clickable')) {
+      const shown = role || (draggable(el) ? 'draggable' : null)
+      const item = { text: describe(el, shown, true), children: [], hot: true }
+      if (INTERACTIVE_CONTAINERS.has(shown) || !NAME_FROM_CONTENT.has(shown || 'clickable')) {
         if (el.tagName !== 'SELECT') item.children = visitChildren(el)
       } else {
         // A clickable card may hold links and buttons of its own.
@@ -263,16 +275,17 @@ if (!globalThis.__cm) (() => {
       const name = cut(nameOf(el, role), MAX_NAME)
       return name ? { items: [textItem('img ' + quote(name))] } : EMPTY
     }
-    if (role === 'heading' && !hot) return { items: [textItem(describe(el, role, false))] }
+    // Parts of the page with a role get a ref as well: targets to drop on, to scroll to or to photograph.
+    if (role === 'heading' && !hot) return { items: [textItem(describe(el, role, false, true))] }
     if (role === 'row' && !hot) {
       const cells = [...el.children].map((c) => clean(c.innerText)).filter(Boolean)
-      return cells.length ? { items: [textItem('row: ' + cut(cells.join(' | '), MAX_TEXT))] } : EMPTY
+      return cells.length ? { items: [textItem('row [ref=' + refOf(el) + ']: ' + cut(cells.join(' | '), MAX_TEXT))] } : EMPTY
     }
     if (role && COLLAPSE.has(role) && !hot) {
       const text = clean(el.innerText)
-      return text ? { items: [textItem(role + ': ' + cut(text, MAX_TEXT))] } : EMPTY
+      return text ? { items: [textItem(role + ' [ref=' + refOf(el) + ']: ' + cut(text, MAX_TEXT))] } : EMPTY
     }
-    if (role) return children.length || role === 'dialog' ? { items: [{ text: describe(el, role, false), children, hot }] } : EMPTY
+    if (role) return children.length || role === 'dialog' ? { items: [{ text: describe(el, role, false, true), children, hot }] } : EMPTY
     // A plain element: inline text joins the text around it, anything else passes its children on.
     if (!hot && children.every((c) => c.text.startsWith('text: ')) && styleOf(el).display === 'inline') {
       return { inline: children.map((c) => c.text.slice(6)).join(' ') }
@@ -414,6 +427,47 @@ if (!globalThis.__cm) (() => {
     },
     unmarkFileInput(mark) {
       document.querySelector('[data-claude-manager-upload="' + mark + '"]')?.removeAttribute('data-claude-manager-upload')
+    },
+    /** What kind of field browser_fill_form fills, and whether a checkbox or radio button is checked. */
+    fieldState(ref) {
+      const el = element(ref)
+      const tag = el.tagName
+      const type = (el.type || '').toLowerCase()
+      const role = roleOf(el) || ''
+      let checked = null
+      if (tag === 'INPUT' && (type === 'checkbox' || type === 'radio')) checked = el.checked
+      else if (['checkbox', 'radio', 'switch', 'menuitemcheckbox', 'menuitemradio'].includes(role)) checked = el.getAttribute('aria-checked') === 'true'
+      return { role, checked, select: tag === 'SELECT', range: tag === 'INPUT' && type === 'range' }
+    },
+    /** Moves a range input to a value as dragging its knob would (input and change events). */
+    setSliderValue(ref, value) {
+      const el = element(ref)
+      if (el.tagName !== 'INPUT' || el.type !== 'range') throw new Error('Element ' + ref + ' is no range input; press the arrow keys on it (browser_press_key) instead.')
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, String(value))
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      el.dispatchEvent(new Event('change', { bubbles: true }))
+      return el.value
+    },
+    /**
+     * For a drag: scrolls the element to drag into view and, when the target isn't visible with it,
+     * the target too. Returns both boxes and whether both are in view now.
+     */
+    locatePair(fromRef, toRef) {
+      const from = element(fromRef)
+      const to = element(toRef)
+      const inView = (el) => {
+        const r = box(el)
+        const x = r.x + r.width / 2
+        const y = r.y + r.height / 2
+        return x >= 0 && y >= 0 && x <= innerWidth && y <= innerHeight
+      }
+      from.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
+      if (!inView(to)) to.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' })
+      const describe = (el) => {
+        const role = roleOf(el)
+        return { ...box(el), role: role || 'element', name: cut(nameOf(el, role || 'clickable'), MAX_NAME), covered: null, secret: false }
+      }
+      return { from: describe(from), to: describe(to), together: inView(from) && inView(to) }
     },
     hasText(text) {
       return (document.body?.innerText || '').includes(text)

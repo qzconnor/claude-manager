@@ -8,6 +8,8 @@ import type {
   AccountUpdateInput,
   AutoSwitchEvent,
   AppSettings,
+  BrowserCredentials,
+  BrowserDownloadAction,
   BrowserOpenOptions,
   CswapImportInput,
   DeepPartial,
@@ -18,8 +20,10 @@ import { claudeInChromeStatus } from './browser/claude-in-chrome'
 import type { AppContext } from './context'
 import { listFontFamilies } from './lib/fonts'
 import { SESSION_ID_RE } from './lib/session-files'
+import { browserDownloads } from './window/browser-downloads'
 import { clearBrowserData, loadFavicon } from './window/browser-guests'
-import { windowState } from './window/main-window'
+import { browserLogins } from './window/browser-logins'
+import { openAppWindows, windowState } from './window/main-window'
 
 /** Sessions moved to the recycle bin in one go. */
 const MAX_REMOVE = 10_000
@@ -28,10 +32,9 @@ const MAX_FAVICON_URL_LENGTH = 400_000
 
 const SETTINGS_FILE_FILTERS = [{ name: 'Claude-Manager-Einstellungen', extensions: ['json'] }]
 
+/** To the app's windows only: a popup of a browser page is a window too, and a page of the web. */
 function broadcast(channel: string, ...args: unknown[]): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) win.webContents.send(channel, ...args)
-  }
+  for (const win of openAppWindows()) win.webContents.send(channel, ...args)
 }
 
 function senderWindow(event: IpcMainInvokeEvent): BrowserWindow {
@@ -46,6 +49,18 @@ function requireString(value: unknown, name: string): string {
 }
 
 /** The options of a new browser from the window, checked field by field. */
+const DOWNLOAD_ACTIONS: ReadonlySet<string> = new Set<BrowserDownloadAction>(['open', 'show', 'cancel', 'remove'])
+/** The longest user name or password a page gets. */
+const MAX_CREDENTIAL_LENGTH = 4096
+
+function credentialsOf(value: unknown): BrowserCredentials | null {
+  if (value === null || typeof value !== 'object') return null
+  const { username, password } = value as Record<string, unknown>
+  if (typeof username !== 'string' || typeof password !== 'string') throw new Error('Ungültiger Parameter: credentials')
+  if (username.length > MAX_CREDENTIAL_LENGTH || password.length > MAX_CREDENTIAL_LENGTH) throw new Error('Ungültiger Parameter: credentials')
+  return { username, password }
+}
+
 function browserOptions(value: unknown): BrowserOpenOptions {
   const { url, title, split } = (value ?? {}) as Record<string, unknown>
   const next: BrowserOpenOptions = {
@@ -201,6 +216,18 @@ export function registerIpc(ctx: AppContext): void {
   ipcMain.handle(IpcInvoke.browserClearData, () => clearBrowserData())
   ipcMain.handle(IpcInvoke.browserResetViewport, (_e, id: unknown) => ctx.browser.resetViewport(requireString(id, 'id')))
   ipcMain.handle(IpcInvoke.browserClaudeInChrome, () => claudeInChromeStatus(ctx.accounts))
+  ipcMain.handle(IpcInvoke.browserDownloads, () => browserDownloads.list())
+  ipcMain.handle(IpcInvoke.browserDownloadAction, (_e, id: unknown, action: unknown) => {
+    if (typeof action !== 'string' || !DOWNLOAD_ACTIONS.has(action)) throw new Error('Ungültiger Parameter: action')
+    return browserDownloads.act(requireString(id, 'id'), action as BrowserDownloadAction)
+  })
+  ipcMain.handle(IpcInvoke.browserClearDownloads, () => browserDownloads.clear())
+  ipcMain.handle(IpcInvoke.browserLoginAnswer, (_e, id: unknown, credentials: unknown) =>
+    browserLogins.answer(requireString(id, 'id'), credentialsOf(credentials)),
+  )
+  browserDownloads.on('changed', (downloads) => broadcast(IpcEvent.browserDownloads, downloads))
+  browserLogins.on('request', (request) => broadcast(IpcEvent.browserLogin, request))
+  browserLogins.on('done', (id) => broadcast(IpcEvent.browserLoginDone, id))
   ctx.browser.on('activity', (id, activity) => broadcast(IpcEvent.browserActivity, id, activity))
   ctx.browser.on('control', (id, control) => broadcast(IpcEvent.browserControl, id, control))
   ctx.browser.on('highlight', (id, highlight) => broadcast(IpcEvent.browserHighlight, id, highlight))

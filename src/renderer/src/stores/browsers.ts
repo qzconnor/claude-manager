@@ -1,6 +1,15 @@
 import { defineStore } from 'pinia'
 import { computed, reactive, ref, shallowReactive } from 'vue'
-import type { BrowserActivity, BrowserControlState, BrowserHighlight, ClaudeInChromeStatus } from '@shared/types'
+import type {
+  BrowserActivity,
+  BrowserControlState,
+  BrowserCredentials,
+  BrowserDownload,
+  BrowserDownloadAction,
+  BrowserHighlight,
+  BrowserLoginRequest,
+  ClaudeInChromeStatus,
+} from '@shared/types'
 
 /** What a browser pane shows of its page, for its tab. */
 export interface BrowserViewState {
@@ -19,6 +28,10 @@ export interface BrowserView {
   reload(): void
   /** Puts the keyboard into the address bar, with the address selected. */
   focusAddress(): void
+  /** Opens the search in the page, or puts the keyboard back into it. */
+  find(): void
+  /** The next (or previous) match of the search; opens it when it is closed. */
+  findAgain(forward: boolean): void
   /** Gives the page the keyboard, for Claude's keys. */
   focusPage(): void
   /** The user clicked into the page. */
@@ -67,6 +80,16 @@ export const useBrowsersStore = defineStore('browsers', () => {
     }
   })
   window.api.browser.onHighlight((id, highlight) => highlights.set(id, { ...highlight, seq: ++highlightCount }))
+
+  /** The browser's downloads, all tabs together, oldest first. */
+  const downloads = ref<BrowserDownload[]>([])
+  window.api.browser.onDownloads((list) => (downloads.value = list))
+  void window.api.browser.downloads().then((list) => (downloads.value = list))
+
+  /** Pages that wait for a user name and password, by the request; each pane shows those of its page. */
+  const logins = reactive(new Map<string, BrowserLoginRequest>())
+  window.api.browser.onLogin((request) => logins.set(request.id, request))
+  window.api.browser.onLoginDone((id) => logins.delete(id))
   window.api.browser.onFocus((id) => views.get(id)?.focusPage())
   window.api.browser.onUserClick((id) => views.get(id)?.userClicked())
   void window.api.browser.controls().then((all) => {
@@ -118,6 +141,16 @@ export const useBrowsersStore = defineStore('browsers', () => {
     loadLog,
     clearLog,
     takeOver: (id: string, takenOver: boolean) => window.api.browser.takeOver(id, takenOver),
+    downloads,
+    downloadAction: (id: string, action: BrowserDownloadAction) => window.api.browser.downloadAction(id, action),
+    clearDownloads: () => window.api.browser.clearDownloads(),
+    logins,
+    /** The first question for a login of a page (by the id of its contents). */
+    loginFor: (contentsId: number | null) => (contentsId === null ? null : ([...logins.values()].find((l) => l.contentsId === contentsId) ?? null)),
+    answerLogin: (id: string, credentials: BrowserCredentials | null) => {
+      logins.delete(id)
+      return window.api.browser.answerLogin(id, credentials)
+    },
     resetViewport: (id: string) => window.api.browser.resetViewport(id),
   }
 })

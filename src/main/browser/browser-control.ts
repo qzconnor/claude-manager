@@ -1,7 +1,17 @@
 import { webContents, type NativeImage, type WebContents } from 'electron'
+import { BLANK_PAGE } from '@shared/browser'
 import { hasPane, paneIds } from '@shared/panes'
-import type { BrowserActivity, BrowserControlState, BrowserHighlight, BrowserViewport } from '@shared/types'
+import type {
+  BrowserActivity,
+  BrowserControlState,
+  BrowserDownload,
+  BrowserHighlight,
+  BrowserLoginRequest,
+  BrowserViewport,
+} from '@shared/types'
 import { TypedEmitter } from '../lib/typed-emitter'
+import { browserDownloads } from '../window/browser-downloads'
+import { browserLogins } from '../window/browser-logins'
 import { mobileUserAgent } from '../window/browser-policy'
 import type { TerminalService } from '../services/terminal-service'
 import { delay, isClaudesMouse, PageDriver, withTimeout } from './page-driver'
@@ -16,6 +26,7 @@ const ATTACH_WAIT_MS = 20_000
 const LOG_LIMIT = 300
 const CONSOLE_LIMIT = 300
 const NETWORK_LIMIT = 300
+const PAGE_EVENT_LIMIT = 50
 
 export interface ConsoleEntry {
   at: string
@@ -63,6 +74,26 @@ interface Box {
   height: number
 }
 
+/** Something the page did by itself that Claude should hear of: a popup window, a download. */
+export interface PageEvent {
+  at: string
+  text: string
+}
+
+/** A browser tab as browser_tabs lists it. */
+export interface BrowserTab {
+  index: number
+  id: string
+  title: string
+  url: string
+  /** The session's actions go to it. */
+  current: boolean
+  /** The session opened it (it may close it). */
+  openedBySession: boolean
+  /** Another Claude session drives it right now. */
+  otherSession: string | null
+}
+
 /** A tool's error for Claude: it ends up in the result, not as a failure of the protocol. */
 export class ToolError extends Error {}
 
@@ -90,6 +121,12 @@ export interface ActionContext {
   untilDialog(): Promise<PageDialog>
   /** The dialogs answered right away since then (ISO time). */
   caughtDialogs(since: string): CaughtDialog[]
+  /** Popups and downloads of the page that no result named yet (also those of a moment after an action). */
+  pageEvents(): PageEvent[]
+  /** The page waits for a user name and password, which the user enters in its pane. */
+  login(): BrowserLoginRequest | null
+  /** Resolves when the page asks for a login. */
+  untilLogin(): Promise<BrowserLoginRequest>
   /** How the next dialog is answered; null: OK, and a prompt's default. */
   setDialogAnswer(answer: DialogAnswer | null): void
   fileChooser(): FileChooser | null
@@ -143,6 +180,10 @@ interface Browser {
   pointer: PointerSpot | null
   /** The size Claude gave the page; it ends with the session. */
   viewport: BrowserViewport | null
+  /** Popups and downloads, for the result of the action that caused them. */
+  events: PageEvent[]
+  /** The log line of each running download of the page. */
+  downloads: Map<string, BrowserActivity>
 }
 
 function signal(): Browser['dialogSignal'] {
@@ -242,15 +283,26 @@ export class BrowserControl extends TypedEmitter<Events> {
   private readonly browsers = new Map<string, Browser>()
   /** The browser each session used last, by the session's terminal. */
   private readonly sessionBrowsers = new Map<string, string>()
+  /** The session that opened a browser (it may close it again), by the browser. */
+  private readonly openedBy = new Map<string, string>()
   private readonly listening = new WeakSet<WebContents>()
 
   constructor(private readonly terminals: TerminalService) {
     super()
+    browserDownloads.on('started', (download) => this.onDownload(download))
+    browserDownloads.on('finished', (download) => this.onDownload(download))
     terminals.on('changed', (list) => {
       const open = new Set(list.map((t) => t.id))
       for (const id of [...this.browsers.keys()]) if (!open.has(id)) this.forget(id)
+      for (const [browser, session] of [...this.openedBy]) if (!open.has(browser) || !open.has(session)) this.openedBy.delete(browser)
       for (const [session, browser] of [...this.sessionBrowsers]) {
-        if (!open.has(session) || !open.has(browser)) this.sessionBrowsers.delete(session)
+        if (!open.has(session)) this.sessionBrowsers.delete(session)
+        else if (!open.has(browser)) {
+          // Another tab the session opened takes over, else the next action opens one.
+          const next = [...this.openedBy].find(([id, by]) => by === session && open.has(id))?.[0]
+          if (next) this.sessionBrowsers.set(session, next)
+          else this.sessionBrowsers.delete(session)
+        }
       }
       // The session that drove a browser is closed: the browser is the user's again, in its own size.
       for (const browser of this.browsers.values()) {
@@ -278,6 +330,15 @@ export class BrowserControl extends TypedEmitter<Events> {
     // The window sees no clicks in the page, and the page's focus is no help: it may have it already.
     contents.on('before-mouse-event', (_event, mouse) => {
       if (mouse.type === 'mouseDown' && !isClaudesMouse(contents)) this.emit('userClick', browser.id)
+    })
+    // A popup (e.g. a login of another site) opens as a window of its own, which Claude can't drive.
+    contents.on('did-create-window', (_window, details) => {
+      if (browser.contents !== contents) return
+      this.pageEvent(
+        browser,
+        `The page opened a popup window: ${details.url}. It is a separate window that you cannot see or drive; the user can complete it there (e.g. a login). Then continue in this tab.`,
+      )
+      if (browser.control) this.addActivity(browser, { kind: 'popup', label: `Fenster geöffnet: ${shortUrl(details.url)}`, status: 'done' })
     })
     contents.once('destroyed', () => {
       if (browser.contents === contents) {
@@ -368,6 +429,8 @@ export class BrowserControl extends TypedEmitter<Events> {
     const started = Date.now()
     let detail: string | null = null
     let image: string | null = null
+    /** What the action waits on besides its work; it ends with it. */
+    const cleanups: Array<() => void> = []
     try {
       const contents = await this.contentsOf(browser)
       // A page that was hidden gets its size from the window first.
@@ -378,7 +441,7 @@ export class BrowserControl extends TypedEmitter<Events> {
         throw new ToolError(`${describeDialog(browser.dialog)} Answer it with browser_handle_dialog first.`)
       }
       if (!browser.dialog) await this.catchDialogs(browser, page)
-      const ctx = this.context(browser, page, activity, {
+      const ctx = this.context(browser, page, activity, cleanups, {
         note: (text) => (detail = text),
         image: (data) => (image = data),
       })
@@ -390,6 +453,7 @@ export class BrowserControl extends TypedEmitter<Events> {
       this.updateActivity(browser, activity, { status: 'error', detail: message.split('\n')[0], durationMs: Date.now() - started })
       throw error
     } finally {
+      for (const cleanup of cleanups) cleanup()
       if (browser.control) {
         browser.control.busy = false
         browser.control.lastActionAt = Date.now()
@@ -434,6 +498,7 @@ export class BrowserControl extends TypedEmitter<Events> {
     browser: Browser,
     page: PageDriver,
     activity: BrowserActivity,
+    cleanups: Array<() => void>,
     sink: { note(text: string): void; image(data: string): void },
   ): ActionContext {
     return {
@@ -462,6 +527,17 @@ export class BrowserControl extends TypedEmitter<Events> {
       dialog: () => browser.dialog,
       untilDialog: () => browser.dialogSignal.promise,
       caughtDialogs: (since) => browser.caught.filter((d) => d.at >= since),
+      pageEvents: () => browser.events.splice(0),
+      login: () => browserLogins.pendingFor(page.contents),
+      untilLogin: () =>
+        new Promise<BrowserLoginRequest>((resolve) => {
+          const off = browserLogins.on('request', (request) => {
+            if (page.contents.isDestroyed() || request.contentsId !== page.contents.id) return
+            off()
+            resolve(request)
+          })
+          cleanups.push(off)
+        }),
       setDialogAnswer: (answer) => (browser.dialogAnswer = answer),
       setViewport: async (size) => {
         const before = browser.viewport
@@ -499,8 +575,71 @@ export class BrowserControl extends TypedEmitter<Events> {
     const split = this.terminals.layouts().find((s) => hasPane(s, sessionId))
     const beside = split ? paneIds(split).find(isBrowser) : undefined
     const id = beside ?? this.terminals.openBrowser({ split: { terminalId: sessionId, direction: 'row' } }).id
+    if (!beside) this.openedBy.set(id, sessionId)
     this.sessionBrowsers.set(sessionId, id)
     return id
+  }
+
+  /** The browser tabs of the app in their order, as browser_tabs shows them to a session. */
+  tabs(sessionId: string): BrowserTab[] {
+    const list = this.terminals.list()
+    const current = this.sessionBrowsers.get(sessionId)
+    return list
+      .filter((t) => t.mode === 'browser')
+      .map((t, index) => {
+        const control = this.browsers.get(t.id)?.control
+        const other = control && control.sessionId !== sessionId && this.isActive(this.browsers.get(t.id)!) ? control.sessionId : null
+        return {
+          index,
+          id: t.id,
+          title: t.title,
+          url: t.url ?? BLANK_PAGE,
+          current: t.id === current,
+          openedBySession: this.openedBy.get(t.id) === sessionId,
+          otherSession: other ? (list.find((s) => s.id === other)?.title ?? 'Claude') : null,
+        }
+      })
+  }
+
+  /**
+   * Opens another browser tab for the session and makes it the current one: below its current
+   * browser, or next to the session when it has none yet.
+   */
+  openTab(sessionId: string): BrowserTab {
+    const list = this.terminals.list()
+    if (!list.some((t) => t.id === sessionId)) throw new ToolError('This session is no longer open in Claude Manager.')
+    const current = this.sessionBrowsers.get(sessionId)
+    const split =
+      current && list.some((t) => t.id === current)
+        ? { terminalId: current, direction: 'column' as const }
+        : { terminalId: sessionId, direction: 'row' as const }
+    const { id } = this.terminals.openBrowser({ split })
+    this.openedBy.set(id, sessionId)
+    this.sessionBrowsers.set(sessionId, id)
+    return this.tabs(sessionId).find((t) => t.id === id)!
+  }
+
+  /** The session's next actions go to this tab; not while another session drives it. */
+  selectTab(sessionId: string, index: number): BrowserTab {
+    const tab = this.tabAt(sessionId, index)
+    if (tab.otherSession) throw new ToolError(`Another Claude session ("${tab.otherSession}") is using this tab right now. Pick another one or open a new one.`)
+    this.sessionBrowsers.set(sessionId, tab.id)
+    return { ...tab, current: true }
+  }
+
+  /** Closes a tab the session opened; the user's own tabs stay. */
+  closeTab(sessionId: string, index: number): BrowserTab {
+    const tab = this.tabAt(sessionId, index)
+    if (!tab.openedBySession) throw new ToolError('This tab was not opened by you. Ask the user to close it if it should go.')
+    this.terminals.close(tab.id)
+    return tab
+  }
+
+  private tabAt(sessionId: string, index: number): BrowserTab {
+    const tabs = this.tabs(sessionId)
+    const tab = tabs[index]
+    if (!tab) throw new ToolError(tabs.length ? `There is no tab ${index}; the tabs are 0 to ${tabs.length - 1}. List them with browser_tabs.` : 'There are no browser tabs.')
+    return tab
   }
 
   private async contentsOf(browser: Browser): Promise<WebContents> {
@@ -623,6 +762,37 @@ export class BrowserControl extends TypedEmitter<Events> {
     if (entry.level === 'error') this.pageWarning(browser, 'console', `Konsole: ${entry.text.split('\n')[0].slice(0, 200)}`)
   }
 
+  /** A download of a browser's page started or ended: in its log while Claude drives it, and for Claude. */
+  private onDownload(download: BrowserDownload): void {
+    const browser = [...this.browsers.values()].find((b) => b.contents && !b.contents.isDestroyed() && b.contents.id === download.contentsId)
+    if (!browser) return
+    const running = browser.downloads.get(download.id)
+    if (download.state === 'progressing') {
+      this.pageEvent(browser, `A download started: "${download.filename}", saved to ${download.path}.`)
+      if (browser.control) {
+        browser.downloads.set(download.id, this.addActivity(browser, { kind: 'download', label: `Lädt ${download.filename} herunter`, status: 'running' }))
+      }
+      return
+    }
+    browser.downloads.delete(download.id)
+    const done = download.state === 'completed'
+    const outcome = done ? `finished (${download.totalBytes} bytes)` : download.state === 'cancelled' ? 'was cancelled' : 'failed'
+    this.pageEvent(browser, `The download "${download.filename}" ${outcome}${done ? `: ${download.path}` : ''}.`)
+    if (running) {
+      this.updateActivity(browser, running, {
+        status: done ? 'done' : 'error',
+        detail: done ? download.path : download.state === 'cancelled' ? 'Abgebrochen' : 'Fehlgeschlagen',
+      })
+    }
+  }
+
+  /** Only while a session drives the page: what the user does by themselves is no news for Claude. */
+  private pageEvent(browser: Browser, text: string): void {
+    if (!browser.control) return
+    browser.events.push({ at: new Date().toISOString(), text })
+    if (browser.events.length > PAGE_EVENT_LIMIT) browser.events.shift()
+  }
+
   /** An error the page reported by itself, in the log while Claude drives it; repeats are left out. */
   private pageWarning(browser: Browser, kind: string, label: string): void {
     if (!browser.control) return
@@ -670,6 +840,8 @@ export class BrowserControl extends TypedEmitter<Events> {
         releaseWaiters: new Set(),
         pointer: null,
         viewport: null,
+        events: [],
+        downloads: new Map(),
       }
       this.browsers.set(id, browser)
     }

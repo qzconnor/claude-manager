@@ -4,14 +4,26 @@ import {
   session,
   shell,
   type BrowserWindow,
+  type BrowserWindowConstructorOptions,
   type ContextMenuParams,
   type MenuItemConstructorOptions,
   type WebContents,
 } from 'electron'
 import { BLANK_PAGE, BROWSER_PARTITION, isBrowsableUrl } from '@shared/browser'
 import { IpcEvent } from '@shared/ipc'
-import { matchBrowserShortcut, matchShortcut } from '@shared/shortcuts'
-import { ALLOWED_PERMISSIONS, browserUserAgent, faviconType, hardenWebview, MAX_FAVICON_BYTES, toShortcutKey } from './browser-policy'
+import { matchBrowserShortcut, matchShortcut, type Shortcut } from '@shared/shortcuts'
+import { browserDownloads } from './browser-downloads'
+import { browserLogins } from './browser-logins'
+import {
+  ALLOWED_PERMISSIONS,
+  browserUserAgent,
+  faviconType,
+  hardenWebview,
+  MAX_FAVICON_BYTES,
+  popupTitle,
+  toShortcutKey,
+} from './browser-policy'
+import { resourceIcon } from './tray'
 
 /**
  * The pages of the browser tabs: `<webview>`s of the window, in a profile of their own (see
@@ -28,6 +40,8 @@ function setupBrowserSession(): void {
   ses.setUserAgent(browserUserAgent(ses.getUserAgent()))
   ses.setPermissionRequestHandler((_contents, permission, callback) => callback(ALLOWED_PERMISSIONS.has(permission)))
   ses.setPermissionCheckHandler((_contents, permission) => ALLOWED_PERMISSIONS.has(permission))
+  // Files go to the downloads folder right away; Electron would ask where, in a window of its own.
+  ses.on('will-download', (_event, item, contents) => browserDownloads.add(item, contents))
 }
 
 /** Lets the window hold browser pages, and only as browser-policy.ts allows them. */
@@ -37,6 +51,13 @@ export function guardBrowserGuests(win: BrowserWindow): void {
     if (!hardenWebview(webPreferences, params)) event.preventDefault()
   })
   win.webContents.on('did-attach-webview', (_event, guest) => attachGuest(win, guest))
+  // The back and forward buttons of the mouse (and of keyboards that have them) reach the window as
+  // app commands, also over a page; the window passes them to the browser with the keyboard.
+  win.on('app-command', (_event, command) => {
+    const shortcut: Shortcut | null =
+      command === 'browser-backward' ? { action: 'browser-back' } : command === 'browser-forward' ? { action: 'browser-forward' } : null
+    if (shortcut && !win.isDestroyed()) win.webContents.send(IpcEvent.browserShortcut, shortcut)
+  })
 }
 
 /**
@@ -50,6 +71,7 @@ export async function clearBrowserData(): Promise<void> {
   await ses.clearCache()
   await ses.clearAuthCache()
   favicons.clear()
+  browserDownloads.clear()
 }
 
 /** Icons by their address, as data URLs; pages of a site share theirs. Failures aren't kept. */
@@ -91,16 +113,23 @@ async function fetchFavicon(url: string): Promise<string | null> {
 const ZOOM_STEP = 0.5
 
 function attachGuest(win: BrowserWindow, guest: WebContents): void {
-  // Links that want a new window open in the same view: popups would be windows of the app.
-  guest.setWindowOpenHandler(({ url }) => {
+  // Popups (window.open with a size, e.g. "Sign in with Google") become small windows of their own
+  // that keep their opener, so they can report back to the page and close. Links that want a new
+  // tab open in the same view.
+  guest.setWindowOpenHandler(({ url, disposition }) => {
+    if (disposition === 'new-window' && isBrowsableUrl(url)) {
+      return { action: 'allow', overrideBrowserWindowOptions: popupOptions(win) }
+    }
     if (url !== BLANK_PAGE && isBrowsableUrl(url)) void guest.loadURL(url)
     return { action: 'deny' }
   })
-  const guard = (event: { preventDefault: () => void }, url: string) => {
-    if (!isBrowsableUrl(url)) event.preventDefault()
-  }
-  guest.on('will-navigate', guard)
-  guest.on('will-redirect', guard)
+  guest.on('did-create-window', (popup) => guardPopup(popup))
+  guardNavigation(guest)
+  // A site that wants a user name and password asks in the page's pane (BrowserPane) instead of failing.
+  guest.on('login', (event, details, info, callback) => {
+    event.preventDefault()
+    browserLogins.ask(guest, details, info, callback)
+  })
 
   // The window doesn't see the keys of a page: the app's shortcuts go to it from here.
   guest.on('before-input-event', (event, input) => {
@@ -120,6 +149,82 @@ function attachGuest(win: BrowserWindow, guest: WebContents): void {
   guest.on('context-menu', (_event, params) => {
     if (win.isDestroyed()) return
     Menu.buildFromTemplate(contextMenu(guest, params)).popup({ window: win })
+  })
+}
+
+/** Pages go to http(s) addresses only, also by redirects. */
+function guardNavigation(contents: WebContents): void {
+  const guard = (event: { preventDefault: () => void }, url: string) => {
+    if (!isBrowsableUrl(url)) event.preventDefault()
+  }
+  contents.on('will-navigate', guard)
+  contents.on('will-redirect', guard)
+}
+
+const POPUP_MIN_SIZE = 200
+
+/**
+ * The window of a page's popup: above the app (it belongs to it), a plain window with the page's
+ * title and host, and no more rights than the page that opened it.
+ */
+function popupOptions(win: BrowserWindow): BrowserWindowConstructorOptions {
+  return {
+    parent: win,
+    minWidth: POPUP_MIN_SIZE,
+    minHeight: POPUP_MIN_SIZE,
+    autoHideMenuBar: true,
+    backgroundColor: '#ffffff',
+    title: 'Claude Manager',
+    ...(process.platform === 'linux' ? { icon: resourceIcon('icon.png') } : {}),
+    webPreferences: {
+      preload: undefined,
+      nodeIntegration: false,
+      nodeIntegrationInSubFrames: false,
+      nodeIntegrationInWorker: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      experimentalFeatures: false,
+      webviewTag: false,
+      partition: BROWSER_PARTITION,
+    },
+  }
+}
+
+/**
+ * A popup may do what its page may do. It has no address bar, so its title names the host; Ctrl+W
+ * closes it, and links in it stay in it. A login it needs is refused, as it has no pane to ask in.
+ */
+function guardPopup(popup: BrowserWindow): void {
+  popup.setMenu(null)
+  const contents = popup.webContents
+  contents.setWindowOpenHandler(({ url }) => {
+    if (url !== BLANK_PAGE && isBrowsableUrl(url)) void contents.loadURL(url)
+    return { action: 'deny' }
+  })
+  guardNavigation(contents)
+  const showTitle = () => {
+    if (!popup.isDestroyed()) popup.setTitle(popupTitle(contents.getTitle(), contents.getURL()))
+  }
+  contents.on('page-title-updated', (event) => {
+    event.preventDefault()
+    showTitle()
+  })
+  contents.on('did-navigate', showTitle)
+  contents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || input.alt || input.meta) return
+    const key = input.key.toLowerCase()
+    if (input.control && !input.shift && key === 'w') {
+      event.preventDefault()
+      popup.close()
+    } else if (key === 'f5' || (input.control && !input.shift && key === 'r')) {
+      event.preventDefault()
+      contents.reload()
+    }
+  })
+  contents.on('context-menu', (_event, params) => {
+    if (!popup.isDestroyed()) Menu.buildFromTemplate(contextMenu(contents, params)).popup({ window: popup })
   })
 }
 

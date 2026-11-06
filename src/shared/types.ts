@@ -230,6 +230,52 @@ export interface BrowserPage {
   title: string
 }
 
+/** Where a download of the browser stands. */
+export type BrowserDownloadState = 'progressing' | 'completed' | 'cancelled' | 'interrupted'
+
+/**
+ * A file the browser downloads or downloaded, into the user's downloads folder. All browser tabs
+ * share one list, like the windows of Chrome.
+ */
+export interface BrowserDownload {
+  id: string
+  /** The page it came from (the id of its contents), so its pane can show it; 0 when unknown. */
+  contentsId: number
+  /** The name it got in the folder (with a number when the name was taken). */
+  filename: string
+  path: string
+  url: string
+  state: BrowserDownloadState
+  receivedBytes: number
+  /** 0 when the server didn't say. */
+  totalBytes: number
+  /** ISO time. */
+  startedAt: string
+}
+
+/** What the user can do with a download in the list. */
+export type BrowserDownloadAction = 'open' | 'show' | 'cancel' | 'remove'
+
+/** A site (or a proxy) asks for a user name and password (HTTP authentication) before it shows the page. */
+export interface BrowserLoginRequest {
+  id: string
+  /** The page that asks (the id of its contents); its pane shows the question. */
+  contentsId: number
+  /** Host, with the port when it is not the scheme's own. */
+  host: string
+  /** The name the site gives the protected area; may be empty. */
+  realm: string
+  /** A proxy asks, not the site. */
+  proxy: boolean
+  /** The password would go over an unencrypted connection (http). */
+  insecure: boolean
+}
+
+export interface BrowserCredentials {
+  username: string
+  password: string
+}
+
 /** How an action of Claude in a browser went; `warning`: the page reported an error by itself. */
 export type BrowserActivityStatus = 'running' | 'done' | 'error' | 'warning'
 

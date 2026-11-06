@@ -86,3 +86,53 @@ export function faviconType(bytes: Uint8Array): string | null {
   if (/<svg[\s>]/i.test(head) && !/<html[\s>]/i.test(head)) return 'image/svg+xml'
   return null
 }
+
+/**
+ * A name for a download that no file in the folder has yet (`taken`), like Chrome gives it:
+ * `report.pdf`, then `report (1).pdf`, `report (2).pdf` … Names that are no file name become `download`.
+ */
+export function uniqueFileName(name: string, taken: (candidate: string) => boolean): string {
+  // Only the last part of a path, without characters Windows doesn't allow in names.
+  const base =
+    name
+      .split(/[\/]/)
+      .pop()!
+      .replace(/[<>:"|?*\u0000-\u001f]/g, '_')
+      .replace(/^[\s.]+|[\s.]+$/g, '') || 'download'
+  if (!taken(base)) return base
+  const extension = /(\.tar)?\.[^.\s]{1,10}$/i.exec(base)?.[0] ?? ''
+  const stem = base.slice(0, base.length - extension.length) || 'download'
+  for (let n = 1; n < 10_000; n++) {
+    const candidate = `${stem} (${n})${extension}`
+    if (!taken(candidate)) return candidate
+  }
+  return `${stem} (${Date.now()})${extension}`
+}
+
+/**
+ * The title of a page's popup window (a login of another site, for example): it has no address bar,
+ * so the host the page comes from stands next to its title.
+ */
+export function popupTitle(title: string, url: string): string {
+  let host = ''
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') host = parsed.host
+  } catch {
+    // no address yet
+  }
+  const text = title.replace(/\s+/g, ' ').trim()
+  if (!host) return text || 'Claude Manager'
+  return text && text !== host && text !== url ? `${text} – ${host}` : host
+}
+
+/** The host that asks for a login, with its port when it isn't the scheme's own. */
+export function loginHost(info: { host: string; port: number; scheme?: string }, url: string): string {
+  let defaultPort = 443
+  try {
+    defaultPort = new URL(url).protocol === 'http:' ? 80 : 443
+  } catch {
+    // keep https
+  }
+  return info.port && info.port !== defaultPort ? `${info.host}:${info.port}` : info.host
+}

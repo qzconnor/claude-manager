@@ -27,6 +27,14 @@ function restoreBounds(file: string): Partial<SavedBounds> {
   return visible ? saved : { width: saved.width, height: saved.height, maximized: saved.maximized }
 }
 
+/** The app's own windows. Popups of browser pages are windows too, but must get nothing of the app. */
+const appWindows = new WeakSet<BrowserWindow>()
+
+/** The app's windows that are open, without the popups of browser pages. */
+export function openAppWindows(): BrowserWindow[] {
+  return BrowserWindow.getAllWindows().filter((win) => appWindows.has(win) && !win.isDestroyed())
+}
+
 export function windowState(win: BrowserWindow): WindowState {
   return { maximized: win.isMaximized(), focused: win.isFocused(), fullscreen: win.isFullScreen() }
 }
@@ -76,6 +84,7 @@ export function createMainWindow(settings: AppSettings, userDataDir: string, { h
       webviewTag: true,
     },
   })
+  appWindows.add(win)
   guardBrowserGuests(win)
   win.setMenu(null)
   if (saved.maximized) {

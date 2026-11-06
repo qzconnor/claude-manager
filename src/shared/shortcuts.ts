@@ -23,6 +23,11 @@ export type ShortcutAction =
   | 'focus-pane'
   | 'browser-address'
   | 'browser-reload'
+  | 'browser-find'
+  | 'browser-find-next'
+  | 'browser-find-previous'
+  | 'browser-back'
+  | 'browser-forward'
 
 /** What the matchers read of a key event: a DOM `KeyboardEvent`, or the main process' copy of an input event. */
 export interface ShortcutKey {
@@ -106,16 +111,20 @@ function tabDigit(e: ShortcutKey): string | null {
 
 /**
  * Keys of a browser page that belong to the browser around it, like in Chrome: Ctrl+L goes to the
- * address bar, F5 and Ctrl+R load the page again. Only for keys the page gets: in a terminal Ctrl+R
- * is Claude Code's and the shell's.
+ * address bar, F5 and Ctrl+R load the page again, Ctrl+F searches the page and F3 (Shift+F3) jumps
+ * to the next (previous) match. Only for keys the page gets: in a terminal Ctrl+R is Claude Code's
+ * and the shell's. The back and forward buttons of the mouse (`browser-back`, `browser-forward`)
+ * come from the window as app commands.
  */
 export function matchBrowserShortcut(e: ShortcutKey): Shortcut | null {
   if (e.type !== 'keydown' || e.altKey || e.metaKey) return null
   const ctrl = e.ctrlKey
   if (e.key === 'F5' && !e.shiftKey) return { action: 'browser-reload' }
+  if (e.key === 'F3' && !ctrl) return { action: e.shiftKey ? 'browser-find-previous' : 'browser-find-next' }
   if (!ctrl || e.shiftKey) return null
   const key = e.key.toLowerCase()
   if (key === 'l') return { action: 'browser-address' }
   if (key === 'r') return { action: 'browser-reload' }
+  if (key === 'f') return { action: 'browser-find' }
   return null
 }

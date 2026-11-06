@@ -90,7 +90,9 @@ export function useShortcuts() {
         zoom(null)
         break
       case 'find':
-        if (onTerminals()) ui.searchRequest++
+        // In a browser Ctrl+Shift+F searches the page, like Ctrl+F.
+        if (activeBrowser()) activeBrowser()!.find()
+        else if (onTerminals()) ui.searchRequest++
         else if (router.currentRoute.value.name === 'settings') ui.settingsSearchRequest++
         break
       case 'split-right':
@@ -102,6 +104,19 @@ export function useShortcuts() {
         break
       case 'browser-reload':
         activeBrowser()?.reload()
+        break
+      case 'browser-find':
+        activeBrowser()?.find()
+        break
+      case 'browser-find-next':
+      case 'browser-find-previous':
+        activeBrowser()?.findAgain(action === 'browser-find-next')
+        break
+      case 'browser-back':
+        activeBrowser()?.back()
+        break
+      case 'browser-forward':
+        activeBrowser()?.forward()
         break
     }
   }

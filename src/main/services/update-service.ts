@@ -3,7 +3,7 @@ import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-update
 import type { ReleaseNote, ReleaseReference, UpdateState } from '@shared/types'
 import { linuxPackage } from '../lib/linux'
 import { TypedEmitter } from '../lib/typed-emitter'
-import { revealWindow } from '../window/main-window'
+import { openAppWindows, revealWindow } from '../window/main-window'
 
 /**
  * Updates come from the GitHub releases of the repository (published by semantic-release, see
@@ -185,8 +185,8 @@ export class UpdateService extends TypedEmitter<Events> {
       body: `Version ${version} ist verfügbar und lässt sich direkt in der App installieren.`,
     })
     notification.on('click', () => {
-      const win = BrowserWindow.getAllWindows()[0]
-      if (!win || win.isDestroyed()) return
+      const win = openAppWindows()[0]
+      if (!win) return
       revealWindow(win)
       this.emit('show')
     })

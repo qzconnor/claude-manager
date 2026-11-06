@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { statSync } from 'node:fs'
-import { isAbsolute } from 'node:path'
-import type { NativeImage } from 'electron'
+import { existsSync, statSync } from 'node:fs'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { isAbsolute, join } from 'node:path'
+import { app, type NativeImage } from 'electron'
 import { addressToUrl, BLANK_PAGE, isBrowsableUrl } from '@shared/browser'
-import { describeDialog, ToolError, type ActionContext, type ActionStep, type BrowserControl } from './browser-control'
+import type { BrowserLoginRequest } from '@shared/types'
+import { uniqueFileName } from '../window/browser-policy'
+import { describeDialog, ToolError, type ActionContext, type ActionStep, type BrowserControl, type BrowserTab } from './browser-control'
 import { keyEvents } from './keys'
 import type { McpContent, McpTool, McpToolResult } from './mcp-protocol'
 import { delay, withTimeout, type ElementBox, type MouseButton } from './page-driver'
@@ -33,7 +36,10 @@ interface ToolDefinition<P> {
   parse(args: Args): P
   /** The log line before the action knows its target. */
   label(params: P): string
-  run(ctx: ActionContext, params: P): Promise<Reply>
+  /** The action in the session's browser. */
+  run?(ctx: ActionContext, params: P): Promise<Reply>
+  /** Instead of `run`: works on the session's browser tabs, not in one page. */
+  session?(tools: BrowserTools, sessionId: string, params: P): Promise<McpToolResult>
 }
 
 /** The sizes Claude can give the page (CSS pixels per side). */
@@ -50,12 +56,27 @@ const MAX_WAIT_SECONDS = 30
 const MAX_EVALUATE_CHARS = 20_000
 const MAX_LIST_ENTRIES = 100
 const MAX_UPLOAD_FILES = 20
+const MAX_FORM_FIELDS = 50
+const PDF_WAIT_MS = 60_000
+/** The least time a drag takes, so the page sees it move. */
+const MIN_DRAG_MS = 300
+
+const FIELD_TYPES = ['textbox', 'checkbox', 'radio', 'combobox', 'slider'] as const
+type FieldType = (typeof FIELD_TYPES)[number]
+interface FormField {
+  name: string
+  type: FieldType
+  ref: string
+  value: string
+}
 
 export const BROWSER_INSTRUCTIONS = `Claude Manager shows a browser next to this session; these tools drive it while the user watches: every action is highlighted on the page and logged next to it. Use it to open and test web apps (e.g. a dev server on localhost), to read pages and to fill in forms.
 - Start with browser_navigate or browser_snapshot. Actions answer with a snapshot of the page: an outline in which elements you can act on carry a ref like [ref=e12]. Pass the ref (and a short description as element) to act on it. Refs change with the page: use those of the latest snapshot.
 - Prefer snapshots for reading; take a screenshot when the look matters.
 - Dialogs the page opens while you act (alert, confirm, prompt) are answered at once: with OK, and a prompt with its default. The result of the action tells you about them. To answer the next one differently, call browser_handle_dialog before the action that opens it.
 - browser_resize gives the page another size, to test layouts (phone, tablet, large screens); it stays until you reset it or the session ends.
+- browser_tabs lists the app's browser tabs, opens another one or switches to one; your actions go to the current one.
+- Downloads land in the user's downloads folder; results name the file. Popups (e.g. "Sign in with …") open as windows of their own that you can't drive: the user completes them. The same goes for a site's request for a user name and password.
 - The user can take the browser over at any time. Your call then waits until they hand it back and tells you that the page may have changed.
 - The browser has its own profile (cookies, logins) apart from the user's other browsers. Don't enter passwords or payment details unless the user asked you to.`
 
@@ -140,7 +161,7 @@ const TOOLS: ToolDefinition<never>[] = [
       const box = await target(ctx, p.ref, p.element, (name) => `${verb} auf ${name}`, 'click')
       const { x, y } = center(box)
       await ctx.interceptFileChooser(() =>
-        untilDialog(ctx, async () => {
+        untilBlocked(ctx, async () => {
           await ctx.page.click(x, y, { button: p.button, clickCount: p.doubleClick ? 2 : 1, modifiers: p.modifiers })
           await ctx.page.settle(ACTION_SETTLE_MS)
         }),
@@ -178,7 +199,7 @@ const TOOLS: ToolDefinition<never>[] = [
       ctx.label(`Tippt ${box.secret ? '••••' : quote(cut(p.text, 60))} in ${targetName(box, p.element)}`)
       const { x, y } = center(box)
       const notes: string[] = []
-      await untilDialog(ctx, async () => {
+      await untilBlocked(ctx, async () => {
         await ctx.page.click(x, y)
         const kind = await ctx.page.call<string>('prepareTyping', p.ref, !p.append)
         if (kind === 'other') notes.push(`${describe(box, p.element)} is no text field; the text went to what has the focus after clicking it.`)
@@ -210,7 +231,7 @@ const TOOLS: ToolDefinition<never>[] = [
     label: ({ key }) => `Drückt ${key}`,
     run: async (ctx, { key }) => {
       ctx.highlight(`Drückt ${key}`)
-      await untilDialog(ctx, async () => {
+      await untilBlocked(ctx, async () => {
         await ctx.page.press(key)
         await ctx.page.settle(ACTION_SETTLE_MS)
       })
@@ -455,7 +476,7 @@ const TOOLS: ToolDefinition<never>[] = [
         exceptionDetails?: { text: string; exception?: { description?: string } }
       }
       let evaluation: Evaluation | undefined
-      await untilDialog(ctx, async () => {
+      await untilBlocked(ctx, async () => {
         evaluation = await withTimeout(
           ctx.page.cdp<Evaluation>('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true }),
           30_000,
@@ -563,11 +584,168 @@ const TOOLS: ToolDefinition<never>[] = [
       return { text: `${p.accept ? 'Accepted' : 'Dismissed'} the ${dialog.type} dialog.\n\n${await pageState(ctx)}` }
     },
   }),
+  tool({
+    name: 'browser_drag',
+    title: 'Drag and drop',
+    description: 'Drags an element with the mouse and drops it on another one: drag and drop, sorting a list, moving a card to another column.',
+    properties: {
+      startRef: { ...ref, description: 'The element to drag, from the latest snapshot.' },
+      startElement: { ...element, description: 'A short description of it, for the user watching.' },
+      endRef: { ...ref, description: 'The element to drop it on.' },
+      endElement: { ...element, description: 'A short description of the target, for the user watching.' },
+    },
+    required: ['startRef', 'endRef'],
+    kind: 'drag',
+    parse: (args) => ({
+      startRef: refOf(args, 'startRef'),
+      startElement: optionalString(args, 'startElement', 200),
+      endRef: refOf(args, 'endRef'),
+      endElement: optionalString(args, 'endElement', 200),
+    }),
+    label: (p) => `Zieht ${p.startElement ? quote(p.startElement) : p.startRef} auf ${p.endElement ? quote(p.endElement) : p.endRef}`,
+    run: async (ctx, p) => {
+      const pair = await ctx.page.call<{ from: ElementBox; to: ElementBox; together: boolean }>('locatePair', p.startRef, p.endRef)
+      if (!pair.together) {
+        throw new ToolError('The element and the target are not in view together. Scroll so that both are visible, or drag in steps.')
+      }
+      const text = `Zieht ${targetName(pair.from, p.startElement)} auf ${targetName(pair.to, p.endElement)}`
+      ctx.label(text)
+      const start = center(pair.from)
+      const end = center(pair.to)
+      await delay(Math.max(SHOW_MS, ctx.highlight(text, pair.from, start) + CLICK_AFTER_MOVE_MS))
+      // The pointer glides to the target while the drag runs, in the same time.
+      const glide = ctx.highlight(text, pair.to, end)
+      const dragged = { kind: 'pointer' as 'drop' | 'pointer' }
+      await untilBlocked(ctx, async () => {
+        dragged.kind = await ctx.page.drag(start, end, Math.max(MIN_DRAG_MS, glide))
+        await ctx.page.settle(ACTION_SETTLE_MS)
+      })
+      const how = dragged.kind === 'drop' ? ' (drag and drop of the page)' : ''
+      return { text: `Dragged ${describe(pair.from, p.startElement)} onto ${describe(pair.to, p.endElement)}${how}.\n\n${await pageState(ctx)}` }
+    },
+  }),
+  tool({
+    name: 'browser_fill_form',
+    title: 'Fill in a form',
+    description:
+      'Fills several fields at once, in the given order: text fields, checkboxes, radio buttons, selects (combobox) and sliders. One call instead of one per field.',
+    properties: {
+      fields: {
+        type: 'array',
+        description: 'The fields to fill.',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'A short name of the field, for the user watching (e.g. "Email").' },
+            type: { type: 'string', enum: [...FIELD_TYPES], description: 'The kind of field.' },
+            ref,
+            value: {
+              type: 'string',
+              description:
+                'The text for a textbox; "true" or "false" for a checkbox; "true" for the radio button to select; the option (value or text) for a combobox; the number for a slider.',
+            },
+          },
+          required: ['name', 'type', 'ref', 'value'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['fields'],
+    kind: 'form',
+    parse: (args) => ({ fields: formFields(args) }),
+    label: ({ fields }) => formLabel(fields.length),
+    run: async (ctx, { fields }) => {
+      const done: string[] = []
+      for (const field of fields) {
+        try {
+          done.push(await fillField(ctx, field))
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          const before = done.length ? `Filled ${done.length} of ${fields.length} fields:\n${done.map((line) => `- ${line}`).join('\n')}\n` : ''
+          throw new ToolError(`${before}The field "${field.name}" (${field.ref}) failed: ${message}`)
+        }
+        // A dialog or a login holds the page up; the rest would go nowhere.
+        if (ctx.dialog() || ctx.login()) break
+      }
+      ctx.label(formLabel(fields.length))
+      ctx.note(`${done.length} von ${fields.length} Feldern`)
+      await ctx.page.settle(300)
+      const rest = done.length < fields.length ? `\nStopped after ${done.length} of ${fields.length} fields.` : ''
+      return { text: `Filled ${done.length} field(s):\n${done.map((line) => `- ${line}`).join('\n')}${rest}\n\n${await pageState(ctx)}` }
+    },
+  }),
+  tool({
+    name: 'browser_pdf_save',
+    title: 'Save as PDF',
+    description:
+      "Saves the page as a PDF file, as it would print (with backgrounds), into the user's downloads folder and returns its path. Read it with your file tools.",
+    properties: { filename: { type: 'string', description: 'The file name, e.g. "invoice.pdf"; default: from the page title. An existing file is never replaced.' } },
+    kind: 'pdf',
+    parse: (args) => ({ filename: optionalString(args, 'filename', 200) }),
+    label: () => 'Speichert die Seite als PDF',
+    run: async (ctx, { filename }) => {
+      ctx.highlight('Speichert die Seite als PDF')
+      const data = await withTimeout(ctx.page.contents.printToPDF({ printBackground: true }), PDF_WAIT_MS, 'The PDF was not ready within 60 s.')
+      const folder = app.getPath('downloads')
+      await mkdir(folder, { recursive: true })
+      const name = uniqueFileName(pdfName(filename ?? ctx.page.contents.getTitle()), (candidate) => existsSync(join(folder, candidate)))
+      const path = join(folder, name)
+      await writeFile(path, data, { flag: 'wx' })
+      ctx.note(path)
+      return { text: `Saved the page as PDF (${Math.max(1, Math.round(data.length / 1024))} KB): ${path}` }
+    },
+  }),
+  tool({
+    name: 'browser_tabs',
+    title: 'Browser tabs',
+    description:
+      "The browser tabs of Claude Manager; they share one profile (cookies, logins). list: all of them; new: opens one below your current browser (with url: opens it there); select: your next actions go to that tab; close: closes a tab you opened. The user's own tabs stay open.",
+    properties: {
+      action: { type: 'string', enum: ['list', 'new', 'select', 'close'] },
+      index: { type: 'number', description: 'For select and close: the tab from the list (0-based).' },
+      url: { type: 'string', description: 'For new: the address to open in the new tab.' },
+    },
+    required: ['action'],
+    kind: 'tabs',
+    parse: (args) => {
+      const action = oneOf(args, 'action', ['list', 'new', 'select', 'close'] as const)
+      const index = optionalNumber(args, 'index', 0, 10_000)
+      if ((action === 'select' || action === 'close') && index === undefined) throw new ToolError(`index is required for ${action}.`)
+      let url: string | undefined
+      if (args.url !== undefined && args.url !== null) {
+        url = addressToUrl(requiredString(args, 'url', 8192))
+        if (url === BLANK_PAGE || !isBrowsableUrl(url)) throw new ToolError('The browser opens http and https addresses only.')
+      }
+      return { action, index: index === undefined ? undefined : Math.floor(index), url }
+    },
+    label: ({ action }) => ({ list: 'Listet die Tabs', new: 'Öffnet einen Tab', select: 'Wechselt den Tab', close: 'Schließt einen Tab' })[action],
+    session: async (tools, sessionId, p) => {
+      const { control } = tools
+      switch (p.action) {
+        case 'list':
+          return textResult(listTabs(control.tabs(sessionId)))
+        case 'new': {
+          const tab = control.openTab(sessionId)
+          const head = `Opened tab ${tab.index}; your next actions go to it.`
+          if (!p.url) return textResult(`${head}\n\n${listTabs(control.tabs(sessionId))}`)
+          return prefixed(head, await tools.call(sessionId, 'browser_navigate', { url: p.url }))
+        }
+        case 'select': {
+          const tab = control.selectTab(sessionId, p.index!)
+          return prefixed(`Switched to tab ${tab.index}; your next actions go to it.`, await tools.call(sessionId, 'browser_snapshot', {}))
+        }
+        case 'close': {
+          const tab = control.closeTab(sessionId, p.index!)
+          return textResult(`Closed tab ${tab.index} (${JSON.stringify(tab.title)}).\n\n${listTabs(control.tabs(sessionId))}`)
+        }
+      }
+    },
+  }),
 ]
 
 /** The tools for the MCP server, and their calls for one session. */
 export class BrowserTools {
-  constructor(private readonly control: BrowserControl) {}
+  constructor(readonly control: BrowserControl) {}
 
   list(): McpTool[] {
     return TOOLS.map((t) => ({
@@ -583,10 +761,15 @@ export class BrowserTools {
     const definition = TOOLS.find((t) => t.name === name) as ToolDefinition<unknown> | undefined
     if (!definition) throw new ToolError(`Unknown tool: ${name}`)
     const params = definition.parse(args)
+    if (definition.session) return definition.session(this, sessionId, params)
+    const run = definition.run!
     const step: ActionStep = { kind: definition.kind, label: definition.label(params), whileDialog: definition.whileDialog }
     const reply = await this.control.perform(sessionId, step, async (ctx) => {
       const since = new Date().toISOString()
-      const reply = await definition.run(ctx, params)
+      const reply = await run(ctx, params)
+      // Popups and downloads the page started, also a moment after the last action.
+      const events = ctx.pageEvents()
+      if (events.length > 0) reply.text = `${events.map((e) => e.text).join('\n')}\n\n${reply.text}`
       const dialogs = ctx.caughtDialogs(since)
       if (dialogs.length > 0) {
         const lines = dialogs.map((d) => `- ${d.type} ${JSON.stringify(cut(d.message, 300))}, answered: ${d.answer}`)
@@ -614,22 +797,34 @@ function sizeLabel(size: { width: number; height: number; mobile: boolean }): st
   return `${size.width} × ${size.height}${size.mobile ? ' (mobil)' : ''}`
 }
 
-/** The page as Claude reads it, or the dialog that blocks it. */
+/** The page as Claude reads it, or what blocks it: a dialog, a request for a login. */
 async function pageState(ctx: ActionContext): Promise<string> {
   const dialog = ctx.dialog()
   if (dialog) return `${describeDialog(dialog)} Answer it with browser_handle_dialog.`
+  const login = ctx.login()
+  if (login) return describeLogin(login)
   return ctx.page.snapshot()
 }
 
-/** Waits for `work`, or until the page opens a dialog, which would hold the input back until it is answered. */
-async function untilDialog(ctx: ActionContext, work: () => Promise<void>): Promise<void> {
-  await Promise.race([work(), ctx.untilDialog()])
+/** A site's request for a user name and password, for Claude: only the user answers it. */
+function describeLogin(login: BrowserLoginRequest): string {
+  const who = login.proxy ? `the proxy ${login.host}` : login.host
+  const area = login.realm ? ` for ${JSON.stringify(login.realm)}` : ''
+  return `The page waits for a user name and password (HTTP authentication of ${who}${area}). The browser asks the user for them; ask them to sign in there (don't ask for the password yourself), then go on with browser_snapshot or browser_wait_for.`
+}
+
+/**
+ * Waits for `work`, or until the page opens a dialog or asks for a login: both hold the page up
+ * until they are answered.
+ */
+async function untilBlocked(ctx: ActionContext, work: () => Promise<void>): Promise<void> {
+  await Promise.race([work(), ctx.untilDialog(), ctx.untilLogin()])
 }
 
 /** Loads a page; a failure is returned for the result, unless a newer navigation took over. */
 async function loadPage(ctx: ActionContext, load: () => Promise<void>): Promise<string | null> {
   try {
-    await untilDialog(ctx, () => withTimeout(load(), NAVIGATION_WAIT_MS, 'timeout'))
+    await untilBlocked(ctx, () => withTimeout(load(), NAVIGATION_WAIT_MS, 'timeout'))
     return null
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -694,6 +889,99 @@ function cut(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text
 }
 
+function formLabel(count: number): string {
+  return `Füllt ${count === 1 ? '1 Feld' : `${count} Felder`} aus`
+}
+
+/** "true", "yes", "on", "checked" … for a checkbox or radio button. */
+function truthy(value: string): boolean {
+  return /^(true|1|yes|on|checked|ja|x)$/i.test(value.trim())
+}
+
+/** Fills one field of browser_fill_form, shown like the single tools do; returns the line for the result. */
+async function fillField(ctx: ActionContext, field: FormField): Promise<string> {
+  const state = await ctx.page.call<{ role: string; checked: boolean | null; select: boolean; range: boolean }>('fieldState', field.ref)
+  switch (field.type) {
+    case 'textbox': {
+      const box = await target(ctx, field.ref, field.name, (name) => `Tippt in ${name}`, 'click')
+      const { x, y } = center(box)
+      const typing = { kind: 'field' }
+      await untilBlocked(ctx, async () => {
+        await ctx.page.click(x, y)
+        typing.kind = await ctx.page.call<string>('prepareTyping', field.ref, true)
+        if (typing.kind === 'other') return
+        if (field.value) await ctx.page.insertText(field.value)
+        else await ctx.page.press('Delete')
+      })
+      if (typing.kind === 'other') throw new ToolError('it is no text field (clicked it, typed nothing)')
+      return `${field.name}: ${box.secret ? 'password typed' : `typed ${JSON.stringify(cut(field.value, 80))}`}`
+    }
+    case 'checkbox':
+    case 'radio': {
+      if (state.checked === null) throw new ToolError(`it is no ${field.type}`)
+      const wanted = truthy(field.value)
+      if (state.checked === wanted) {
+        await target(ctx, field.ref, field.name, (name) => `${name} ist schon ${wanted ? 'an' : 'aus'}`, 'move')
+        return `${field.name}: already ${wanted ? 'checked' : 'unchecked'}`
+      }
+      if (field.type === 'radio' && !wanted) throw new ToolError('a radio button goes off by selecting another one of its group')
+      const verb = field.type === 'radio' ? (name: string) => `Wählt ${name}` : (name: string) => (wanted ? `Hakt ${name} an` : `Nimmt den Haken bei ${name} weg`)
+      const box = await target(ctx, field.ref, field.name, verb, 'click')
+      const { x, y } = center(box)
+      await untilBlocked(ctx, () => ctx.page.click(x, y))
+      if (ctx.dialog() || ctx.login()) return `${field.name}: clicked`
+      const after = await ctx.page.call<{ checked: boolean | null }>('fieldState', field.ref).catch(() => null)
+      if (after && after.checked !== wanted) throw new ToolError(`clicked it, but it is still ${after.checked ? 'checked' : 'unchecked'}`)
+      return `${field.name}: ${wanted ? 'checked' : 'unchecked'}`
+    }
+    case 'combobox': {
+      if (!state.select) throw new ToolError('it is no <select>; click it and then the option with browser_click')
+      await target(ctx, field.ref, field.name, (name) => `Wählt ${quote(cut(field.value, 40))} in ${name}`, 'move')
+      const chosen = await ctx.page.call<string[]>('selectOptions', field.ref, [field.value])
+      return `${field.name}: selected ${JSON.stringify(chosen[0])}`
+    }
+    case 'slider': {
+      if (!state.range) throw new ToolError('it is no range input; press the arrow keys on it with browser_press_key')
+      await target(ctx, field.ref, field.name, (name) => `Stellt ${name} auf ${cut(field.value, 20)}`, 'move')
+      const value = await ctx.page.call<string>('setSliderValue', field.ref, field.value)
+      return `${field.name}: set to ${value}`
+    }
+  }
+}
+
+/** A file name for a PDF of the page: what Claude named it, else the page's title. */
+function pdfName(name: string): string {
+  const base = name.replace(/\.pdf$/i, '').replace(/\s+/g, ' ').trim() || 'Seite'
+  return `${base.slice(0, 120)}.pdf`
+}
+
+function textResult(text: string): McpToolResult {
+  return { content: [{ type: 'text', text }] }
+}
+
+/** A tool's result with a line before it. */
+function prefixed(head: string, result: McpToolResult): McpToolResult {
+  const [first, ...rest] = result.content
+  if (first?.type === 'text') return { ...result, content: [{ type: 'text', text: `${head}\n\n${first.text}` }, ...rest] }
+  return { ...result, content: [{ type: 'text', text: head }, ...result.content] }
+}
+
+/** The tabs for browser_tabs, with the one the session acts in. */
+function listTabs(tabs: BrowserTab[]): string {
+  if (tabs.length === 0) return 'There are no browser tabs. browser_tabs new (or any browser action) opens one next to this session.'
+  const lines = tabs.map((tab) => {
+    const marks = [
+      tab.current && 'current',
+      tab.openedBySession && 'opened by you',
+      tab.otherSession && `used by another Claude session: ${JSON.stringify(tab.otherSession)}`,
+    ].filter(Boolean)
+    const url = tab.url === BLANK_PAGE ? '(empty)' : tab.url
+    return `- ${tab.index}: ${JSON.stringify(cut(tab.title, 80))} ${url}${marks.length ? ` (${marks.join(', ')})` : ''}`
+  })
+  const none = tabs.some((tab) => tab.current) ? '' : '\nNone is current: your next action opens a browser next to this session, unless you select one.'
+  return `Browser tabs:\n${lines.join('\n')}${none}`
+}
+
 // --- arguments ---------------------------------------------------------------
 
 function requiredString(args: Args, key: string, max: number, allowEmpty = false): string {
@@ -743,12 +1031,32 @@ function stringList(args: Args, key: string, maxItems: number): string[] {
   return value as string[]
 }
 
-function refOf(args: Args): string {
-  const value = args.ref
+function refOf(args: Args, key = 'ref'): string {
+  const value = args[key]
   if (typeof value !== 'string' || !/^e\d{1,9}$/.test(value.trim())) {
-    throw new ToolError('ref must be a ref from the latest browser_snapshot, like "e12".')
+    throw new ToolError(`${key} must be a ref from the latest browser_snapshot, like "e12".`)
   }
   return value.trim()
+}
+
+function formFields(args: Args): FormField[] {
+  const value = args.fields
+  if (!Array.isArray(value) || value.length === 0) throw new ToolError('fields must be a non-empty list.')
+  if (value.length > MAX_FORM_FIELDS) throw new ToolError(`fields takes at most ${MAX_FORM_FIELDS} entries.`)
+  return value.map((item, index) => {
+    if (!item || typeof item !== 'object') throw new ToolError(`fields[${index}] must be an object.`)
+    const field = item as Args
+    try {
+      return {
+        name: requiredString(field, 'name', 200),
+        type: oneOf(field, 'type', FIELD_TYPES),
+        ref: refOf(field),
+        value: requiredString(field, 'value', 100_000, true),
+      }
+    } catch (error) {
+      throw new ToolError(`fields[${index}]: ${(error as Error).message}`)
+    }
+  })
 }
 
 const MODIFIER_BITS: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shift: 8 }
