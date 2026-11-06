@@ -6,6 +6,7 @@ import {
   FolderIcon,
   FolderOpenIcon,
   GaugeIcon,
+  GlobeIcon,
   HistoryIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -27,6 +28,7 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from '@/components/ui/command'
+import BrowserFavicon from '@/components/terminal/BrowserFavicon.vue'
 import { useLauncher } from '@/composables/useLauncher'
 import { useRecentFolders } from '@/composables/useRecentFolders'
 import { formatRelative, shortenPath } from '@/lib/format'
@@ -108,7 +110,18 @@ function switchTo(id: string) {
           <FolderOpenIcon />
           Neue Session in Ordner…
         </CommandItem>
+        <CommandItem value="browser" @select="run(() => launcher.browser())">
+          <GlobeIcon />
+          Browser öffnen
+        </CommandItem>
         <template v-if="terminals.active">
+          <CommandItem
+            value="browser-beside"
+            @select="run(() => launcher.browser(null, { terminalId: terminals.active!.id, direction: 'row' }))"
+          >
+            <GlobeIcon />
+            Browser daneben öffnen
+          </CommandItem>
           <CommandItem value="split-right" @select="run(() => launcher.split(terminals.active!, 'row'))">
             <Columns2Icon />
             Vertikal teilen
@@ -206,7 +219,8 @@ function switchTo(id: string) {
             :value="`tab-${terminal.id}`"
             @select="run(() => switchTo(terminal.id))"
           >
-            <AccountDot :color="accounts.get(terminal.authAccountId)?.color" />
+            <BrowserFavicon v-if="terminal.mode === 'browser'" :terminal-id="terminal.id" class="size-4" />
+            <AccountDot v-else :color="accounts.get(terminal.authAccountId)?.color" />
             <span class="truncate">{{ terminal.title }}</span>
           </CommandItem>
         </CommandGroup>

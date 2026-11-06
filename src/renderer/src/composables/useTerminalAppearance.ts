@@ -58,5 +58,8 @@ export function useTerminalAppearance() {
     return `color-mix(in oklab, ${palette.value.background} ${effective}%, transparent)`
   })
 
-  return { palette, dark, slotTints, containerBackground, backgrounds }
+  /** Laid over the parts of a split tab without the keyboard, so the one with it stands out. */
+  const inactiveVeil = computed(() => `color-mix(in oklab, ${palette.value.background} 45%, transparent)`)
+
+  return { palette, dark, slotTints, containerBackground, inactiveVeil, backgrounds }
 }

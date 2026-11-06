@@ -98,6 +98,10 @@ export function createDefaultSettings(platform = 'win32'): AppSettings {
       usageRefreshMinutes: 5,
       continuePrompt: 'Mach weiter',
       autoSwitch: false,
+      browserTools: true,
+      browserToolsAllowed: true,
+      noClaudeInChrome: false,
+      claudeInChromeHintDismissed: false,
     },
     general: {
       confirmCloseRunning: true,

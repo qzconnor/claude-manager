@@ -30,6 +30,7 @@ import { useAppStore } from '@/stores/app'
 import { useSessionsStore } from '@/stores/sessions'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
+import BrowserFavicon from './BrowserFavicon.vue'
 
 /** Sessions listed at most for a search; with more, another word narrows it down better than scrolling. */
 const MAX_SESSIONS = 50
@@ -144,6 +145,7 @@ function folderName(path: string | null): string | null {
 
 function tabDetails(row: TabRow): string {
   const { terminal } = row
+  if (terminal.mode === 'browser') return terminal.url === 'about:blank' ? 'Browser' : `Browser · ${terminal.url}`
   const state =
     terminal.status === 'exited'
       ? 'Beendet'
@@ -231,9 +233,11 @@ const rowButtonClass =
       >
         <span class="relative flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
           <KeyRoundIcon v-if="row.terminal.mode === 'login'" class="size-4" />
+          <BrowserFavicon v-else-if="row.terminal.mode === 'browser'" :terminal-id="row.terminal.id" class="size-4" />
           <TriangleAlertIcon v-else-if="row.terminal.limit" class="size-4 text-warning" />
           <SquareTerminalIcon v-else :class="cn('size-4', row.terminal.status === 'exited' && 'opacity-50')" />
           <AccountDot
+            v-if="row.terminal.mode !== 'browser'"
             :color="accounts.get(row.terminal.authAccountId)?.color"
             class="absolute -right-0.5 -bottom-0.5 ring-popover"
           />

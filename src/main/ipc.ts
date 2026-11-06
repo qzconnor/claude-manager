@@ -8,18 +8,23 @@ import type {
   AccountUpdateInput,
   AutoSwitchEvent,
   AppSettings,
+  BrowserOpenOptions,
   CswapImportInput,
   DeepPartial,
   TerminalCreateOptions,
 } from '@shared/types'
 import type { ApiServer } from './api/api-server'
+import { claudeInChromeStatus } from './browser/claude-in-chrome'
 import type { AppContext } from './context'
 import { listFontFamilies } from './lib/fonts'
 import { SESSION_ID_RE } from './lib/session-files'
+import { clearBrowserData, loadFavicon } from './window/browser-guests'
 import { windowState } from './window/main-window'
 
 /** Sessions moved to the recycle bin in one go. */
 const MAX_REMOVE = 10_000
+/** A page's icon address; inline icons are data URLs of up to the largest icon (see browser-policy.ts). */
+const MAX_FAVICON_URL_LENGTH = 400_000
 
 const SETTINGS_FILE_FILTERS = [{ name: 'Claude-Manager-Einstellungen', extensions: ['json'] }]
 
@@ -38,6 +43,20 @@ function senderWindow(event: IpcMainInvokeEvent): BrowserWindow {
 function requireString(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.length === 0) throw new Error(`Ungültiger Parameter: ${name}`)
   return value
+}
+
+/** The options of a new browser from the window, checked field by field. */
+function browserOptions(value: unknown): BrowserOpenOptions {
+  const { url, title, split } = (value ?? {}) as Record<string, unknown>
+  const next: BrowserOpenOptions = {
+    url: typeof url === 'string' ? url : null,
+    title: typeof title === 'string' ? title : null,
+  }
+  if (split && typeof split === 'object') {
+    const { terminalId, direction } = split as Record<string, unknown>
+    next.split = { terminalId: requireString(terminalId, 'split.terminalId'), direction: direction === 'column' ? 'column' : 'row' }
+  }
+  return next
 }
 
 export function registerIpc(ctx: AppContext): void {
@@ -144,6 +163,7 @@ export function registerIpc(ctx: AppContext): void {
     ctx.terminals.arrange(parsed)
   })
   ipcMain.handle(IpcInvoke.terminalsCreate, (_e, options: TerminalCreateOptions) => ctx.terminals.open(options))
+  ipcMain.handle(IpcInvoke.terminalsOpenBrowser, (_e, options: unknown) => ctx.terminals.openBrowser(browserOptions(options)))
   ipcMain.handle(IpcInvoke.terminalsKill, (_e, id: unknown) => ctx.terminals.kill(requireString(id, 'id')))
   ipcMain.handle(IpcInvoke.terminalsClose, (_e, id: unknown) => ctx.terminals.close(requireString(id, 'id')))
   ipcMain.handle(IpcInvoke.terminalsRename, (_e, id: unknown, title: unknown) => {
@@ -155,6 +175,7 @@ export function registerIpc(ctx: AppContext): void {
   ipcMain.handle(IpcInvoke.terminalsContinueWith, (_e, id: unknown, accountId: unknown) =>
     ctx.handoff.continueTerminal(requireString(id, 'id'), requireString(accountId, 'accountId')),
   )
+  ipcMain.handle(IpcInvoke.terminalsRestartSession, (_e, id: unknown) => ctx.handoff.restartTerminal(requireString(id, 'id')))
   ipcMain.handle(IpcInvoke.terminalsSetMuted, (_e, id: unknown, muted: unknown) => {
     if (typeof muted !== 'boolean') throw new Error('Ungültiger Parameter: muted')
     ctx.terminals.setMuted(requireString(id, 'id'), muted)
@@ -164,6 +185,32 @@ export function registerIpc(ctx: AppContext): void {
   })
   ipcMain.on(IpcSend.terminalColorScheme, (_e, dark: unknown) => {
     if (typeof dark === 'boolean') ctx.terminals.setColorScheme(dark)
+  })
+  ipcMain.handle(IpcInvoke.browserFavicon, (_e, url: unknown) =>
+    typeof url === 'string' && url.length <= MAX_FAVICON_URL_LENGTH ? loadFavicon(url) : null,
+  )
+  ipcMain.on(IpcSend.browserAttach, (event, id: unknown, contentsId: unknown) => {
+    if (typeof id === 'string' && typeof contentsId === 'number') ctx.browser.attach(id, contentsId, event.sender)
+  })
+  ipcMain.handle(IpcInvoke.browserLog, (_e, id: unknown) => ctx.browser.log(requireString(id, 'id')))
+  ipcMain.handle(IpcInvoke.browserClearLog, (_e, id: unknown) => ctx.browser.clearLog(requireString(id, 'id')))
+  ipcMain.handle(IpcInvoke.browserTakeOver, (_e, id: unknown, takenOver: unknown) =>
+    ctx.browser.takeOver(requireString(id, 'id'), takenOver === true),
+  )
+  ipcMain.handle(IpcInvoke.browserControls, () => ctx.browser.controls())
+  ipcMain.handle(IpcInvoke.browserClearData, () => clearBrowserData())
+  ipcMain.handle(IpcInvoke.browserResetViewport, (_e, id: unknown) => ctx.browser.resetViewport(requireString(id, 'id')))
+  ipcMain.handle(IpcInvoke.browserClaudeInChrome, () => claudeInChromeStatus(ctx.accounts))
+  ctx.browser.on('activity', (id, activity) => broadcast(IpcEvent.browserActivity, id, activity))
+  ctx.browser.on('control', (id, control) => broadcast(IpcEvent.browserControl, id, control))
+  ctx.browser.on('highlight', (id, highlight) => broadcast(IpcEvent.browserHighlight, id, highlight))
+  ctx.browser.on('focus', (id) => broadcast(IpcEvent.browserFocus, id))
+  ctx.browser.on('userClick', (id) => broadcast(IpcEvent.browserUserClick, id))
+  ipcMain.on(IpcSend.browserPage, (_e, id: unknown, page: unknown) => {
+    const { url, title } = (page ?? {}) as Record<string, unknown>
+    if (typeof id === 'string' && typeof url === 'string' && typeof title === 'string') {
+      ctx.terminals.setBrowserPage(id, { url, title })
+    }
   })
   ipcMain.on(IpcSend.terminalReorder, (_e, ids: unknown) => {
     if (Array.isArray(ids) && ids.every((id) => typeof id === 'string')) ctx.terminals.reorder(ids)

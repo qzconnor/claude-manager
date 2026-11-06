@@ -25,6 +25,11 @@ asarUnpack:
   - node_modules/koffi/**
   - node_modules/@koromix/**
 
+# Cookies on disk encrypted like Chrome's (DPAPI, the keyring on Linux): the browser's logins.
+# One way only: turned off again, the encrypted cookies can't be read any more.
+electronFuses:
+  enableCookieEncryption: true
+
 # node-pty and koffi use Node-API, so nothing has to be compiled for Electron: Windows takes the
 # prebuilds, on Linux `npm ci` compiles node-pty once for Node, which Electron loads as well.
 npmRebuild: false

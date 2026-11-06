@@ -1,3 +1,4 @@
+import type { BrowserControl } from './browser/browser-control'
 import type { CommandIntegration } from './cli/command-integration'
 import type { AccountService } from './services/account-service'
 import type { AutoSwitch } from './services/auto-switch'
@@ -24,6 +25,8 @@ export interface AppContext {
   cli: ClaudeCli
   indexer: IndexerClient
   terminals: TerminalService
+  /** The browser tabs Claude sessions drive through the app's MCP server. */
+  browser: BrowserControl
   sessions: SessionService
   /** Continuing sessions with another account's limits. */
   handoff: SessionHandoff

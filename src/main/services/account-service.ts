@@ -61,6 +61,8 @@ export interface GlobalConfig {
     organizationType?: string
   }
   cachedUsageUtilization?: unknown
+  /** Claude in Chrome's "Enabled by default" (`/chrome`): sessions connect to Chrome when they start. */
+  claudeInChromeDefaultEnabled?: boolean
 }
 
 /** Items copied from ~/.claude into a new profile when the user asks for it. */

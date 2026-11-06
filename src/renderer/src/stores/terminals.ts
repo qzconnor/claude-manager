@@ -12,7 +12,7 @@ import {
   type PaneDirection,
   type SplitPath,
 } from '@shared/panes'
-import type { PaneNode, PaneSplit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
+import type { BrowserOpenOptions, PaneNode, PaneSplit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
 import { groupTabs, type TerminalTabGroup } from '@/lib/tabs'
 
 /** A tab with the terminal in it that has (or last had) the keyboard. */
@@ -34,18 +34,33 @@ export const useTerminalsStore = defineStore('terminals', () => {
   const focusedAt = reactive(new Map<string, number>())
   let focusCount = 0
 
-  const focusedOf = (tab: TerminalTabGroup) =>
-    tab.panes.reduce((best, pane) => ((focusedAt.get(pane.id) ?? 0) > (focusedAt.get(best.id) ?? 0) ? pane : best))
+  /** Of some terminals (at least one), the one that last had the keyboard. */
+  const lastFocused = (panes: TerminalInfo[]) =>
+    panes.reduce((best, pane) => ((focusedAt.get(pane.id) ?? 0) > (focusedAt.get(best.id) ?? 0) ? pane : best))
+  const focusedOf = (tab: TerminalTabGroup) => lastFocused(tab.panes)
 
   const tabs = computed<TerminalTab[]>(() =>
     groupTabs(terminals.value, splits.value).map((tab) => ({ ...tab, focused: focusedOf(tab) })),
   )
   const active = computed(() => terminals.value.find((t) => t.id === activeId.value) ?? null)
   const activeTab = computed(() => tabOf(activeId.value))
-  const runningCount = computed(() => terminals.value.filter((t) => t.status === 'running').length)
+  /** The terminal whose account and folder the window shows (see `workingTerminalOf`). */
+  const workingTerminal = computed(() => workingTerminalOf(active.value))
+  /** Terminals with a process; browsers run none. */
+  const runningCount = computed(() => terminals.value.filter((t) => t.status === 'running' && t.mode !== 'browser').length)
 
   function tabOf(id: string | null): TerminalTab | null {
     return id ? (tabs.value.find((tab) => tab.panes.some((p) => p.id === id)) ?? null) : null
+  }
+
+  /**
+   * The terminal itself, or for a browser the terminal of its tab that last had the keyboard: the
+   * account and folder the browser works with. A browser alone in its tab has none.
+   */
+  function workingTerminalOf(terminal: TerminalInfo | null): TerminalInfo | null {
+    if (terminal?.mode !== 'browser') return terminal
+    const others = tabOf(terminal.id)?.panes.filter((p) => p.mode !== 'browser') ?? []
+    return others.length ? lastFocused(others) : null
   }
 
   function focus(id: string | null): void {
@@ -82,6 +97,13 @@ export const useTerminalsStore = defineStore('terminals', () => {
   async function open(options: TerminalCreateOptions): Promise<TerminalInfo | null> {
     const info = await window.api.terminals.create(options)
     if (info) show(info)
+    return info
+  }
+
+  /** A browser in a new tab or next to a terminal (`options.split`). */
+  async function openBrowser(options: BrowserOpenOptions = {}): Promise<TerminalInfo> {
+    const info = await window.api.terminals.openBrowser(options)
+    show(info)
     return info
   }
 
@@ -154,7 +176,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
   /** Starts the same command again in a new terminal in the same place; the old one stays without trust. */
   async function restart(id: string): Promise<void> {
     const old = terminals.value.find((t) => t.id === id)
-    if (!old) return
+    // A browser has no command; its pane loads the page again instead.
+    if (!old || old.mode === 'browser') return
     const index = terminals.value.indexOf(old)
     const info = await window.api.terminals.create({
       accountId: old.accountId,
@@ -176,6 +199,15 @@ export const useTerminalsStore = defineStore('terminals', () => {
     const index = terminals.value.findIndex((t) => t.id === id)
     if (index === -1) return null
     const info = await window.api.terminals.continueWith(id, accountId)
+    if (info) replace(id, index, info)
+    return info
+  }
+
+  /** Starts a session again in its place; it goes on with its conversation. */
+  async function restartSession(id: string): Promise<TerminalInfo | null> {
+    const index = terminals.value.findIndex((t) => t.id === id)
+    if (index === -1) return null
+    const info = await window.api.terminals.restartSession(id)
     if (info) replace(id, index, info)
     return info
   }
@@ -262,9 +294,13 @@ export const useTerminalsStore = defineStore('terminals', () => {
     activeId,
     active,
     activeTab,
+    tabOf,
+    workingTerminal,
+    workingTerminalOf,
     runningCount,
     load,
     open,
+    openBrowser,
     activate,
     close,
     closeTab,
@@ -273,6 +309,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     setMuted,
     restart,
     continueWith,
+    restartSession,
     continueSession,
     cycle,
     activateAt,

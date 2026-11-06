@@ -2,7 +2,9 @@
 import { computed, ref } from 'vue'
 import { layoutPanes, type PaneDivider, type PaneRect } from '@shared/panes'
 import { cn } from '@/lib/utils'
+import { useBrowsersStore } from '@/stores/browsers'
 import { useTerminalsStore } from '@/stores/terminals'
+import BrowserPane from './BrowserPane.vue'
 import TerminalEmptyState from './TerminalEmptyState.vue'
 import TerminalPane from './TerminalPane.vue'
 
@@ -13,6 +15,7 @@ import TerminalPane from './TerminalPane.vue'
  */
 const props = defineProps<{ visible: boolean }>()
 const terminals = useTerminalsStore()
+const browsers = useBrowsersStore()
 const root = ref<HTMLElement | null>(null)
 
 /** A part may not get narrower or lower than this while dragging a divider (px). */
@@ -27,9 +30,18 @@ const split = computed(() => (terminals.activeTab?.panes.length ?? 0) > 1)
 const percent = (value: number) => `${value * 100}%`
 const FULL: PaneRect = { left: 0, top: 0, width: 1, height: 1 }
 
-function paneStyle(id: string) {
-  const rect = layout.value?.panes.get(id) ?? FULL
+function rectStyle(rect: PaneRect) {
   return { left: percent(rect.left), top: percent(rect.top), width: percent(rect.width), height: percent(rect.height) }
+}
+
+function paneStyle(id: string) {
+  return rectStyle(layout.value?.panes.get(id) ?? FULL)
+}
+
+/** A page in a hidden tab keeps the size it has in its own tab. */
+function backgroundStyle(id: string) {
+  const tab = terminals.tabOf(id)
+  return rectStyle((tab && layoutPanes(tab.layout).panes.get(id)) ?? FULL)
 }
 
 /** The divider lies on the line between the two parts; its grip reaches a little into both. */
@@ -79,22 +91,39 @@ function onDividerReset(divider: PaneDivider) {
 }
 
 const inActiveTab = (id: string) => terminals.activeTab?.panes.some((p) => p.id === id) ?? false
+/**
+ * A browser Claude drives in a hidden tab is drawn, unseen: a page that isn't drawn has no size,
+ * and neither its screenshots nor the clicks on it would work.
+ */
+const driven = (id: string) => browsers.controls.get(id)?.active === true
+const inBackground = (id: string) => !inActiveTab(id) && driven(id)
 </script>
 
 <template>
   <div
     ref="root"
-    :class="cn('relative size-full', dragging && (dragging.direction === 'row' ? 'cursor-col-resize' : 'cursor-row-resize'), dragging && 'select-none')"
+    :class="
+      cn(
+        'relative size-full',
+        dragging && (dragging.direction === 'row' ? 'cursor-col-resize' : 'cursor-row-resize'),
+        // A browser page would take the pointer while it passes over it.
+        dragging && 'select-none [&_webview]:pointer-events-none',
+      )
+    "
   >
-    <TerminalPane
+    <!-- A browser tab shows its page instead of a terminal. -->
+    <component
+      :is="terminal.mode === 'browser' ? BrowserPane : TerminalPane"
       v-for="terminal in terminals.terminals"
-      v-show="inActiveTab(terminal.id)"
+      v-show="inActiveTab(terminal.id) || inBackground(terminal.id)"
       :key="terminal.id"
-      class="absolute"
-      :style="inActiveTab(terminal.id) ? paneStyle(terminal.id) : undefined"
+      :class="cn('absolute', inBackground(terminal.id) && 'pointer-events-none -z-10 opacity-0')"
+      :inert="!props.visible && !driven(terminal.id)"
+      :aria-hidden="inBackground(terminal.id) || undefined"
+      :style="inActiveTab(terminal.id) ? paneStyle(terminal.id) : inBackground(terminal.id) ? backgroundStyle(terminal.id) : undefined"
       :terminal="terminal"
       :active="props.visible && terminal.id === terminals.activeId"
-      :focused="split && terminal.id === terminals.activeId"
+      :dimmed="split && terminal.id !== terminals.activeId"
       @focus="terminals.activate(terminal.id)"
     />
     <template v-if="split && layout">

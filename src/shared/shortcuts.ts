@@ -1,8 +1,9 @@
-import type { PaneDirection } from '@shared/panes'
+import type { PaneDirection } from './panes'
 
 /**
- * Global keyboard shortcuts. They are checked inside xterm's key handler as well,
- * so the terminal never swallows them.
+ * Global keyboard shortcuts. They are checked inside xterm's key handler as well, so the terminal
+ * never swallows them, and by the main process for the keys a browser page gets (see
+ * `matchBrowserShortcut`), which the window doesn't see.
  */
 export type ShortcutAction =
   | 'new-tab'
@@ -20,6 +21,21 @@ export type ShortcutAction =
   | 'split-right'
   | 'split-down'
   | 'focus-pane'
+  | 'browser-address'
+  | 'browser-reload'
+
+/** What the matchers read of a key event: a DOM `KeyboardEvent`, or the main process' copy of an input event. */
+export interface ShortcutKey {
+  type: string
+  key: string
+  code: string
+  /** Missing for input events of the main process; plus and minus are then known by their character. */
+  keyCode?: number
+  ctrlKey: boolean
+  altKey: boolean
+  shiftKey: boolean
+  metaKey: boolean
+}
 
 export interface Shortcut {
   action: ShortcutAction
@@ -31,7 +47,7 @@ export interface Shortcut {
 
 const ARROWS: Record<string, PaneDirection> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
 
-export function matchShortcut(e: KeyboardEvent): Shortcut | null {
+export function matchShortcut(e: ShortcutKey): Shortcut | null {
   if (e.type === 'keydown' && e.altKey && !e.ctrlKey && !e.metaKey) return matchPaneShortcut(e)
   const action = matchAction(e)
   if (action !== 'select-tab') return action ? { action } : null
@@ -45,7 +61,7 @@ export function matchShortcut(e: KeyboardEvent): Shortcut | null {
  * moves to the terminal in that direction. Plus and minus by the key (`keyCode`), as Shift turns
  * them into other characters depending on the layout (`*` and `_` on a German keyboard).
  */
-function matchPaneShortcut(e: KeyboardEvent): Shortcut | null {
+function matchPaneShortcut(e: ShortcutKey): Shortcut | null {
   if (e.shiftKey) {
     if (e.keyCode === 187 || e.code === 'NumpadAdd' || e.key === '+') return { action: 'split-right' }
     if (e.keyCode === 189 || e.code === 'NumpadSubtract' || e.key === '-') return { action: 'split-down' }
@@ -55,7 +71,7 @@ function matchPaneShortcut(e: KeyboardEvent): Shortcut | null {
   return direction ? { action: 'focus-pane', direction } : null
 }
 
-function matchAction(e: KeyboardEvent): ShortcutAction | null {
+function matchAction(e: ShortcutKey): ShortcutAction | null {
   if (e.type !== 'keydown') return null
   const ctrl = e.ctrlKey || e.metaKey
   if (!ctrl || e.altKey) return null
@@ -84,6 +100,22 @@ function matchAction(e: KeyboardEvent): ShortcutAction | null {
  * without Shift (e.g. "&" on AZERTY). The number pad counts only with Num Lock, without it its keys
  * are End, arrows etc.
  */
-function tabDigit(e: KeyboardEvent): string | null {
+function tabDigit(e: ShortcutKey): string | null {
   return /^Digit([1-9])$/.exec(e.code)?.[1] ?? (/^[1-9]$/.test(e.key) ? e.key : null)
+}
+
+/**
+ * Keys of a browser page that belong to the browser around it, like in Chrome: Ctrl+L goes to the
+ * address bar, F5 and Ctrl+R load the page again. Only for keys the page gets: in a terminal Ctrl+R
+ * is Claude Code's and the shell's.
+ */
+export function matchBrowserShortcut(e: ShortcutKey): Shortcut | null {
+  if (e.type !== 'keydown' || e.altKey || e.metaKey) return null
+  const ctrl = e.ctrlKey
+  if (e.key === 'F5' && !e.shiftKey) return { action: 'browser-reload' }
+  if (!ctrl || e.shiftKey) return null
+  const key = e.key.toLowerCase()
+  if (key === 'l') return { action: 'browser-address' }
+  if (key === 'r') return { action: 'browser-reload' }
+  return null
 }

@@ -75,6 +75,8 @@ Jedes Terminal meldet außerdem `sessionId` (die Session, die gerade darin läuf
 
 `attention` zeigt, was im Tab passiert ist, seit er zuletzt in der App angezeigt wurde: `done` (Antwort fertig), `input` (Claude wartet auf eine Erlaubnis, eine Antwort oder die Freigabe eines Plans) oder `limit`, sonst `null`. `muted` ist gesetzt, wenn der Tab keine Benachrichtigungen schickt. Beides folgt den Einstellungen unter *Benachrichtigungen*; `muted` lässt sich beim Öffnen und per `PATCH` setzen.
 
+Browser-Tabs der App stehen mit in der Liste, mit `mode: "browser"` und der angezeigten Adresse in `url` (bei Terminals `null`). Sie haben keinen Prozess, keinen Account und keinen Ordner: Eingaben, Ausgabe und `kill` bewirken bei ihnen nichts, umbenennen, aktivieren und schließen geht wie bei Terminals. Geöffnet werden sie in der App.
+
 ### Ausgabe lesen
 
 Die Ausgabe eines Terminals ist ein fortlaufender Stream mit Zeichen-Offsets. `GET …/output` liefert `{"data", "start", "end", "truncated"}`:

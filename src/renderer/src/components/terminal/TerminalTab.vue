@@ -5,7 +5,9 @@ import {
   BellOffIcon,
   CircleStopIcon,
   Columns2Icon,
+  ExternalLinkIcon,
   FolderOpenIcon,
+  GlobeIcon,
   KeyRoundIcon,
   LoaderCircleIcon,
   PencilIcon,
@@ -17,6 +19,7 @@ import {
   XIcon,
 } from '@lucide/vue'
 import { computed, nextTick, ref, watch } from 'vue'
+import type { TerminalInfo } from '@shared/types'
 import AccountChoiceItems from '@/components/common/AccountChoiceItems.vue'
 import AccountDot from '@/components/common/AccountDot.vue'
 import {
@@ -41,8 +44,10 @@ import { attentionLook } from '@/lib/attention'
 import { attempt } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
+import { useBrowsersStore } from '@/stores/browsers'
 import { useTerminalsStore, type TerminalTab } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
+import BrowserFavicon from './BrowserFavicon.vue'
 import TerminalTabCard from './TerminalTabCard.vue'
 
 /**
@@ -61,6 +66,7 @@ const launcher = useLauncher()
 const { closeTerminal, closeTab, stopTerminal, restartTerminal } = useTerminalActions()
 const accountSwitch = useAccountSwitch()
 
+const browsers = useBrowsersStore()
 const split = computed(() => props.tab.panes.length > 1)
 /** The terminal under the pointer; kept while the menu is open, which acts on it. */
 const pointed = ref<string | null>(null)
@@ -72,6 +78,13 @@ const sessionAccount = computed(() =>
   terminal.value.accountId === terminal.value.authAccountId ? undefined : accounts.get(terminal.value.accountId),
 )
 const exited = computed(() => terminal.value.status === 'exited')
+const isBrowser = computed(() => terminal.value.mode === 'browser')
+const closeLabel = (pane: TerminalInfo) => (!split.value ? 'Tab schließen' : pane.mode === 'browser' ? 'Browser schließen' : 'Terminal schließen')
+
+function openPage() {
+  const { url } = terminal.value
+  if (url && /^https?:/i.test(url)) void attempt(() => window.api.app.openExternal(url), 'Seite konnte nicht geöffnet werden')
+}
 
 /**
  * The terminals with what their part of the tab shows. News the user hasn't seen is a dot where the
@@ -252,6 +265,15 @@ function openFolder() {
                 <!-- Same width for every symbol, so the title doesn't move when Claude Code starts or stops working. -->
                 <span class="flex size-3.5 shrink-0 items-center justify-center">
                   <KeyRoundIcon v-if="pane.mode === 'login'" class="size-3.5" />
+                  <template v-else-if="pane.mode === 'browser'">
+                    <LoaderCircleIcon
+                      v-if="browsers.get(pane.id)?.state.loading"
+                      role="status"
+                      aria-label="Seite lädt"
+                      class="size-3.5 animate-spin"
+                    />
+                    <BrowserFavicon v-else :terminal-id="pane.id" class="size-3.5" />
+                  </template>
                   <LoaderCircleIcon
                     v-else-if="pane.busy"
                     role="status"
@@ -296,7 +318,7 @@ function openFolder() {
 
                 <button
                   type="button"
-                  :aria-label="split ? 'Terminal schließen' : 'Tab schließen'"
+                  :aria-label="closeLabel(pane)"
                   :class="
                     cn(
                       'flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover/pane:opacity-100 hover:bg-accent hover:text-foreground',
@@ -336,23 +358,35 @@ function openFolder() {
           <PencilIcon />
           Umbenennen
         </ContextMenuItem>
-        <ContextMenuItem @select="openFolder">
-          <FolderOpenIcon />
-          Ordner öffnen
-        </ContextMenuItem>
-        <ContextMenuItem @select="restartTerminal(terminal.id)">
-          <RotateCwIcon />
-          Neu starten
-        </ContextMenuItem>
-        <ContextMenuItem :disabled="exited" @select="stopTerminal(terminal.id)">
-          <CircleStopIcon />
-          Prozess beenden
-        </ContextMenuItem>
-        <ContextMenuItem @select="toggleMuted">
-          <BellIcon v-if="terminal.muted" />
-          <BellOffIcon v-else />
-          {{ terminal.muted ? 'Benachrichtigungen einschalten' : 'Benachrichtigungen stummschalten' }}
-        </ContextMenuItem>
+        <template v-if="isBrowser">
+          <ContextMenuItem @select="browsers.get(terminal.id)?.reload()">
+            <RotateCwIcon />
+            Neu laden
+          </ContextMenuItem>
+          <ContextMenuItem :disabled="!terminal.url?.startsWith('http')" @select="openPage">
+            <ExternalLinkIcon />
+            Im Standardbrowser öffnen
+          </ContextMenuItem>
+        </template>
+        <template v-else>
+          <ContextMenuItem @select="openFolder">
+            <FolderOpenIcon />
+            Ordner öffnen
+          </ContextMenuItem>
+          <ContextMenuItem @select="restartTerminal(terminal.id)">
+            <RotateCwIcon />
+            Neu starten
+          </ContextMenuItem>
+          <ContextMenuItem :disabled="exited" @select="stopTerminal(terminal.id)">
+            <CircleStopIcon />
+            Prozess beenden
+          </ContextMenuItem>
+          <ContextMenuItem @select="toggleMuted">
+            <BellIcon v-if="terminal.muted" />
+            <BellOffIcon v-else />
+            {{ terminal.muted ? 'Benachrichtigungen einschalten' : 'Benachrichtigungen stummschalten' }}
+          </ContextMenuItem>
+        </template>
       </ContextMenuGroup>
       <template v-if="terminal.mode === 'session'">
         <ContextMenuSeparator />
@@ -382,6 +416,10 @@ function openFolder() {
           Horizontal teilen
           <ContextMenuShortcut>Alt+Umschalt+Minus</ContextMenuShortcut>
         </ContextMenuItem>
+        <ContextMenuItem @select="launcher.browser(null, { terminalId: terminal.id, direction: 'row' })">
+          <GlobeIcon />
+          Browser daneben öffnen
+        </ContextMenuItem>
         <ContextMenuItem v-if="split" @select="terminals.detach(terminal.id)">
           <SquareArrowOutUpRightIcon />
           In eigenen Tab verschieben
@@ -391,7 +429,7 @@ function openFolder() {
       <ContextMenuGroup>
         <ContextMenuItem v-if="split" @select="closeTerminal(terminal.id)">
           <XIcon />
-          Terminal schließen
+          {{ isBrowser ? 'Browser schließen' : 'Terminal schließen' }}
           <!-- The shortcut closes the terminal with the keyboard, which needn't be the one right-clicked. -->
           <ContextMenuShortcut v-if="terminal.id === terminals.activeId">Strg+Umschalt+W</ContextMenuShortcut>
         </ContextMenuItem>
