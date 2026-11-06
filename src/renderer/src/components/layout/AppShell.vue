@@ -3,6 +3,7 @@ import { useElementBounding } from '@vueuse/core'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalWorkspace from '@/components/terminal/TerminalWorkspace.vue'
+import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
 import { cn } from '@/lib/utils'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
@@ -46,6 +47,10 @@ watch(
   (id) => window.api.terminals.viewing(id),
   { immediate: true },
 )
+
+// Programs in the terminals hear when the theme turns dark or light (Claude Code's "Auto" theme).
+const { dark: terminalDark } = useTerminalAppearance()
+watch(terminalDark, (dark) => window.api.terminals.colorScheme(dark), { immediate: true })
 
 // Terminals opened through the local API with `activate: true`, `cm` or a click on a notification.
 const offActivate = window.api.terminals.onActivate((id) => {

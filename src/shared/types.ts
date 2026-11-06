@@ -458,6 +458,11 @@ export interface TerminalSettings {
   minimumContrastRatio: number
   panelBackground: PanelBackground
   diffColors: DiffColors
+  /**
+   * Windows: new tabs use the ConPTY of Windows Terminal that comes with node-pty instead of the one
+   * of Windows. It passes queries such as the background color on to the terminal.
+   */
+  modernConpty: boolean
 }
 
 export interface ClaudeSettings {

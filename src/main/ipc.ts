@@ -154,6 +154,9 @@ export function registerIpc(ctx: AppContext): void {
   ipcMain.on(IpcSend.terminalViewing, (_e, id: unknown) => {
     ctx.notifications.setViewing(typeof id === 'string' && id ? id : null)
   })
+  ipcMain.on(IpcSend.terminalColorScheme, (_e, dark: unknown) => {
+    if (typeof dark === 'boolean') ctx.terminals.setColorScheme(dark)
+  })
   ipcMain.on(IpcSend.terminalWrite, (_e, id: unknown, data: unknown) => {
     if (typeof id === 'string' && typeof data === 'string') ctx.terminals.write(id, data)
   })

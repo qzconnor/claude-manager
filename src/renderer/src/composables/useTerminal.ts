@@ -7,6 +7,7 @@ import { Terminal, type ITheme, type ITerminalOptions } from '@xterm/xterm'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import type { TerminalSettings } from '@shared/types'
 import { createBackgroundFilter, slotPalette, type SlotTints } from '@/lib/claude-backgrounds'
+import { answerColorQueries } from '@/lib/color-queries'
 import { matchShortcut } from '@/lib/shortcuts'
 import { terminalBus } from '@/lib/terminal-bus'
 import { makeSlotsTranslucent, setSlotTints } from '@/lib/translucent-slots'
@@ -23,6 +24,9 @@ export interface UseTerminalOptions {
   /** The tab is visible — fit and focus when this turns true. */
   active: Ref<boolean>
 }
+
+/** The first Windows build whose ConPTY wraps lines like a terminal; xterm needs no workaround from it on. */
+const MODERN_CONPTY_BUILD = 21376
 
 /** `tints` are the colors of the palette slots that Claude's backgrounds are exchanged for. */
 export function toXtermTheme(p: TerminalPalette, tints: SlotTints): ITheme {
@@ -117,7 +121,7 @@ export function useTerminal(options: UseTerminalOptions) {
   const { terminalId, claudeSession, container, active } = options
   const settingsStore = useSettingsStore()
   const appStore = useAppStore()
-  const { palette, slotTints, backgrounds } = useTerminalAppearance()
+  const { palette, dark, slotTints, backgrounds } = useTerminalAppearance()
   /** All output passes through here on its way to xterm. */
   const filterOutput = createBackgroundFilter(() => backgrounds.value)
 
@@ -284,7 +288,10 @@ export function useTerminal(options: UseTerminalOptions) {
     await ensureFontLoaded(s.fontFamily, s.fontSize)
     if (disposed) return
 
-    const build = appStore.info?.windowsBuild ?? null
+    // xterm works around the line wrapping of old ConPTY versions (Windows 10) by the build number;
+    // the ConPTY of Windows Terminal that new tabs use (setting `modernConpty`) doesn't need that.
+    const windowsBuild = appStore.info?.windowsBuild ?? null
+    const build = windowsBuild && s.modernConpty ? Math.max(windowsBuild, MODERN_CONPTY_BUILD) : windowsBuild
     setSlotTints(slotTints.value)
     term = new Terminal({
       ...terminalOptions(s, palette.value, slotTints.value),
@@ -336,6 +343,7 @@ export function useTerminal(options: UseTerminalOptions) {
           void navigator.clipboard.writeText(t.getSelection())
         }
       }),
+      ...answerColorQueries(t, () => ({ background: palette.value.background, dark: dark.value })),
     ]
     cleanups.push(() => subscriptions.forEach((s) => s.dispose()))
 

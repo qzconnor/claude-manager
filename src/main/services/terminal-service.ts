@@ -5,6 +5,7 @@ import { userInfo } from 'node:os'
 import { basename, join } from 'node:path'
 import type * as Pty from 'node-pty'
 import type { AttentionKind, CloseOnExit, SessionLimit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
+import { colorFgBg, colorSchemeReport, ColorSchemeUpdates } from '../lib/color-scheme'
 import { fallbackSessionFolder } from '../lib/session-folder'
 import {
   findTranscript,
@@ -108,6 +109,8 @@ interface TerminalRecord {
   turnEnding: boolean
   /** Counts turn ends and restarts: a lookup that is no longer the latest stops. */
   turnEndRun: number
+  /** Whether the program wants to hear when the terminal turns dark or light. */
+  colorScheme: ColorSchemeUpdates
 }
 
 type Events = {
@@ -125,6 +128,8 @@ export class TerminalService extends TypedEmitter<Events> {
   private tracking = false
   /** A new tab arrived during a round: run another one right after it. */
   private trackAgain = false
+  /** Whether the terminal theme is dark, as the window reports it; unknown until it does. */
+  private dark: boolean | null = null
 
   constructor(
     private readonly accounts: AccountService,
@@ -211,6 +216,11 @@ export class TerminalService extends TypedEmitter<Events> {
       deleteEnv(env, key)
       env[key] = value
     }
+    // The theme the program starts with, for programs that can't ask the terminal (see setColorScheme).
+    if (this.dark !== null) {
+      deleteEnv(env, 'COLORFGBG')
+      env.COLORFGBG = colorFgBg(this.dark)
+    }
 
     const command = mode === 'shell' ? shellCommand() : this.cli.command(args)
     const cols = clampSize(options.cols, 120)
@@ -222,6 +232,9 @@ export class TerminalService extends TypedEmitter<Events> {
       cwd,
       env,
       useConpty: true,
+      // The ConPTY of Windows Terminal that comes with node-pty. Unlike the one of Windows, it passes
+      // queries such as the background color (OSC 11) on to the terminal.
+      useConptyDll: process.platform === 'win32' && settings.terminal.modernConpty,
     })
 
     const id = randomUUID()
@@ -264,6 +277,7 @@ export class TerminalService extends TypedEmitter<Events> {
       busySince: 0,
       turnEnding: false,
       turnEndRun: 0,
+      colorScheme: new ColorSchemeUpdates(),
     }
     this.terminals.set(id, record)
 
@@ -459,7 +473,21 @@ export class TerminalService extends TypedEmitter<Events> {
     return tracked
   }
 
+  /**
+   * The terminal theme turned dark or light (or the window tells it on start). Programs that asked
+   * for it (mode 2031) are told; Claude Code then reads the background color again (OSC 11, answered
+   * by xterm) and picks its "Auto" theme. Programs started from now on also get it as COLORFGBG.
+   */
+  setColorScheme(dark: boolean): void {
+    if (this.dark === dark) return
+    this.dark = dark
+    for (const record of this.terminals.values()) {
+      if (record.process && record.colorScheme.enabled) record.process.write(colorSchemeReport(dark))
+    }
+  }
+
   private handleData(record: TerminalRecord, data: string): void {
+    record.colorScheme.read(data)
     const title = record.titles.read(data)
     if (title !== null) this.followActivity(record, title)
     record.pending += data
