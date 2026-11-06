@@ -12,6 +12,17 @@ interface Options {
   onDrop: (id: string, index: number) => void
   /** Called every frame while tabs move, e.g. so the page follows the selected tab. */
   onMove?: () => void
+  /** Somewhere besides the strip that takes the dragged tab, e.g. the page with the terminals. */
+  outside?: OutsideTarget
+}
+
+interface OutsideTarget {
+  /** Whether a tab dropped at this point (viewport px) is taken here; meanwhile the strip doesn't reorder. */
+  over: (id: string, x: number, y: number) => boolean
+  /** The tab was dropped where `over` last took it. */
+  drop: (id: string) => void
+  /** The drag ended, dropped or not. */
+  end: () => void
 }
 
 interface Press {
@@ -29,13 +40,16 @@ interface Drag extends Press {
   from: number
   to: number
   frame: number
+  /** Over the outside target instead of the strip. */
+  outside: boolean
 }
 
 /**
  * Lets the tabs of a strip be reordered by dragging. The dragged tab follows the pointer along the
  * strip, the others slide aside to show where it lands; Escape cancels. The order only changes on
  * drop, through `onDrop`, and the drop doesn't select the tab. Tabs are the strip's `[role="tab"]`
- * children with a `data-terminal-id`.
+ * children with a `data-terminal-id`. Over the `outside` target the tab goes back to its place
+ * (marked `data-docking`) and is dropped there instead.
  */
 export function useTabDrag(strip: Ref<HTMLElement | null>, options: Options) {
   /** Id of the tab being dragged, e.g. to keep hover cards closed. */
@@ -114,7 +128,7 @@ export function useTabDrag(strip: Ref<HTMLElement | null>, options: Options) {
       return options.vertical ? { start: rect.top, size: rect.height } : { start: rect.left, size: rect.width }
     })
     const gap = Math.max(0, slots[1].start - (slots[0].start + slots[0].size))
-    drag = { ...from, tabs, slots, gap, from: index, to: index, frame: 0 }
+    drag = { ...from, tabs, slots, gap, from: index, to: index, frame: 0, outside: false }
     dragging.value = from.id
     try {
       from.tab.setPointerCapture(from.pointerId)
@@ -139,9 +153,19 @@ export function useTabDrag(strip: Ref<HTMLElement | null>, options: Options) {
   function follow(event: PointerEvent) {
     if (!drag) return
     const current = drag
-    const offset = clampOffset(current.slots, current.from, along(event.clientX, event.clientY) - along(current.x, current.y))
+    const outside = options.outside?.over(current.id, event.clientX, event.clientY) ?? false
+    if (outside !== current.outside) {
+      current.outside = outside
+      // It glides back to its place, and follows the pointer again without delay.
+      current.tab.style.transition = outside ? SHIFT_TRANSITION : 'none'
+      if (outside) current.tab.dataset.docking = ''
+      else delete current.tab.dataset.docking
+    }
+    const offset = outside
+      ? 0
+      : clampOffset(current.slots, current.from, along(event.clientX, event.clientY) - along(current.x, current.y))
     current.tab.style.transform = translate(offset)
-    const to = dropIndex(current.slots, current.from, offset)
+    const to = outside ? current.from : dropIndex(current.slots, current.from, offset)
     if (to === current.to) return
     current.to = to
     const shifts = shiftsFor(current.slots, current.from, to, current.gap)
@@ -164,8 +188,11 @@ export function useTabDrag(strip: Ref<HTMLElement | null>, options: Options) {
       tab.style.zIndex = ''
     }
     delete current.tab.dataset.dragging
+    delete current.tab.dataset.docking
     if (current.tab.hasPointerCapture(current.pointerId)) current.tab.releasePointerCapture(current.pointerId)
-    if (drop && current.to !== current.from) options.onDrop(current.id, current.to)
+    if (drop && current.outside) options.outside?.drop(current.id)
+    else if (drop && current.to !== current.from) options.onDrop(current.id, current.to)
+    options.outside?.end()
     void nextTick(() =>
       requestAnimationFrame(() => {
         for (const tab of current.tabs) tab.style.transition = ''

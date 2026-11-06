@@ -3,6 +3,7 @@ import { useEventListener, useMutationObserver } from '@vueuse/core'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useTabDrag } from '@/composables/useTabDrag'
+import { dockSpot } from '@/lib/tab-drag'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import NewTerminalMenu from './NewTerminalMenu.vue'
@@ -90,11 +91,37 @@ function select(id: string) {
   if (route.name !== 'terminals') void router.push({ name: 'terminals' })
 }
 
+/**
+ * Where a tab dragged to this point of the window would go: beside a terminal of the shown tab,
+ * on the side of it nearest to the point. The page has to show the terminals, and another tab.
+ */
+function dockAt(tabId: string, x: number, y: number) {
+  const target = terminals.activeTab
+  if (route.name !== 'terminals' || !target || target.id === tabId) return null
+  const page = document.querySelector('[data-slot="terminal-workspace"]')?.getBoundingClientRect()
+  if (!page?.width || !page.height) return null
+  const spot = dockSpot(target.layout, (x - page.left) / page.width, (y - page.top) / page.height)
+  return spot && terminals.dockLayout(tabId, spot.id, spot.side) ? { tabId, targetId: spot.id, side: spot.side } : null
+}
+
 // Tabs are reordered by dragging; in the title bar the page follows the selected tab while they move.
+// Dragged onto the page, a tab joins the shown one as a part of it.
 const { dragging } = useTabDrag(strip, {
   vertical: props.vertical,
   onDrop: (tabId, index) => terminals.move(tabId, index),
   onMove: props.vertical ? undefined : measureSelected,
+  outside: {
+    over: (tabId, x, y) => {
+      const next = dockAt(tabId, x, y)
+      if (next?.targetId !== ui.tabDock?.targetId || next?.side !== ui.tabDock?.side) ui.tabDock = next
+      return next !== null
+    },
+    drop: () => {
+      const dock = ui.tabDock
+      if (dock) terminals.dock(dock.tabId, dock.targetId, dock.side)
+    },
+    end: () => (ui.tabDock = null),
+  },
 })
 watchEffect(() => (ui.draggingTab = dragging.value))
 onBeforeUnmount(() => (ui.draggingTab = null))

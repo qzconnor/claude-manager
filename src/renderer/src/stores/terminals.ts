@@ -4,9 +4,11 @@ import { moveItem } from '@shared/order'
 import {
   dropPanes,
   hasPane,
+  insertPane,
   mapPanes,
   neighbourPane,
   paneIds,
+  parsePaneNode,
   removePanes,
   setRatio,
   type PaneDirection,
@@ -262,6 +264,39 @@ export const useTerminalsStore = defineStore('terminals', () => {
   }
 
   /**
+   * The layout of the tab of `targetId` with all terminals of the tab `tabId` on `side` of it. Null
+   * when that can't be: the same tab, or a tree deeper than main takes.
+   */
+  function dockLayout(tabId: string, targetId: string, side: PaneDirection): PaneSplit | null {
+    const tab = tabs.value.find((t) => t.id === tabId)
+    const target = tabOf(targetId)
+    if (!tab || !target || tab === target) return null
+    const layout = insertPane(target.layout, targetId, tab.layout, side)
+    return parsePaneNode(layout) ? (layout as PaneSplit) : null
+  }
+
+  /**
+   * Moves all terminals of the tab `tabId` into the tab of `targetId`, on `side` of that terminal, and
+   * gives them the keyboard. The tab stays where the target was in the tab bar.
+   */
+  function dock(tabId: string, targetId: string, side: PaneDirection): void {
+    const layout = dockLayout(tabId, targetId, side)
+    if (!layout) return
+    const tab = tabs.value.find((t) => t.id === tabId)!
+    const target = tabOf(targetId)!
+    // Shown right away, not only when main answers.
+    splits.value = [...dropPanes(splits.value, new Set(paneIds(layout))), layout]
+    const moved = new Set(tab.panes.map((p) => p.id))
+    const list = terminals.value.filter((t) => !moved.has(t.id))
+    const last = Math.max(...target.panes.map((p) => list.indexOf(p)))
+    list.splice(last + 1, 0, ...tab.panes)
+    terminals.value = list
+    focus(tab.focused.id)
+    saveOrder()
+    void window.api.terminals.arrange(plain(layout))
+  }
+
+  /**
    * Another share for the split at `path` in the tab. Shown right away; main keeps it (and the next
    * start restores it) once `save` is set, e.g. when the divider is let go.
    */
@@ -316,6 +351,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
     move,
     neighbour,
     detach,
+    dockLayout,
+    dock,
     resize,
   }
 })

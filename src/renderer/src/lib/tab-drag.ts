@@ -1,4 +1,6 @@
 import { moveItem } from '@shared/order'
+import { layoutPanes, type PaneDirection, type PaneRect } from '@shared/panes'
+import type { PaneNode } from '@shared/types'
 
 /** Where a tab sits along the strip's axis (px), as measured when the drag started. */
 export interface Slot {
@@ -54,4 +56,40 @@ export function clampOffset(slots: readonly Slot[], from: number, offset: number
   const min = first.start - dragged.start
   const max = last.start + last.size - (dragged.start + dragged.size)
   return Math.max(min, Math.min(max, offset))
+}
+
+/** Where a tab dropped on the page goes: beside the part of terminal `id`, on `side` of it. */
+export interface DockSpot {
+  id: string
+  side: PaneDirection
+}
+
+/**
+ * The part of the shown tab under a point (`x`, `y` as shares of the page, 0–1), and the side of it
+ * the point is nearest to: the part is cut along its diagonals, like the drop zones of editors.
+ */
+export function dockSpot(layout: PaneNode, x: number, y: number): DockSpot | null {
+  for (const [id, rect] of layoutPanes(layout).panes) {
+    const u = (x - rect.left) / rect.width
+    const v = (y - rect.top) / rect.height
+    if (!(u >= 0 && u <= 1 && v >= 0 && v <= 1)) continue
+    const sides: [PaneDirection, number][] = [
+      ['left', u],
+      ['right', 1 - u],
+      ['up', v],
+      ['down', 1 - v],
+    ]
+    return { id, side: sides.reduce((best, next) => (next[1] < best[1] ? next : best))[0] }
+  }
+  return null
+}
+
+/** The half of a part on `side`: where the dropped tab will be. */
+export function dockRect(rect: PaneRect, side: PaneDirection): PaneRect {
+  const width = rect.width / 2
+  const height = rect.height / 2
+  if (side === 'left') return { ...rect, width }
+  if (side === 'right') return { ...rect, left: rect.left + width, width }
+  if (side === 'up') return { ...rect, height }
+  return { ...rect, top: rect.top + height, height }
 }

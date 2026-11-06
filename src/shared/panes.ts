@@ -53,6 +53,22 @@ export function splitPane(node: PaneNode, id: string, added: string, direction: 
   return node === id ? { direction, ratio: 0.5, first: id, second: added } : node
 }
 
+/**
+ * Puts `added` (a terminal, or all parts of another tab) on `side` of the part of `id`; the two share
+ * that part in half. The tree as it is when `id` isn't in it.
+ */
+export function insertPane(node: PaneNode, id: string, added: PaneNode, side: PaneDirection): PaneNode {
+  if (isSplit(node)) {
+    const first = insertPane(node.first, id, added, side)
+    const second = first === node.first ? insertPane(node.second, id, added, side) : node.second
+    return first === node.first && second === node.second ? node : { ...node, first, second }
+  }
+  if (node !== id) return node
+  const direction = side === 'left' || side === 'right' ? 'row' : 'column'
+  const before = side === 'left' || side === 'up'
+  return { direction, ratio: 0.5, first: before ? added : id, second: before ? id : added }
+}
+
 /** Without the terminals in `ids`: a split that loses a part is replaced by the other one. Null when nothing is left. */
 export function removePanes(node: PaneNode, ids: ReadonlySet<string>): PaneNode | null {
   if (!isSplit(node)) return ids.has(node) ? null : node
