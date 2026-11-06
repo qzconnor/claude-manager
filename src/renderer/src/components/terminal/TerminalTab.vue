@@ -17,7 +17,6 @@ import {
   XIcon,
 } from '@lucide/vue'
 import { computed, nextTick, ref, watch } from 'vue'
-import type { AttentionKind } from '@shared/types'
 import AccountChoiceItems from '@/components/common/AccountChoiceItems.vue'
 import AccountDot from '@/components/common/AccountDot.vue'
 import {
@@ -25,6 +24,7 @@ import {
   ContextMenuContent,
   ContextMenuGroup,
   ContextMenuItem,
+  ContextMenuLabel,
   ContextMenuSeparator,
   ContextMenuShortcut,
   ContextMenuSub,
@@ -46,11 +46,14 @@ import { useUiStore } from '@/stores/ui'
 import TerminalTabCard from './TerminalTabCard.vue'
 
 /**
- * A tab shows the terminal in it that has (or last had) the keyboard; its menu acts on that one.
- * `vertical`: a full-width row in the sidebar, with the hover card beside it.
+ * A tab shows each of its terminals: one fills it, the terminals of a split tab sit side by side in
+ * it (one below the other in the sidebar), each with its own close button. Hover card and menu act on
+ * the terminal under the pointer, else on the one that has (or last had) the keyboard.
+ * `vertical`: a full-width entry in the sidebar, with the hover card beside it.
  */
 const props = defineProps<{ tab: TerminalTab; selected: boolean; vertical?: boolean }>()
-const emit = defineEmits<{ select: [] }>()
+/** A terminal of the tab was clicked. */
+const emit = defineEmits<{ select: [id: string] }>()
 
 const accounts = useAccountsStore()
 const terminals = useTerminalsStore()
@@ -58,24 +61,31 @@ const launcher = useLauncher()
 const { closeTerminal, closeTab, stopTerminal, restartTerminal } = useTerminalActions()
 const accountSwitch = useAccountSwitch()
 
-const terminal = computed(() => props.tab.focused)
-/** The tab holds several terminals: a symbol shows how the first split divides it. */
 const split = computed(() => props.tab.panes.length > 1)
-const splitIcon = computed(() =>
-  typeof props.tab.layout === 'object' && props.tab.layout.direction === 'column' ? Rows2Icon : Columns2Icon,
-)
+/** The terminal under the pointer; kept while the menu is open, which acts on it. */
+const pointed = ref<string | null>(null)
+const terminal = computed(() => props.tab.panes.find((p) => p.id === pointed.value) ?? props.tab.focused)
 
-/** The account whose limits the tab uses; the session may lie with another one after a switch. */
+/** The account whose limits the terminal uses; the session may lie with another one after a switch. */
 const account = computed(() => accounts.get(terminal.value.authAccountId))
 const sessionAccount = computed(() =>
   terminal.value.accountId === terminal.value.authAccountId ? undefined : accounts.get(terminal.value.accountId),
 )
 const exited = computed(() => terminal.value.status === 'exited')
-/** The colour of a terminal of the tab that is at work. */
-const busyColor = computed(() => {
-  const busy = props.tab.panes.find((p) => p.busy)
-  return busy ? (accounts.get(busy.authAccountId)?.color ?? '') : null
-})
+
+/**
+ * The terminals with what their part of the tab shows. News the user hasn't seen is a dot where the
+ * close button is (until hovered), orange when Claude waits. In a selected split tab the terminals
+ * without the keyboard are dimmed.
+ */
+const entries = computed(() =>
+  props.tab.panes.map((pane) => ({
+    pane,
+    color: accounts.get(pane.authAccountId)?.color,
+    attention: pane.attention ? attentionLook[pane.attention] : null,
+    dimmed: split.value && props.selected && pane.id !== props.tab.focused.id,
+  })),
+)
 
 // The terminal pane lays its own colour over the page's surface; the selected tab in the title bar
 // stacks the same two layers, so it has exactly the colour of the terminal it joins.
@@ -85,6 +95,10 @@ const joinedBackground = computed(() =>
     ? { background: `linear-gradient(${containerBackground.value}, ${containerBackground.value}), var(--surface)` }
     : undefined,
 )
+/** A split tab in the title bar narrows down to this before the strip starts to scroll. */
+const minWidth = computed(() =>
+  !props.vertical && split.value ? { minWidth: `${props.tab.panes.length * 6}rem` } : undefined,
+)
 // Choices are built when the menu opens, so they reflect the current limits.
 const menuOpen = ref(false)
 const choices = computed(() =>
@@ -92,32 +106,28 @@ const choices = computed(() =>
 )
 const canSwitch = computed(() => terminal.value.mode === 'session' && Boolean(terminal.value.sessionId))
 
-/**
- * News the user hasn't seen, in any terminal of the tab: a dot where the close button is (until
- * hovered), orange when Claude waits.
- */
-const ATTENTION_ORDER: AttentionKind[] = ['input', 'limit', 'done']
-const attention = computed(() => {
-  const kind = ATTENTION_ORDER.find((k) => props.tab.panes.some((p) => p.attention === k))
-  return kind ? attentionLook[kind] : null
-})
-
-function toggleMuted() {
-  void attempt(
-    () => terminals.setMuted(terminal.value.id, !terminal.value.muted),
-    'Benachrichtigungen des Tabs konnten nicht geändert werden',
-  )
+function point(id: string | null) {
+  if (!menuOpen.value) pointed.value = id
 }
 
-const editing = ref(false)
+function toggleMuted() {
+  const { id, muted } = terminal.value
+  void attempt(() => terminals.setMuted(id, !muted), 'Benachrichtigungen des Tabs konnten nicht geändert werden')
+}
+
+/** Id of the terminal whose title is being edited. */
+const renaming = ref<string | null>(null)
 const draft = ref('')
 const input = ref<HTMLInputElement | null>(null)
+const setInput = (el: unknown) => {
+  input.value = el instanceof HTMLInputElement ? el : null
+}
 
 // The hover card steps aside for the context menu, for renaming and while tabs are dragged.
 // After a drag it waits until the pointer comes back, instead of opening on the dropped tab.
 const ui = useUiStore()
 const hovered = ref(false)
-const cardOpen = computed(() => hovered.value && !menuOpen.value && !editing.value && !ui.draggingTab)
+const cardOpen = computed(() => hovered.value && !menuOpen.value && !renaming.value && !ui.draggingTab)
 watch(
   () => ui.draggingTab,
   (id) => {
@@ -128,11 +138,14 @@ watch(
 function onMenuOpen(open: boolean) {
   menuOpen.value = open
   if (open) hovered.value = false
+  else pointed.value = null
 }
 
-function startRename() {
-  draft.value = terminal.value.title
-  editing.value = true
+function startRename(id = terminal.value.id) {
+  const pane = props.tab.panes.find((p) => p.id === id)
+  if (!pane) return
+  draft.value = pane.title
+  renaming.value = id
   hovered.value = false
   void nextTick(() => {
     input.value?.focus()
@@ -141,25 +154,28 @@ function startRename() {
 }
 
 async function commitRename() {
-  if (!editing.value) return
-  editing.value = false
+  const id = renaming.value
+  if (!id) return
+  renaming.value = null
+  const pane = props.tab.panes.find((p) => p.id === id)
+  if (!pane) return
   const title = draft.value.trim()
-  // Empty gives the tab back the session's title.
-  if (title ? title !== terminal.value.title : terminal.value.fixedTitle) {
-    await attempt(() => terminals.rename(terminal.value.id, title), 'Umbenennen fehlgeschlagen')
+  // Empty gives the terminal back the session's title.
+  if (title ? title !== pane.title : pane.fixedTitle) {
+    await attempt(() => terminals.rename(id, title), 'Umbenennen fehlgeschlagen')
   }
 }
 
 function onRenameKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter') void commitRename()
-  else if (event.key === 'Escape') editing.value = false
+  else if (event.key === 'Escape') renaming.value = null
 }
 
-function onMouseDown(event: MouseEvent) {
-  // Middle click closes like in Windows Terminal and browsers.
+function onMouseDown(event: MouseEvent, id: string) {
+  // Middle click closes like in Windows Terminal and browsers; in a split tab only that terminal.
   if (event.button === 1) {
     event.preventDefault()
-    void closeTab(props.tab)
+    void closeTerminal(id)
   }
 }
 
@@ -185,11 +201,12 @@ function openFolder() {
             :aria-selected="selected"
             :class="
               cn(
-                'app-no-drag group/tab relative flex cursor-pointer items-center gap-2 pr-1 pl-3 text-xs transition-colors',
+                'app-no-drag group/tab relative flex cursor-pointer text-xs transition-colors',
                 vertical
                   ? cn(
                       // While dragged (data-dragging, see useTabDrag) it looks lifted like the selected one.
-                      'h-8 w-full shrink-0 rounded-lg data-dragging:bg-surface-strong data-dragging:text-foreground data-dragging:shadow-md data-dragging:ring-1 data-dragging:ring-foreground/10',
+                      'w-full shrink-0 rounded-lg data-dragging:bg-surface-strong data-dragging:text-foreground data-dragging:shadow-md data-dragging:ring-1 data-dragging:ring-foreground/10',
+                      split && 'flex-col',
                       selected
                         ? 'bg-surface-strong text-foreground shadow-sm ring-1 ring-foreground/10'
                         : 'text-muted-foreground hover:bg-accent hover:text-foreground',
@@ -198,90 +215,107 @@ function openFolder() {
                     // stays open at the bottom, so it joins the terminal below. The others light up as a floating pill.
                     // Tabs narrow down to min-w-28 like in a browser before the strip starts to scroll.
                     cn(
-                      'isolate max-w-56 min-w-28 rounded-t-lg border-x border-t',
+                      'isolate rounded-t-lg border-x border-t',
+                      !split && 'max-w-56 min-w-28',
                       selected
                         ? 'border-border text-foreground in-data-unfocused:text-muted-foreground'
                         : 'border-transparent text-muted-foreground before:absolute before:inset-x-0 before:inset-y-1 before:-z-10 before:rounded-lg before:transition-colors hover:text-foreground hover:before:bg-accent data-dragging:text-foreground data-dragging:before:bg-surface-strong data-dragging:before:shadow-md data-dragging:before:ring-1 data-dragging:before:ring-foreground/10',
                     ),
               )
             "
-            :style="joinedBackground"
-            @click="emit('select')"
-            @dblclick="startRename"
-            @mousedown="onMouseDown"
+            :style="[joinedBackground, minWidth]"
+            @pointerleave="point(null)"
           >
-            <!-- Same width for every symbol, so the title doesn't move when Claude Code starts or stops working. -->
-            <span class="flex size-3.5 shrink-0 items-center justify-center">
-              <KeyRoundIcon v-if="terminal.mode === 'login'" class="size-3.5" />
-              <LoaderCircleIcon
-                v-else-if="busyColor !== null"
-                role="status"
-                aria-label="Claude Code arbeitet"
-                class="size-3.5 animate-spin"
-                :style="{ color: busyColor || undefined }"
-              />
-              <SquareTerminalIcon v-else-if="terminal.mode === 'shell'" class="size-3.5" />
-              <TriangleAlertIcon v-else-if="terminal.limit" class="size-3.5 text-warning" />
-              <AccountDot v-else :color="account?.color" :class="cn(exited && 'opacity-40')" />
-            </span>
-
-            <input
-              v-if="editing"
-              ref="input"
-              v-model="draft"
-              aria-label="Tab-Titel"
-              placeholder="Automatischer Titel"
-              class="min-w-0 flex-1 rounded-sm bg-transparent px-1 ring-1 ring-ring outline-none"
-              @blur="commitRename"
-              @keydown.stop="onRenameKeydown"
-              @click.stop
-              @dblclick.stop
-            />
-            <span
-              v-else
-              :class="
-                cn(
-                  'min-w-0 flex-1 truncate',
-                  exited && 'text-muted-foreground line-through',
-                  attention && !exited && 'font-medium text-foreground',
-                )
-              "
-            >
-              {{ terminal.title }}
-            </span>
-            <component
-              :is="splitIcon"
-              v-if="split && !editing"
-              role="img"
-              :aria-label="`${tab.panes.length} Terminals`"
-              class="size-3 shrink-0 text-muted-foreground"
-            />
-            <BellOffIcon
-              v-if="terminal.muted && !editing"
-              aria-label="Benachrichtigungen stummgeschaltet"
-              class="size-3 shrink-0 text-muted-foreground"
-            />
-
-            <button
-              type="button"
-              aria-label="Tab schließen"
-              :class="
-                cn(
-                  'flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover/tab:opacity-100 hover:bg-accent hover:text-foreground',
-                  (selected || attention) && 'opacity-100',
-                )
-              "
-              @click.stop="closeTab(tab)"
-              @dblclick.stop
-            >
+            <template v-for="({ pane, color, attention, dimmed }, index) in entries" :key="pane.id">
               <span
-                v-if="attention"
-                role="status"
-                :aria-label="attention.label"
-                :class="cn('size-2 rounded-full group-hover/tab:hidden', attention.dot)"
+                v-if="index > 0"
+                aria-hidden="true"
+                :class="cn('shrink-0 bg-border', vertical ? 'mx-3 h-px' : 'h-4 w-px self-center')"
               />
-              <XIcon :class="cn('size-3.5', attention && 'hidden group-hover/tab:block')" />
-            </button>
+              <div
+                :data-pane-id="pane.id"
+                :class="
+                  cn(
+                    'group/pane flex min-w-0 items-center gap-2 pr-1 pl-3',
+                    // One below the other in the sidebar, each as high as a tab.
+                    // Side by side in the title bar, each as wide as its title up to max-w-44.
+                    vertical && split ? 'h-8 shrink-0' : cn(split ? 'max-w-44 flex-auto' : 'flex-1', vertical && 'h-8'),
+                    dimmed && 'text-muted-foreground hover:text-foreground',
+                  )
+                "
+                @click="emit('select', pane.id)"
+                @dblclick="startRename(pane.id)"
+                @mousedown="onMouseDown($event, pane.id)"
+                @pointermove="point(pane.id)"
+                @contextmenu="pointed = pane.id"
+              >
+                <!-- Same width for every symbol, so the title doesn't move when Claude Code starts or stops working. -->
+                <span class="flex size-3.5 shrink-0 items-center justify-center">
+                  <KeyRoundIcon v-if="pane.mode === 'login'" class="size-3.5" />
+                  <LoaderCircleIcon
+                    v-else-if="pane.busy"
+                    role="status"
+                    aria-label="Claude Code arbeitet"
+                    class="size-3.5 animate-spin"
+                    :style="{ color: color || undefined }"
+                  />
+                  <SquareTerminalIcon v-else-if="pane.mode === 'shell'" class="size-3.5" />
+                  <TriangleAlertIcon v-else-if="pane.limit" class="size-3.5 text-warning" />
+                  <AccountDot v-else :color="color" :class="cn(pane.status === 'exited' && 'opacity-40')" />
+                </span>
+
+                <input
+                  v-if="renaming === pane.id"
+                  :ref="setInput"
+                  v-model="draft"
+                  aria-label="Tab-Titel"
+                  placeholder="Automatischer Titel"
+                  class="min-w-0 flex-1 rounded-sm bg-transparent px-1 ring-1 ring-ring outline-none"
+                  @blur="commitRename"
+                  @keydown.stop="onRenameKeydown"
+                  @click.stop
+                  @dblclick.stop
+                />
+                <span
+                  v-else
+                  :class="
+                    cn(
+                      'min-w-0 flex-1 truncate',
+                      pane.status === 'exited' && 'text-muted-foreground line-through',
+                      attention && pane.status !== 'exited' && 'font-medium text-foreground',
+                    )
+                  "
+                >
+                  {{ pane.title }}
+                </span>
+                <BellOffIcon
+                  v-if="pane.muted && renaming !== pane.id"
+                  aria-label="Benachrichtigungen stummgeschaltet"
+                  class="size-3 shrink-0 text-muted-foreground"
+                />
+
+                <button
+                  type="button"
+                  :aria-label="split ? 'Terminal schließen' : 'Tab schließen'"
+                  :class="
+                    cn(
+                      'flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover/pane:opacity-100 hover:bg-accent hover:text-foreground',
+                      (selected || attention) && 'opacity-100',
+                    )
+                  "
+                  @click.stop="closeTerminal(pane.id)"
+                  @dblclick.stop
+                >
+                  <span
+                    v-if="attention"
+                    role="status"
+                    :aria-label="attention.label"
+                    :class="cn('size-2 rounded-full group-hover/pane:hidden', attention.dot)"
+                  />
+                  <XIcon :class="cn('size-3.5', attention && 'hidden group-hover/pane:block')" />
+                </button>
+              </div>
+            </template>
           </div>
         </HoverCardTrigger>
       </ContextMenuTrigger>
@@ -295,8 +329,10 @@ function openFolder() {
       </HoverCardContent>
     </HoverCard>
     <ContextMenuContent class="w-64">
+      <!-- In a split tab: which of its terminals the menu acts on. -->
+      <ContextMenuLabel v-if="split" class="truncate">{{ terminal.title }}</ContextMenuLabel>
       <ContextMenuGroup>
-        <ContextMenuItem @select="startRename">
+        <ContextMenuItem @select="startRename()">
           <PencilIcon />
           Umbenennen
         </ContextMenuItem>
@@ -356,7 +392,8 @@ function openFolder() {
         <ContextMenuItem v-if="split" @select="closeTerminal(terminal.id)">
           <XIcon />
           Terminal schließen
-          <ContextMenuShortcut>Strg+Umschalt+W</ContextMenuShortcut>
+          <!-- The shortcut closes the terminal with the keyboard, which needn't be the one right-clicked. -->
+          <ContextMenuShortcut v-if="terminal.id === terminals.activeId">Strg+Umschalt+W</ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem @select="closeTab(tab)">
           <XIcon v-if="!split" />
