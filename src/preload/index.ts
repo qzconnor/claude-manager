@@ -75,6 +75,8 @@ const api: ManagerApi = {
     onData: (cb) => subscribe(IpcEvent.terminalData, cb),
     onExit: (cb) => subscribe(IpcEvent.terminalExit, cb),
     onActivate: (cb) => subscribe(IpcEvent.terminalActivate, cb),
+    onReplaced: (cb) => subscribe(IpcEvent.terminalReplaced, cb),
+    onAutoSwitch: (cb) => subscribe(IpcEvent.terminalAutoSwitch, cb),
   },
   sessions: {
     list: (accountId) => invoke(IpcInvoke.sessionsList, accountId),

@@ -97,6 +97,7 @@ export function createDefaultSettings(platform = 'win32'): AppSettings {
       defaultArgs: [],
       usageRefreshMinutes: 5,
       continuePrompt: 'Mach weiter',
+      autoSwitch: false,
     },
     general: {
       confirmCloseRunning: true,

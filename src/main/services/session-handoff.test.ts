@@ -128,6 +128,14 @@ describe('SessionHandoff.continueTerminal', () => {
     expect(existsSync(transcriptOf('token'))).toBe(false)
   })
 
+  it('tells that the new tab replaces the old one before the old one closes', async () => {
+    await writeTranscript()
+    const service = handoff()
+    service.on('replaced', (oldId, info) => steps.push(`replaced ${oldId} by ${info.id}`))
+    await service.continueTerminal('old', 'token')
+    expect(steps).toEqual(['stop old', 'create', 'replaced old by new', 'close old'])
+  })
+
   it('copies the session into the folder of another browser login', async () => {
     const transcript = await writeTranscript()
     await mkdir(join(transcript, '..', S, 'subagents'), { recursive: true })

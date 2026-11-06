@@ -20,6 +20,7 @@ import { GitService } from './services/git-service'
 import { IndexerClient } from './services/indexer-client'
 import { NotificationService } from './services/notification-service'
 import { LoginProfiles } from './services/login-profiles'
+import { AutoSwitch } from './services/auto-switch'
 import { SessionHandoff } from './services/session-handoff'
 import { SessionService } from './services/session-service'
 import { SettingsService } from './services/settings-service'
@@ -75,6 +76,8 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   const handoff = new SessionHandoff(accounts, sessions, terminals, settings)
   const usage = new UsageService(accounts, settings, indexer, userDataDir, userAgent)
   await usage.init()
+  const autoSwitch = new AutoSwitch(accounts, terminals, usage, settings, handoff)
+  autoSwitch.init()
   const git = new GitService()
   const command = new CommandIntegration(userDataDir)
   void command.init()
@@ -85,6 +88,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     usage: () => showUsage(),
   })
   await notifications.init()
+  notifications.watchAutoSwitch(autoSwitch)
 
   settings.on('changed', (next, previous) => {
     if (next.claude.executablePath !== previous.claude.executablePath) cli.invalidate()
@@ -100,6 +104,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     terminals,
     sessions,
     handoff,
+    autoSwitch,
     usage,
     notifications,
     git,

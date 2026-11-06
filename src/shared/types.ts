@@ -221,6 +221,17 @@ export interface TerminalInfo {
   commandLine: string
 }
 
+/** A session that hit a limit went on with another account by itself (setting `claude.autoSwitch`). */
+export interface AutoSwitchEvent {
+  /** The tab as it stopped at the limit. */
+  from: TerminalInfo
+  /** The tab the session goes on in; null when the switch failed. */
+  to: TerminalInfo | null
+  targetId: string
+  /** Why the switch failed. */
+  error: string | null
+}
+
 // ---------------------------------------------------------------------------
 // Sessions (Claude Code transcripts)
 // ---------------------------------------------------------------------------
@@ -478,6 +489,8 @@ export interface ClaudeSettings {
   usageRefreshMinutes: number
   /** Sent after switching the account of a session that hit its limit. Empty = send nothing. */
   continuePrompt: string
+  /** A session that hits a limit continues by itself with the next free account. */
+  autoSwitch: boolean
 }
 
 /**

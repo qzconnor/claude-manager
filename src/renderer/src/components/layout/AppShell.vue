@@ -3,6 +3,7 @@ import { useElementBounding } from '@vueuse/core'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalWorkspace from '@/components/terminal/TerminalWorkspace.vue'
+import { useAccountSwitch } from '@/composables/useAccountSwitch'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
 import { cn } from '@/lib/utils'
 import { useTerminalsStore } from '@/stores/terminals'
@@ -58,6 +59,11 @@ const offActivate = window.api.terminals.onActivate((id) => {
   if (route.name !== 'terminals') void router.push({ name: 'terminals' })
 })
 onBeforeUnmount(offActivate)
+
+// A session at a limit went on with another account by itself (setting `claude.autoSwitch`).
+const accountSwitch = useAccountSwitch()
+const offAutoSwitch = window.api.terminals.onAutoSwitch((event) => accountSwitch.announceAutoSwitch(event))
+onBeforeUnmount(offAutoSwitch)
 
 // A click on the warning about a limit.
 const offUsageShow = window.api.usage.onShow(() => void router.push({ name: 'dashboard' }))

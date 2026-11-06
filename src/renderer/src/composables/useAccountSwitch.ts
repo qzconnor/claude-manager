@@ -1,26 +1,38 @@
 import { toast } from 'vue-sonner'
 import { useRouter } from 'vue-router'
-import type { Account, SessionSummary, TerminalInfo } from '@shared/types'
-import { canLendCredentials } from '@shared/utils'
+import {
+  accountChoices,
+  type AccountChoice as SharedAccountChoice,
+  type AccountStanding,
+} from '@shared/account-choice'
+import type { Account, AutoSwitchEvent, SessionSummary, TerminalInfo } from '@shared/types'
 import { attempt } from '@/lib/errors'
 import { formatClock } from '@/lib/format'
-import { clampPercent } from '@/lib/usage'
+import { limitLabel } from '@/lib/usage'
 import { useAccountsStore } from '@/stores/accounts'
 import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import { useUsageStore } from '@/stores/usage'
 
-export interface AccountChoice {
-  account: Account
+export interface AccountChoice extends SharedAccountChoice {
   /** Short status, e.g. "5 Std. 12 %" or "Limit bis 19:40". */
   hint: string | null
-  /** Known to be at a limit right now. */
-  limited: boolean
-  /** Not logged in, so it can't take over. */
-  disabled: boolean
-  /** A browser login: the session is copied to this account instead of borrowing its key. */
-  copies: boolean
+}
+
+function hintFor(standing: AccountStanding, now: number): string | null {
+  switch (standing.kind) {
+    case 'logged-out':
+      return 'nicht angemeldet'
+    case 'blocked':
+      return standing.resetsAt ? `Limit bis ${formatClock(standing.resetsAt, now)}` : 'Limit erreicht'
+    case 'pay-per-use':
+      return 'nach Verbrauch'
+    case 'usage':
+      return standing.percent >= 100 ? `${standing.label}: Limit erreicht` : `${standing.label} ${standing.percent} %`
+    default:
+      return null
+  }
 }
 
 /** Continuing a session with another account, e.g. when one hit its usage limit. */
@@ -32,58 +44,53 @@ export function useAccountSwitch() {
   const settings = useSettingsStore()
   const ui = useUiStore()
 
-  function describe(account: Account, sessionAccountId: string, now: number): AccountChoice {
-    const copies = account.id !== sessionAccountId && !canLendCredentials(account.kind)
-    const base = { account, copies, limited: false, disabled: false }
-    if (account.authState === 'missing') return { ...base, hint: 'nicht angemeldet', disabled: true }
-
-    // Another tab that stopped at this account's limit is the most precise source (also for tokens).
-    const blocked = terminals.terminals.find(
-      (t) => t.authAccountId === account.id && t.limit && (!t.limit.resetsAt || Date.parse(t.limit.resetsAt) > now),
+  /**
+   * Accounts a session could continue with, except the one it runs with now, in the order of
+   * `accountChoices`. Another tab that stopped at an account's limit counts as that limit.
+   */
+  function choices(sessionAccountId: string, currentAccountId: string, now = Date.now()): AccountChoice[] {
+    const blocked = terminals.terminals.flatMap((t) =>
+      t.limit ? [{ accountId: t.authAccountId, resetsAt: t.limit.resetsAt }] : [],
     )
-    if (blocked?.limit) {
-      const until = blocked.limit.resetsAt ? `Limit bis ${formatClock(blocked.limit.resetsAt, now)}` : 'Limit erreicht'
-      return { ...base, hint: until, limited: true }
-    }
-    if (account.kind === 'apiKey') return { ...base, hint: 'nach Verbrauch' }
-
-    const u = usage.byAccount.get(account.id)
-    const windows = [
-      { label: '5 Std.', window: u?.fiveHour },
-      { label: 'Woche', window: u?.sevenDay },
-    ].filter((w) => w.window)
-    if (u?.status !== 'ok' || windows.length === 0) return { ...base, hint: null }
-    const top = windows.reduce((a, b) => (b.window!.percent > a.window!.percent ? b : a))
-    const percent = clampPercent(top.window!.percent)
-    return percent >= 100
-      ? { ...base, hint: `${top.label}: Limit erreicht`, limited: true }
-      : { ...base, hint: `${top.label} ${percent} %` }
+    const list = accountChoices(
+      { accounts: accounts.accounts, usage: (id) => usage.byAccount.get(id), blocked, now },
+      sessionAccountId,
+      currentAccountId,
+    )
+    return list.map((choice) => ({ ...choice, hint: hintFor(choice.standing, now) }))
   }
 
   /**
-   * Accounts a session could continue with, except the one it runs with now. Accounts that take
-   * over without copying the session come first, then browser logins; accounts at their limit or
-   * not logged in go last. Within each group the account order stays.
+   * `prompt`: the message sent on its own after the switch, if any. `cause`: why the app switched by
+   * itself; it leads the message, which then says the account it went on with.
    */
-  function choices(sessionAccountId: string, currentAccountId: string, now = Date.now()): AccountChoice[] {
-    const list = accounts.accounts.filter((a) => a.id !== currentAccountId).map((a) => describe(a, sessionAccountId, now))
-    const rank = (c: AccountChoice) => (c.limited || c.disabled ? 2 : c.copies ? 1 : 0)
-    return [0, 1, 2].flatMap((r) => list.filter((c) => rank(c) === r))
-  }
-
-  /** `prompt`: the message sent on its own after the switch, if any. */
-  function announce(info: TerminalInfo, sessionAccountId: string, target: Account, prompt = ''): void {
+  function announce(info: TerminalInfo, sessionAccountId: string, target: Account, prompt = '', cause?: string): void {
     const sent = prompt && info.resumeSessionId ? `„${prompt}“ ist geschickt, Claude macht weiter. ` : ''
+    const title = (fallback: string) => (cause ? `${cause} · weiter mit „${target.name}“` : fallback)
     if (!info.resumeSessionId) {
-      toast.success(`Neue Session mit „${target.name}“`, { description: 'Die bisherige Session hatte noch keinen Verlauf.' })
+      toast.success(title(`Neue Session mit „${target.name}“`), { description: 'Die bisherige Session hatte noch keinen Verlauf.' })
     } else if (info.accountId !== sessionAccountId) {
       const from = accounts.get(sessionAccountId)?.name ?? 'dem bisherigen Account'
-      toast.success(`Session zu „${target.name}“ kopiert`, {
+      toast.success(title(`Session zu „${target.name}“ kopiert`), {
         description: `${sent}Sie läuft jetzt dort weiter. Bei „${from}“ bleibt der Stand bis zum Wechsel.`,
       })
     } else {
-      toast.success(`Läuft jetzt über „${target.name}“`, {
+      toast.success(title(`Läuft jetzt über „${target.name}“`), {
         description: `${sent}Die erste Antwort liest den Verlauf neu ein und zählt dadurch etwas mehr.`,
+      })
+    }
+  }
+
+  /** Tells about a switch the app made by itself at a limit (setting `claude.autoSwitch`), or why it failed. */
+  function announceAutoSwitch(event: AutoSwitchEvent): void {
+    const from = accounts.get(event.from.authAccountId)?.name ?? 'dem bisherigen Account'
+    const cause = `${limitLabel(event.from.limit?.type ?? null)} von „${from}“ erreicht`
+    const target = accounts.get(event.targetId)
+    if (event.to && target) {
+      announce(event.to, event.from.accountId, target, settings.settings.claude.continuePrompt, cause)
+    } else {
+      toast.error(cause, {
+        description: `Der automatische Wechsel zu „${target?.name ?? 'einem anderen Account'}“ ging nicht: ${event.error}`,
       })
     }
   }
@@ -119,5 +126,5 @@ export function useAccountSwitch() {
     announce(info, session.accountId, target)
   }
 
-  return { choices, continueTerminal, continueSession }
+  return { choices, continueTerminal, continueSession, announceAutoSwitch }
 }

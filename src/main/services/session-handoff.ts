@@ -1,6 +1,7 @@
 import type { Account, TerminalCreateOptions, TerminalInfo } from '@shared/types'
 import { canLendCredentials } from '@shared/utils'
 import { assertNoNewerCopy, copySession, findTranscript } from '../lib/session-files'
+import { TypedEmitter } from '../lib/typed-emitter'
 import type { AccountService } from './account-service'
 import type { SessionService } from './session-service'
 import type { SettingsService } from './settings-service'
@@ -11,7 +12,12 @@ import type { TerminalService } from './terminal-service'
  * A token or API key is lent to the session where it lies; a browser login only works in its own
  * config dir, so the session is copied there and continues as that account's session.
  */
-export class SessionHandoff {
+type Events = {
+  /** A tab was replaced by one that continues its session; sent while the old tab is still open. */
+  replaced: [oldId: string, info: TerminalInfo]
+}
+
+export class SessionHandoff extends TypedEmitter<Events> {
   private readonly switching = new Set<string>()
 
   constructor(
@@ -19,7 +25,9 @@ export class SessionHandoff {
     private readonly sessions: SessionService,
     private readonly terminals: TerminalService,
     private readonly settings: SettingsService,
-  ) {}
+  ) {
+    super()
+  }
 
   /**
    * Replaces the tab by one that continues its session with `targetId`. Null when the user doesn't
@@ -51,6 +59,8 @@ export class SessionHandoff {
       // The session stopped at its limit: let Claude carry on where it was, so nobody has to type.
       if (old.limit && options.resumeSessionId) options.prompt = this.settings.get().claude.continuePrompt || null
       const info = this.terminals.create({ ...options, title: old.fixedTitle ? old.title : null, muted: old.muted })
+      // Before the old tab goes, so the window can put the new one in its place.
+      this.emit('replaced', terminalId, info)
       this.terminals.close(terminalId)
       return info
     } finally {

@@ -640,3 +640,61 @@ describe('plainText', () => {
     expect(plainText('```\ncode only\n```')).toBeNull()
   })
 })
+
+describe('automatic account switch', () => {
+  /** Stands in for AutoSwitch: its events and which tabs it is switching. */
+  function switcher(switching: string[] = []) {
+    return Object.assign(new Emitter(), { tellsLimit: (id: string) => switching.includes(id) })
+  }
+  const atLimit = () => terminal({ limit: { type: 'five_hour', resetsAt: LATER, message: 'limit' } })
+
+  it('leaves out the limit notice of a tab that goes on with another account', async () => {
+    const service = await start()
+    service.watchAutoSwitch(switcher(['t1']) as never)
+    terminalEvents.fire('turnEnded', 't1', turn({ kind: 'limit' }))
+    expect(created()).toEqual([])
+    expect(setAttention).not.toHaveBeenCalled()
+    // Other tabs still get theirs.
+    terminalList = [terminal(), terminal({ id: 't2' })]
+    terminalEvents.fire('turnEnded', 't2', turn({ kind: 'limit' }))
+    expect(created()).toHaveLength(1)
+  })
+
+  it('tells the limit together with the account the session goes on with, and opens the new tab', async () => {
+    accountList = [account('a', 'Alpha'), account('b', 'Beta')]
+    const events = switcher()
+    const service = await start()
+    service.watchAutoSwitch(events as never)
+    events.fire('switched', atLimit(), terminal({ id: 't2', authAccountId: 'b' }), account('b', 'Beta'))
+    expect(created().map((n) => n.options)).toMatchObject([
+      { title: 'Weiter mit „Beta“', body: 'Tab\n5-Stunden-Limit von „Alpha“ erreicht' },
+    ])
+    created()[0].handlers.get('click')?.()
+    expect(open.terminal).toHaveBeenCalledWith('t2')
+    expect(win?.flashFrame).toHaveBeenCalledWith(true)
+  })
+
+  it('tells when the switch failed', async () => {
+    const events = switcher()
+    const service = await start()
+    service.watchAutoSwitch(events as never)
+    events.fire('failed', atLimit(), account('b', 'Beta'), 'Kopie ist neuer')
+    expect(created().map((n) => n.options)).toMatchObject([
+      { title: 'Wechsel zu „Beta“ fehlgeschlagen', body: 'Tab\n5-Stunden-Limit erreicht · Kopie ist neuer' },
+    ])
+  })
+
+  it('stays quiet without limit notifications, for muted tabs and for the tab on screen', async () => {
+    const events = switcher()
+    win = { ...win!, isFocused: () => true }
+    const service = await start()
+    service.watchAutoSwitch(events as never)
+    service.setViewing('t1')
+    events.fire('switched', atLimit(), terminal({ id: 't2' }), account('b', 'Beta'))
+    events.fire('switched', atLimit(), terminal({ id: 't3', muted: true }), account('b', 'Beta'))
+    settingsValue.notifications.onLimit = false
+    win = { ...win!, isFocused: () => false }
+    events.fire('switched', atLimit(), terminal({ id: 't4' }), account('b', 'Beta'))
+    expect(created()).toEqual([])
+  })
+})
