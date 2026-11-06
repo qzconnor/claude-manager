@@ -67,6 +67,8 @@ const { closeTerminal, closeTab, stopTerminal, restartTerminal } = useTerminalAc
 const accountSwitch = useAccountSwitch()
 
 const browsers = useBrowsersStore()
+/** The tab's element, where its hover card is placed. */
+const tabEl = ref<HTMLElement | null>(null)
 const split = computed(() => props.tab.panes.length > 1)
 /** The terminal under the pointer; kept while the menu is open, which acts on it. */
 const pointed = ref<string | null>(null)
@@ -155,16 +157,28 @@ function onMenuOpen(open: boolean) {
   else pointed.value = null
 }
 
+// On the way into its open hover card the card stays with the terminal it shows (its buttons act on
+// it); it lets go once the card closes.
+function onPointerLeave() {
+  if (!cardOpen.value) point(null)
+}
+watch(hovered, (open) => {
+  if (!open) point(null)
+})
+
 function startRename(id = terminal.value.id) {
   const pane = props.tab.panes.find((p) => p.id === id)
   if (!pane) return
   draft.value = pane.title
   renaming.value = id
   hovered.value = false
-  void nextTick(() => {
-    input.value?.focus()
-    input.value?.select()
-  })
+  // The open menu holds on to the keyboard; the field gets it once the menu is closed.
+  if (!menuOpen.value) void nextTick(focusRenameField)
+}
+
+function focusRenameField() {
+  input.value?.focus()
+  input.value?.select()
 }
 
 async function commitRename() {
@@ -183,6 +197,13 @@ async function commitRename() {
 function onRenameKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter') void commitRename()
   else if (event.key === 'Escape') renaming.value = null
+}
+
+/** Renaming from the menu: the closed menu gives the keyboard to the rename field instead of the page. */
+function onMenuCloseAutoFocus(event: Event) {
+  if (!renaming.value) return
+  event.preventDefault()
+  focusRenameField()
 }
 
 function onMouseDown(event: MouseEvent, id: string) {
@@ -205,11 +226,15 @@ function openFolder() {
 </script>
 
 <template>
-  <ContextMenu @update:open="onMenuOpen">
-    <HoverCard :open="cardOpen" :open-delay="500" :close-delay="100" @update:open="hovered = $event && !ui.draggingTab">
+  <!-- Each trigger hands its anchor to the nearest menu or card around it. The menu's anchor is where the
+       tab was right-clicked; with the menu around the card it went to the card, which then showed up there,
+       and the menu had none. So the menu sits inside the card, and the card is placed at the tab itself. -->
+  <HoverCard :open="cardOpen" :open-delay="500" :close-delay="100" @update:open="hovered = $event && !ui.draggingTab">
+    <ContextMenu @update:open="onMenuOpen">
       <ContextMenuTrigger as-child>
         <HoverCardTrigger as-child>
           <div
+            ref="tabEl"
             role="tab"
             :data-terminal-id="tab.id"
             :aria-selected="selected"
@@ -239,7 +264,7 @@ function openFolder() {
               )
             "
             :style="[joinedBackground, minWidth]"
-            @pointerleave="point(null)"
+            @pointerleave="onPointerLeave"
           >
             <template v-for="({ pane, color, attention, dimmed }, index) in entries" :key="pane.id">
               <span
@@ -293,7 +318,7 @@ function openFolder() {
                   :ref="setInput"
                   v-model="draft"
                   aria-label="Tab-Titel"
-                  placeholder="Automatischer Titel"
+                  :placeholder="pane.autoTitle"
                   class="min-w-0 flex-1 rounded-sm bg-transparent px-1 ring-1 ring-ring outline-none"
                   @blur="commitRename"
                   @keydown.stop="onRenameKeydown"
@@ -343,107 +368,114 @@ function openFolder() {
           </div>
         </HoverCardTrigger>
       </ContextMenuTrigger>
-      <HoverCardContent :side="vertical ? 'right' : 'bottom'" align="start" :side-offset="vertical ? 12 : 6" class="w-72">
-        <TerminalTabCard
-          :terminal="terminal"
-          :account="account"
-          :session-account="sessionAccount"
-          @open-folder="openFolder"
-        />
-      </HoverCardContent>
-    </HoverCard>
-    <ContextMenuContent class="w-64">
-      <!-- In a split tab: which of its terminals the menu acts on. -->
-      <ContextMenuLabel v-if="split" class="truncate">{{ terminal.title }}</ContextMenuLabel>
-      <ContextMenuGroup>
-        <ContextMenuItem @select="startRename()">
-          <PencilIcon />
-          Umbenennen
-        </ContextMenuItem>
-        <template v-if="isBrowser">
-          <ContextMenuItem @select="browsers.get(terminal.id)?.reload()">
-            <RotateCwIcon />
-            Neu laden
+      <ContextMenuContent class="w-64" @close-auto-focus="onMenuCloseAutoFocus">
+        <!-- In a split tab: which of its terminals the menu acts on. -->
+        <ContextMenuLabel v-if="split" class="truncate">{{ terminal.title }}</ContextMenuLabel>
+        <ContextMenuGroup>
+          <ContextMenuItem @select="startRename()">
+            <PencilIcon />
+            Umbenennen
           </ContextMenuItem>
-          <ContextMenuItem :disabled="!terminal.url?.startsWith('http')" @select="openPage">
-            <ExternalLinkIcon />
-            Im Standardbrowser öffnen
-          </ContextMenuItem>
+          <template v-if="isBrowser">
+            <ContextMenuItem @select="browsers.get(terminal.id)?.reload()">
+              <RotateCwIcon />
+              Neu laden
+            </ContextMenuItem>
+            <ContextMenuItem :disabled="!terminal.url?.startsWith('http')" @select="openPage">
+              <ExternalLinkIcon />
+              Im Standardbrowser öffnen
+            </ContextMenuItem>
+          </template>
+          <template v-else>
+            <ContextMenuItem @select="openFolder">
+              <FolderOpenIcon />
+              Ordner öffnen
+            </ContextMenuItem>
+            <ContextMenuItem @select="restartTerminal(terminal.id)">
+              <RotateCwIcon />
+              Neu starten
+            </ContextMenuItem>
+            <ContextMenuItem :disabled="exited" @select="stopTerminal(terminal.id)">
+              <CircleStopIcon />
+              Prozess beenden
+            </ContextMenuItem>
+            <ContextMenuItem @select="toggleMuted">
+              <BellIcon v-if="terminal.muted" />
+              <BellOffIcon v-else />
+              {{ terminal.muted ? 'Benachrichtigungen einschalten' : 'Benachrichtigungen stummschalten' }}
+            </ContextMenuItem>
+          </template>
+        </ContextMenuGroup>
+        <template v-if="terminal.mode === 'session'">
+          <ContextMenuSeparator />
+          <ContextMenuSub>
+            <ContextMenuSubTrigger :disabled="!canSwitch">
+              <ArrowRightLeftIcon />
+              Account wechseln
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent class="w-72">
+              <AccountChoiceItems
+                menu="context"
+                :choices="choices"
+                @select="accountSwitch.continueTerminal(terminal, $event)"
+              />
+            </ContextMenuSubContent>
+          </ContextMenuSub>
         </template>
-        <template v-else>
-          <ContextMenuItem @select="openFolder">
-            <FolderOpenIcon />
-            Ordner öffnen
-          </ContextMenuItem>
-          <ContextMenuItem @select="restartTerminal(terminal.id)">
-            <RotateCwIcon />
-            Neu starten
-          </ContextMenuItem>
-          <ContextMenuItem :disabled="exited" @select="stopTerminal(terminal.id)">
-            <CircleStopIcon />
-            Prozess beenden
-          </ContextMenuItem>
-          <ContextMenuItem @select="toggleMuted">
-            <BellIcon v-if="terminal.muted" />
-            <BellOffIcon v-else />
-            {{ terminal.muted ? 'Benachrichtigungen einschalten' : 'Benachrichtigungen stummschalten' }}
-          </ContextMenuItem>
-        </template>
-      </ContextMenuGroup>
-      <template v-if="terminal.mode === 'session'">
         <ContextMenuSeparator />
-        <ContextMenuSub>
-          <ContextMenuSubTrigger :disabled="!canSwitch">
-            <ArrowRightLeftIcon />
-            Account wechseln
-          </ContextMenuSubTrigger>
-          <ContextMenuSubContent class="w-72">
-            <AccountChoiceItems
-              menu="context"
-              :choices="choices"
-              @select="accountSwitch.continueTerminal(terminal, $event)"
-            />
-          </ContextMenuSubContent>
-        </ContextMenuSub>
-      </template>
-      <ContextMenuSeparator />
-      <ContextMenuGroup>
-        <ContextMenuItem @select="launcher.split(terminal, 'row')">
-          <Columns2Icon />
-          Vertikal teilen
-          <ContextMenuShortcut>Alt+Umschalt+Plus</ContextMenuShortcut>
-        </ContextMenuItem>
-        <ContextMenuItem @select="launcher.split(terminal, 'column')">
-          <Rows2Icon />
-          Horizontal teilen
-          <ContextMenuShortcut>Alt+Umschalt+Minus</ContextMenuShortcut>
-        </ContextMenuItem>
-        <ContextMenuItem @select="launcher.browser(null, { terminalId: terminal.id, direction: 'row' })">
-          <GlobeIcon />
-          Browser daneben öffnen
-        </ContextMenuItem>
-        <ContextMenuItem v-if="split" @select="terminals.detach(terminal.id)">
-          <SquareArrowOutUpRightIcon />
-          In eigenen Tab verschieben
-        </ContextMenuItem>
-      </ContextMenuGroup>
-      <ContextMenuSeparator />
-      <ContextMenuGroup>
-        <ContextMenuItem v-if="split" @select="closeTerminal(terminal.id)">
-          <XIcon />
-          {{ isBrowser ? 'Browser schließen' : 'Terminal schließen' }}
-          <!-- The shortcut closes the terminal with the keyboard, which needn't be the one right-clicked. -->
-          <ContextMenuShortcut v-if="terminal.id === terminals.activeId">Strg+Umschalt+W</ContextMenuShortcut>
-        </ContextMenuItem>
-        <ContextMenuItem @select="closeTab(tab)">
-          <XIcon v-if="!split" />
-          Tab schließen
-          <ContextMenuShortcut v-if="!split">Strg+Umschalt+W</ContextMenuShortcut>
-        </ContextMenuItem>
-        <ContextMenuItem :disabled="terminals.tabs.length < 2" @select="closeOthers">
-          Andere Tabs schließen
-        </ContextMenuItem>
-      </ContextMenuGroup>
-    </ContextMenuContent>
-  </ContextMenu>
+        <ContextMenuGroup>
+          <ContextMenuItem @select="launcher.split(terminal, 'row')">
+            <Columns2Icon />
+            Vertikal teilen
+            <ContextMenuShortcut>Alt+Umschalt+Plus</ContextMenuShortcut>
+          </ContextMenuItem>
+          <ContextMenuItem @select="launcher.split(terminal, 'column')">
+            <Rows2Icon />
+            Horizontal teilen
+            <ContextMenuShortcut>Alt+Umschalt+Minus</ContextMenuShortcut>
+          </ContextMenuItem>
+          <ContextMenuItem @select="launcher.browser(null, { terminalId: terminal.id, direction: 'row' })">
+            <GlobeIcon />
+            Browser daneben öffnen
+          </ContextMenuItem>
+          <ContextMenuItem v-if="split" @select="terminals.detach(terminal.id)">
+            <SquareArrowOutUpRightIcon />
+            In eigenen Tab verschieben
+          </ContextMenuItem>
+        </ContextMenuGroup>
+        <ContextMenuSeparator />
+        <ContextMenuGroup>
+          <ContextMenuItem v-if="split" @select="closeTerminal(terminal.id)">
+            <XIcon />
+            {{ isBrowser ? 'Browser schließen' : 'Terminal schließen' }}
+            <!-- The shortcut closes the terminal with the keyboard, which needn't be the one right-clicked. -->
+            <ContextMenuShortcut v-if="terminal.id === terminals.activeId">Strg+Umschalt+W</ContextMenuShortcut>
+          </ContextMenuItem>
+          <ContextMenuItem @select="closeTab(tab)">
+            <XIcon v-if="!split" />
+            Tab schließen
+            <ContextMenuShortcut v-if="!split">Strg+Umschalt+W</ContextMenuShortcut>
+          </ContextMenuItem>
+          <ContextMenuItem :disabled="terminals.tabs.length < 2" @select="closeOthers">
+            Andere Tabs schließen
+          </ContextMenuItem>
+        </ContextMenuGroup>
+      </ContextMenuContent>
+    </ContextMenu>
+    <HoverCardContent
+      :reference="tabEl ?? undefined"
+      :side="vertical ? 'right' : 'bottom'"
+      align="start"
+      :side-offset="vertical ? 12 : 6"
+      class="w-72"
+    >
+      <TerminalTabCard
+        :terminal="terminal"
+        :account="account"
+        :session-account="sessionAccount"
+        @open-folder="openFolder"
+        @rename="startRename()"
+      />
+    </HoverCardContent>
+  </HoverCard>
 </template>

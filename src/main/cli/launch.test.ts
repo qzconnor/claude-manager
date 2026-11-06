@@ -61,6 +61,7 @@ function terminal(overrides: Partial<TerminalInfo>): TerminalInfo {
     muted: false,
     title: 'Tab',
     fixedTitle: false,
+    autoTitle: 'Tab',
     cwd: WORK,
     mode: 'session',
     url: null,

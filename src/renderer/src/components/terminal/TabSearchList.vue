@@ -99,7 +99,8 @@ const tabRows = computed<TabRow[]>(() =>
     const entry = key ? indexed.value.get(key) : undefined
     const hit = (key && hits.value.get(key)) || null
     const named = containsTerms(
-      searchText(terminal.title, terminal.cwd, accounts.get(terminal.authAccountId)?.name, entry?.text),
+      // A renamed tab is also found by the session's title.
+      searchText(terminal.title, terminal.autoTitle, terminal.cwd, accounts.get(terminal.authAccountId)?.name, entry?.text),
       terms.value,
     )
     if (!named && !hit) return []

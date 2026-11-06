@@ -299,6 +299,7 @@ export class TerminalService extends TypedEmitter<Events> {
       muted: options.muted === true,
       title: fixedTitle ?? defaultTitle,
       fixedTitle: fixedTitle !== null,
+      autoTitle: defaultTitle,
       cwd,
       mode,
       url: null,
@@ -353,6 +354,7 @@ export class TerminalService extends TypedEmitter<Events> {
       muted: false,
       title: fixedTitle ?? defaultTitle,
       fixedTitle: fixedTitle !== null,
+      autoTitle: defaultTitle,
       cwd: '',
       mode: 'browser',
       url,
@@ -374,11 +376,9 @@ export class TerminalService extends TypedEmitter<Events> {
     if (record?.info.mode !== 'browser' || !isBrowsableUrl(page.url)) return
     const title = page.title.replace(/\s+/g, ' ').trim().slice(0, 120)
     record.defaultTitle = title || fallbackTitle(page.url)
-    const next = record.info.fixedTitle ? record.info.title : record.defaultTitle
-    if (record.info.url === page.url && record.info.title === next) return
+    const moved = record.info.url !== page.url
     record.info.url = page.url
-    record.info.title = next
-    this.emitChanged()
+    if (followTitle(record.info, record.defaultTitle) || moved) this.emitChanged()
   }
 
   write(id: string, data: string): void {
@@ -430,12 +430,15 @@ export class TerminalService extends TypedEmitter<Events> {
     this.emitChanged()
   }
 
-  /** An empty title lets the tab follow the session's title again. */
+  /**
+   * Gives the tab a name of its own; the session's title stays known (`autoTitle`). An empty title
+   * lets the tab follow the session's title again.
+   */
   rename(id: string, title: string): void {
-    const record = this.require(id)
+    const { info } = this.require(id)
     const next = title.trim().slice(0, 120)
-    record.info.fixedTitle = next.length > 0
-    record.info.title = next || this.autoTitle(record)
+    info.fixedTitle = next.length > 0
+    info.title = next || info.autoTitle
     this.emitChanged()
   }
 
@@ -546,12 +549,7 @@ export class TerminalService extends TypedEmitter<Events> {
       info.limit = limit
       changed = true
     }
-    const title = info.fixedTitle ? info.title : this.autoTitle(record)
-    if (title !== info.title) {
-      info.title = title
-      changed = true
-    }
-    return changed
+    return followTitle(info, this.autoTitle(record)) || changed
   }
 
   /** The session's title as Claude Code shows it; after `/clear` the new session has none yet. */
@@ -791,6 +789,18 @@ function newRecord(info: TerminalInfo, defaultTitle: string, process: Pty.IPty |
     colorScheme: new ColorSchemeUpdates(),
     viewed: false,
   }
+}
+
+/**
+ * Takes over the session's or page's title; the tab shows it unless it has a name of its own. True
+ * when anything changed.
+ */
+function followTitle(info: TerminalInfo, autoTitle: string): boolean {
+  const title = info.fixedTitle ? info.title : autoTitle
+  if (info.autoTitle === autoTitle && info.title === title) return false
+  info.autoTitle = autoTitle
+  info.title = title
+  return true
 }
 
 /** Tab title when none was given; the account is the one whose limits the tab uses. */

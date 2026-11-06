@@ -160,8 +160,12 @@ export const schemas: Record<string, Schema> = {
         'limit = Nutzungslimit. null, sobald der Tab in der App angezeigt wurde',
     },
     muted: { type: 'boolean', description: 'Keine Benachrichtigungen und kein Blinken der Taskleiste für diesen Tab' },
-    title: { type: 'string', description: 'Titel der Session wie in /resume, sofern fixedTitle nicht gesetzt ist' },
+    title: { type: 'string', description: 'Was der Tab anzeigt: der vergebene Name, sofern fixedTitle gesetzt ist, sonst autoTitle' },
     fixedTitle: { type: 'boolean', description: 'Titel wurde vergeben (umbenannt oder beim Öffnen) und folgt nicht der Session' },
+    autoTitle: {
+      type: 'string',
+      description: 'Titel der Session wie in /resume (bei Browser-Tabs der Seitentitel), auch wenn der Tab umbenannt ist',
+    },
     cwd: { type: 'string', description: 'Arbeitsordner; leer bei Browser-Tabs' },
     mode: { type: 'string', enum: ['session', 'login', 'shell', 'browser'], description: 'browser = Webseite im Browser der App, ohne Prozess' },
     url: { ...nullable(str), description: 'Seite, die ein Browser-Tab zeigt; null bei Terminals' },

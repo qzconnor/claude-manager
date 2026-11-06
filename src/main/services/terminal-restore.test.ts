@@ -81,6 +81,7 @@ function info(overrides: Partial<TerminalInfo>): TerminalInfo {
     muted: false,
     title: 'Tab',
     fixedTitle: false,
+    autoTitle: 'Tab',
     cwd: join(dir, 'project'),
     mode: 'session',
     url: null,
