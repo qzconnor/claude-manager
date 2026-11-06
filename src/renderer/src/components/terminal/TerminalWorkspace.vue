@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { layoutPanes, type PaneDivider, type PaneRect } from '@shared/panes'
+import { dockRect } from '@/lib/tab-drag'
 import { cn } from '@/lib/utils'
 import { useBrowsersStore } from '@/stores/browsers'
 import { useTerminalsStore } from '@/stores/terminals'
+import { useUiStore } from '@/stores/ui'
 import BrowserPane from './BrowserPane.vue'
 import TerminalEmptyState from './TerminalEmptyState.vue'
 import TerminalPane from './TerminalPane.vue'
@@ -16,6 +18,7 @@ import TerminalPane from './TerminalPane.vue'
 const props = defineProps<{ visible: boolean }>()
 const terminals = useTerminalsStore()
 const browsers = useBrowsersStore()
+const ui = useUiStore()
 const root = ref<HTMLElement | null>(null)
 
 /** A part may not get narrower or lower than this while dragging a divider (px). */
@@ -90,6 +93,15 @@ function onDividerReset(divider: PaneDivider) {
   if (terminals.activeTab) terminals.resize(terminals.activeTab.id, divider.path, 0.5, true)
 }
 
+/** A tab dragged over the page: the half of the part it will get, and what it shows. */
+const dockPreview = computed(() => {
+  const dock = ui.tabDock
+  const rect = dock && layout.value?.panes.get(dock.targetId)
+  const tab = dock && terminals.tabs.find((t) => t.id === dock.tabId)
+  if (!rect || !tab) return null
+  return { rect: dockRect(rect, dock.side), title: tab.panes.map((p) => p.title).join(' · ') }
+})
+
 const inActiveTab = (id: string) => terminals.activeTab?.panes.some((p) => p.id === id) ?? false
 /**
  * A browser Claude drives in a hidden tab is drawn, unseen: a page that isn't drawn has no size,
@@ -102,12 +114,13 @@ const inBackground = (id: string) => !inActiveTab(id) && driven(id)
 <template>
   <div
     ref="root"
+    data-slot="terminal-workspace"
     :class="
       cn(
         'relative size-full',
         dragging && (dragging.direction === 'row' ? 'cursor-col-resize' : 'cursor-row-resize'),
         // A browser page would take the pointer while it passes over it.
-        dragging && 'select-none [&_webview]:pointer-events-none',
+        (dragging || ui.draggingTab) && 'select-none [&_webview]:pointer-events-none',
       )
     "
   >
@@ -155,6 +168,18 @@ const inBackground = (id: string) => !inActiveTab(id) && driven(id)
         />
       </div>
     </template>
+    <!-- A tab dragged over the page: the half it will take, with its title. -->
+    <div
+      v-if="dockPreview"
+      class="pointer-events-none absolute z-40 p-1.5 transition-[left,top,width,height] duration-150 ease-out"
+      :style="rectStyle(dockPreview.rect)"
+    >
+      <div class="flex size-full items-center justify-center rounded-lg border-2 border-primary/70 bg-primary/15 p-3">
+        <span class="max-w-full truncate rounded-md bg-popover px-2.5 py-1 text-sm text-popover-foreground shadow-md ring-1 ring-foreground/10">
+          {{ dockPreview.title }}
+        </span>
+      </div>
+    </div>
     <TerminalEmptyState v-if="terminals.terminals.length === 0" />
   </div>
 </template>

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   dropPanes,
   hasPane,
+  insertPane,
   layoutPanes,
   neighbourPane,
   paneIds,
@@ -30,6 +31,23 @@ describe('splitPane', () => {
   it('splits only the part of the terminal, wherever it lies', () => {
     expect(splitPane(tree, 'c', 'd', 'row')).toEqual(row('a', column('b', row('c', 'd'))))
     expect(splitPane(tree, 'x', 'd', 'row')).toEqual(tree)
+  })
+})
+
+describe('insertPane', () => {
+  it('puts a terminal on each side of a part', () => {
+    expect(insertPane('a', 'a', 'b', 'right')).toEqual(row('a', 'b'))
+    expect(insertPane('a', 'a', 'b', 'left')).toEqual(row('b', 'a'))
+    expect(insertPane('a', 'a', 'b', 'down')).toEqual(column('a', 'b'))
+    expect(insertPane('a', 'a', 'b', 'up')).toEqual(column('b', 'a'))
+  })
+
+  it('takes a whole tab into the part, wherever it lies', () => {
+    expect(insertPane(tree, 'c', row('d', 'e'), 'left')).toEqual(row('a', column('b', row(row('d', 'e'), 'c'))))
+  })
+
+  it('leaves the tree alone without the part', () => {
+    expect(insertPane(tree, 'x', 'd', 'right')).toBe(tree)
   })
 })
 

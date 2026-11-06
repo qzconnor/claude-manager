@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { clampOffset, dropIndex, shiftsFor, type Slot } from './tab-drag'
+import type { PaneSplit } from '@shared/types'
+import { clampOffset, dockRect, dockSpot, dropIndex, shiftsFor, type Slot } from './tab-drag'
 
 /** Three tabs of 100 px with 2 px between them: 0–100, 102–202, 204–304. */
 const even: Slot[] = [
@@ -85,5 +86,39 @@ describe('clampOffset', () => {
 
   it('returns 0 without tabs', () => {
     expect(clampOffset([], 0, 50)).toBe(0)
+  })
+})
+
+describe('dockSpot', () => {
+  // a | b, b takes the right quarter
+  const layout: PaneSplit = { direction: 'row', ratio: 0.75, first: 'a', second: 'b' }
+
+  it('finds the side of the part nearest to the point', () => {
+    expect(dockSpot('a', 0.1, 0.5)).toEqual({ id: 'a', side: 'left' })
+    expect(dockSpot('a', 0.9, 0.5)).toEqual({ id: 'a', side: 'right' })
+    expect(dockSpot('a', 0.5, 0.2)).toEqual({ id: 'a', side: 'up' })
+    expect(dockSpot('a', 0.5, 0.8)).toEqual({ id: 'a', side: 'down' })
+  })
+
+  it('measures within the part under the point', () => {
+    expect(dockSpot(layout, 0.7, 0.5)).toEqual({ id: 'a', side: 'right' })
+    expect(dockSpot(layout, 0.8, 0.5)).toEqual({ id: 'b', side: 'left' })
+    expect(dockSpot(layout, 0.875, 0.1)).toEqual({ id: 'b', side: 'up' })
+  })
+
+  it('finds nothing outside the page', () => {
+    expect(dockSpot(layout, 1.2, 0.5)).toBeNull()
+    expect(dockSpot(layout, 0.5, -0.1)).toBeNull()
+  })
+})
+
+describe('dockRect', () => {
+  const rect = { left: 0.5, top: 0, width: 0.5, height: 1 }
+
+  it('is the half of the part on that side', () => {
+    expect(dockRect(rect, 'left')).toEqual({ left: 0.5, top: 0, width: 0.25, height: 1 })
+    expect(dockRect(rect, 'right')).toEqual({ left: 0.75, top: 0, width: 0.25, height: 1 })
+    expect(dockRect(rect, 'up')).toEqual({ left: 0.5, top: 0, width: 0.5, height: 0.5 })
+    expect(dockRect(rect, 'down')).toEqual({ left: 0.5, top: 0.5, width: 0.5, height: 0.5 })
   })
 })

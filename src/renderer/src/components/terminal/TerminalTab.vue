@@ -137,7 +137,8 @@ const setInput = (el: unknown) => {
 }
 
 // The hover card steps aside for the context menu, for renaming and while tabs are dragged.
-// After a drag it waits until the pointer comes back, instead of opening on the dropped tab.
+// After a drag it waits until the pointer comes back, instead of opening on the dropped tab:
+// the dragged tab holds the pointer, so its open delay runs out during the drag, which is ignored.
 const ui = useUiStore()
 const hovered = ref(false)
 const cardOpen = computed(() => hovered.value && !menuOpen.value && !renaming.value && !ui.draggingTab)
@@ -205,7 +206,7 @@ function openFolder() {
 
 <template>
   <ContextMenu @update:open="onMenuOpen">
-    <HoverCard :open="cardOpen" :open-delay="500" :close-delay="100" @update:open="hovered = $event">
+    <HoverCard :open="cardOpen" :open-delay="500" :close-delay="100" @update:open="hovered = $event && !ui.draggingTab">
       <ContextMenuTrigger as-child>
         <HoverCardTrigger as-child>
           <div
@@ -214,7 +215,8 @@ function openFolder() {
             :aria-selected="selected"
             :class="
               cn(
-                'app-no-drag group/tab relative flex cursor-pointer text-xs transition-colors',
+                // Dragged onto the page (data-docking) it fades in its place, the page shows where it goes.
+                'app-no-drag group/tab relative flex cursor-pointer text-xs transition-colors data-docking:opacity-50',
                 vertical
                   ? cn(
                       // While dragged (data-dragging, see useTabDrag) it looks lifted like the selected one.

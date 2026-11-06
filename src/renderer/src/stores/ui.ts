@@ -1,9 +1,17 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import type { PaneDirection } from '@shared/panes'
 import type { DialogOptions } from '@shared/types'
 import type { SessionRef } from '@/composables/useSessionDetail'
 
 export type ConfirmOptions = DialogOptions
+
+/** A tab dragged over the page: dropped now, it goes on `side` of the terminal `targetId`. */
+export interface TabDock {
+  tabId: string
+  targetId: string
+  side: PaneDirection
+}
 
 /** Transient UI state shared across components (dialogs, palette, search requests). */
 export const useUiStore = defineStore('ui', () => {
@@ -25,6 +33,8 @@ export const useUiStore = defineStore('ui', () => {
   const selectedTabEdges = ref<{ left: number; right: number } | null>(null)
   /** Id of the tab being dragged to another position; hover cards stay closed meanwhile. */
   const draggingTab = ref<string | null>(null)
+  /** Where the dragged tab lands if dropped on the page now; the page shows it. */
+  const tabDock = ref<TabDock | null>(null)
 
   const confirmState = ref<(ConfirmOptions & { open: boolean }) | null>(null)
   let confirmResolve: ((value: boolean) => void) | null = null
@@ -52,6 +62,7 @@ export const useUiStore = defineStore('ui', () => {
     sessionToShow,
     selectedTabEdges,
     draggingTab,
+    tabDock,
     confirmState,
     confirm,
     settleConfirm,
