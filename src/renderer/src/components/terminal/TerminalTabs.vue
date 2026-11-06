@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useEventListener, useMutationObserver } from '@vueuse/core'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useTabDrag } from '@/composables/useTabDrag'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import NewTerminalMenu from './NewTerminalMenu.vue'
@@ -87,6 +88,15 @@ function select(id: string) {
   terminals.activate(id)
   if (route.name !== 'terminals') void router.push({ name: 'terminals' })
 }
+
+// Tabs are reordered by dragging; in the title bar the page follows the selected tab while they move.
+const { dragging } = useTabDrag(strip, {
+  vertical: props.vertical,
+  onDrop: (id, index) => terminals.move(id, index),
+  onMove: props.vertical ? undefined : measureSelected,
+})
+watchEffect(() => (ui.draggingTab = dragging.value))
+onBeforeUnmount(() => (ui.draggingTab = null))
 
 // A vertical mouse wheel scrolls the tab strip in the title bar horizontally.
 useEventListener(

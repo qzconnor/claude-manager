@@ -73,9 +73,11 @@ Die App wurde in acht Schritten gebaut. Jeder Schritt baut auf dem vorherigen au
 - Benachrichtigungen, wenn Claude in einem Tab fertig ist, auf eine Erlaubnis, Antwort oder Plan-Freigabe wartet oder an ein Limit stößt: Windows-Benachrichtigung mit Vorschau, Blinken der Taskleiste und ein Punkt an Tabs mit ungesehenen Neuigkeiten. Eigener Einstellungs-Tab, Glocke zum An- und Ausschalten, einzelne Tabs stummschaltbar. Der Grund kommt aus dem Transcript (`turn_duration`, offene Tool-Aufrufe), das Claude Code gepuffert schreibt.
 - Warnung, wenn ein Limit eines Accounts eine einstellbare Schwelle erreicht (Standard 80 %): einmal pro Account, Zeitraum und Reset, gemerkt über Neustarts. Gilt für das 5-Stunden-Fenster, die Woche und die Wochenlimits einzelner Modelle.
 - Claude Codes Theme „Auto“ folgt dem Theme der App, auch beim Wechsel in einer laufenden Session: Antwort auf OSC 11 mit dem Hintergrund des Themes, Meldung nach Modus 2031 und `COLORFGBG`. Neue Tabs nutzen dafür unter Windows die ConPTY aus Windows Terminal (abschaltbar), weil die von Windows die Farbabfrage schluckt.
+- Tabs per Drag & Drop umsortieren (Titelleiste und Seitenleiste), Strg+1–8 springt zu einem Tab, Strg+9 zum letzten. Die Reihenfolge gilt auch für die lokale API und das Wiederherstellen beim nächsten Start.
+- Unit-Tests mit Vitest für Parser, Regeln und Hilfsfunktionen von Main, Shared und Renderer; sie laufen in CI unter Windows und Linux.
 - Einstellungen lassen sich als JSON-Datei exportieren und importieren, ohne Accounts. Fremde Pfade, die es hier nicht gibt, bleiben unverändert, der Import ist rückgängig zu machen.
 
 ## Mögliche nächste Schritte
 
 - Code-Signing, sobald ein Zertifikat vorhanden ist (dann prüft electron-updater auch die Signatur des Updates).
-- Geteilte Terminal-Ansicht (Split Panes) und Drag & Drop für Tabs.
+- Geteilte Terminal-Ansicht (Split Panes).

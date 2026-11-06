@@ -13,7 +13,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from '@lucide/vue'
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { TerminalInfo } from '@shared/types'
 import AccountChoiceItems from '@/components/common/AccountChoiceItems.vue'
 import AccountDot from '@/components/common/AccountDot.vue'
@@ -38,6 +38,7 @@ import { attempt } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
 import { useTerminalsStore } from '@/stores/terminals'
+import { useUiStore } from '@/stores/ui'
 import TerminalTabCard from './TerminalTabCard.vue'
 
 /** `vertical`: a full-width row in the sidebar, with the hover card beside it. */
@@ -85,9 +86,17 @@ const editing = ref(false)
 const draft = ref('')
 const input = ref<HTMLInputElement | null>(null)
 
-// The hover card steps aside for the context menu and for renaming.
+// The hover card steps aside for the context menu, for renaming and while tabs are dragged.
+// After a drag it waits until the pointer comes back, instead of opening on the dropped tab.
+const ui = useUiStore()
 const hovered = ref(false)
-const cardOpen = computed(() => hovered.value && !menuOpen.value && !editing.value)
+const cardOpen = computed(() => hovered.value && !menuOpen.value && !editing.value && !ui.draggingTab)
+watch(
+  () => ui.draggingTab,
+  (id) => {
+    if (id) hovered.value = false
+  },
+)
 
 function onMenuOpen(open: boolean) {
   menuOpen.value = open
@@ -152,7 +161,8 @@ function openFolder() {
                 'app-no-drag group/tab relative flex cursor-pointer items-center gap-2 pr-1 pl-3 text-xs transition-colors',
                 vertical
                   ? cn(
-                      'h-8 w-full shrink-0 rounded-lg',
+                      // While dragged (data-dragging, see useTabDrag) it looks lifted like the selected one.
+                      'h-8 w-full shrink-0 rounded-lg data-dragging:bg-surface-strong data-dragging:text-foreground data-dragging:shadow-md data-dragging:ring-1 data-dragging:ring-foreground/10',
                       selected
                         ? 'bg-surface-strong text-foreground shadow-sm ring-1 ring-foreground/10'
                         : 'text-muted-foreground hover:bg-accent hover:text-foreground',
@@ -164,7 +174,7 @@ function openFolder() {
                       'isolate max-w-56 min-w-28 rounded-t-lg border-x border-t',
                       selected
                         ? 'border-border text-foreground in-data-unfocused:text-muted-foreground'
-                        : 'border-transparent text-muted-foreground before:absolute before:inset-x-0 before:inset-y-1 before:-z-10 before:rounded-lg before:transition-colors hover:text-foreground hover:before:bg-accent',
+                        : 'border-transparent text-muted-foreground before:absolute before:inset-x-0 before:inset-y-1 before:-z-10 before:rounded-lg before:transition-colors hover:text-foreground hover:before:bg-accent data-dragging:text-foreground data-dragging:before:bg-surface-strong data-dragging:before:shadow-md data-dragging:before:ring-1 data-dragging:before:ring-foreground/10',
                     ),
               )
             "

@@ -70,6 +70,7 @@ const api: ManagerApi = {
     setMuted: (id, muted) => invoke(IpcInvoke.terminalsSetMuted, id, muted),
     viewing: (id) => ipcRenderer.send(IpcSend.terminalViewing, id),
     colorScheme: (dark) => ipcRenderer.send(IpcSend.terminalColorScheme, dark),
+    reorder: (ids) => ipcRenderer.send(IpcSend.terminalReorder, ids),
     onChanged: (cb) => subscribe(IpcEvent.terminalsChanged, cb),
     onData: (cb) => subscribe(IpcEvent.terminalData, cb),
     onExit: (cb) => subscribe(IpcEvent.terminalExit, cb),
