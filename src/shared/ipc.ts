@@ -14,6 +14,8 @@ import type {
   DeepPartial,
   DialogRequest,
   GitBranch,
+  PaneNode,
+  PaneSplit,
   SessionDetail,
   SessionGroup,
   SessionRef,
@@ -67,6 +69,8 @@ export const IpcInvoke = {
   terminalsAttach: 'terminals:attach',
   terminalsContinueWith: 'terminals:continue-with',
   terminalsSetMuted: 'terminals:set-muted',
+  terminalsLayouts: 'terminals:layouts',
+  terminalsArrange: 'terminals:arrange',
 
   notificationsTest: 'notifications:test',
 
@@ -101,7 +105,7 @@ export const IpcInvoke = {
 export const IpcSend = {
   terminalWrite: 'terminals:write',
   terminalResize: 'terminals:resize',
-  /** The tab the window shows, null while another page is open. */
+  /** The terminals the window shows (those of the selected tab), none while another page is open. */
   terminalViewing: 'terminals:viewing',
   /** Whether the terminal theme is dark (see TerminalService.setColorScheme). */
   terminalColorScheme: 'terminals:color-scheme',
@@ -195,6 +199,13 @@ export interface ManagerApi {
   }
   terminals: {
     list(): Promise<TerminalInfo[]>
+    /** The tabs with more than one terminal; every other terminal has a tab of its own. */
+    layouts(): Promise<PaneSplit[]>
+    /**
+     * Puts these terminals together in one tab, as `layout` shares its space, and takes them out of
+     * the tabs they were in. A single id gives the terminal a tab of its own.
+     */
+    arrange(layout: PaneNode): Promise<void>
     /** Null when Claude Code shouldn't trust the folder (the user said no in the app's question). */
     create(options: TerminalCreateOptions): Promise<TerminalInfo | null>
     write(id: string, data: string): void
@@ -217,13 +228,13 @@ export interface ManagerApi {
     continueWith(id: string, accountId: string): Promise<TerminalInfo | null>
     /** A muted tab sends no notifications and doesn't flash the taskbar. */
     setMuted(id: string, muted: boolean): Promise<void>
-    /** Tells which tab the window shows (null: another page): its news counts as seen. */
-    viewing(id: string | null): void
+    /** Tells which terminals the window shows (none: another page): their news counts as seen. */
+    viewing(ids: string[]): void
     /** Tells whether the terminal theme is dark; programs that asked for it hear when that changes. */
     colorScheme(dark: boolean): void
     /** Order of the tabs (ids) after one was moved; the next start restores them in it. */
     reorder(ids: string[]): void
-    onChanged(cb: (terminals: TerminalInfo[]) => void): Unsubscribe
+    onChanged(cb: (terminals: TerminalInfo[], layouts: PaneSplit[]) => void): Unsubscribe
     onData(cb: (id: string, data: string, offset: number) => void): Unsubscribe
     onExit(cb: (id: string, exitCode: number) => void): Unsubscribe
     onActivate(cb: (id: string) => void): Unsubscribe

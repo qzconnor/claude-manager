@@ -13,6 +13,7 @@ import { terminalBus } from '@/lib/terminal-bus'
 import { makeSlotsTranslucent, setSlotTints } from '@/lib/translucent-slots'
 import { useAppStore } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
+import { useTerminalsStore } from '@/stores/terminals'
 import type { TerminalPalette } from '@/themes/types'
 import { buildFontStack, ensureFontLoaded, useTerminalAppearance } from './useTerminalAppearance'
 
@@ -121,6 +122,7 @@ export function useTerminal(options: UseTerminalOptions) {
   const { terminalId, claudeSession, container, active } = options
   const settingsStore = useSettingsStore()
   const appStore = useAppStore()
+  const terminalsStore = useTerminalsStore()
   const { palette, dark, slotTints, backgrounds } = useTerminalAppearance()
   /** All output passes through here on its way to xterm. */
   const filterOutput = createBackgroundFilter(() => backgrounds.value)
@@ -258,8 +260,10 @@ export function useTerminal(options: UseTerminalOptions) {
 
   function handleKey(e: KeyboardEvent): boolean {
     if (e.type !== 'keydown') return true
-    // App shortcuts bubble up to the window listener instead of reaching the shell.
-    if (matchShortcut(e)) return false
+    // App shortcuts bubble up to the window listener instead of reaching the shell. Alt+arrow only
+    // where it leads to another terminal of the tab.
+    const shortcut = matchShortcut(e)
+    if (shortcut && (shortcut.action !== 'focus-pane' || terminalsStore.neighbour(terminalId, shortcut.direction!))) return false
     const ctrl = e.ctrlKey && !e.altKey && !e.metaKey
     const key = e.key.toLowerCase()
     if (ctrl && key === 'c' && (e.shiftKey || term?.hasSelection())) {

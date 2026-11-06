@@ -146,6 +146,21 @@ export interface CswapImportInput {
 
 export type TerminalStatus = 'running' | 'exited'
 
+/** `row`: the parts lie side by side (split vertically), `column`: one above the other (split horizontally). */
+export type SplitDirection = 'row' | 'column'
+
+/** Two parts of a tab: `first` left of `second` (`row`) or above it (`column`). */
+export interface PaneSplit {
+  direction: SplitDirection
+  /** `first`'s share of the space. */
+  ratio: number
+  first: PaneNode
+  second: PaneNode
+}
+
+/** How the terminals of a tab share its space: a terminal id, or a split into two parts. */
+export type PaneNode = string | PaneSplit
+
 export interface TerminalCreateOptions {
   /** Account whose config dir holds the session (transcripts, settings). */
   accountId: string
@@ -169,6 +184,10 @@ export interface TerminalCreateOptions {
   title?: string | null
   /** Start without notifications for this tab (see `TerminalInfo.muted`). */
   muted?: boolean
+  /** Opens in the tab of `terminalId`, next to it: to the right (`row`) or below (`column`). */
+  split?: { terminalId: string; direction: SplitDirection } | null
+  /** Takes the place of this terminal, in the tab order and in its tab; the old one stays open until it is closed. */
+  replaces?: string | null
   cols?: number
   rows?: number
 }

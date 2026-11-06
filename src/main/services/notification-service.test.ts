@@ -447,9 +447,20 @@ describe('finished turns', () => {
   it('stays quiet for the tab the user looks at', async () => {
     win = { ...win!, isFocused: () => true }
     const service = await start()
-    service.setViewing('t1')
+    service.setViewing(['t1'])
     setAttention.mockClear()
     terminalEvents.fire('turnEnded', 't1', turn())
+    expect(setAttention).not.toHaveBeenCalled()
+    expect(created()).toEqual([])
+  })
+
+  it('counts every terminal of a split tab as shown', async () => {
+    win = { ...win!, isFocused: () => true }
+    terminalList = [terminal(), terminal({ id: 't2', title: 'Zwei' })]
+    const service = await start()
+    service.setViewing(['t1', 't2'])
+    setAttention.mockClear()
+    terminalEvents.fire('turnEnded', 't2', turn())
     expect(setAttention).not.toHaveBeenCalled()
     expect(created()).toEqual([])
   })
@@ -458,7 +469,7 @@ describe('finished turns', () => {
     win = { ...win!, isFocused: () => true }
     terminalList = [terminal(), terminal({ id: 't2', title: 'Zwei' })]
     const service = await start()
-    service.setViewing('t1')
+    service.setViewing(['t1'])
     terminalEvents.fire('turnEnded', 't2', turn())
     expect(setAttention).toHaveBeenCalledWith('t2', 'done')
     expect(created()).toEqual([])
@@ -583,18 +594,18 @@ describe('finished turns', () => {
   it('takes the notification back once the tab is seen', async () => {
     const service = await start()
     terminalEvents.fire('turnEnded', 't1', turn())
-    service.setViewing('t1')
+    service.setViewing(['t1'])
     expect(created()[0].closed).toBe(true)
     expect(setAttention).toHaveBeenLastCalledWith('t1', null)
   })
 
   it('takes the notification back when the window comes to the front on the tab', async () => {
     const service = await start()
-    service.setViewing(null)
+    service.setViewing([])
     terminalEvents.fire('turnEnded', 't1', turn())
     service.windowFocused()
     expect(created()[0].closed).toBe(false)
-    service.setViewing('t1')
+    service.setViewing(['t1'])
     terminalEvents.fire('turnEnded', 't1', turn())
     expect(created()).toHaveLength(2)
     service.windowFocused()
@@ -689,7 +700,7 @@ describe('automatic account switch', () => {
     win = { ...win!, isFocused: () => true }
     const service = await start()
     service.watchAutoSwitch(events as never)
-    service.setViewing('t1')
+    service.setViewing(['t1'])
     events.fire('switched', atLimit(), terminal({ id: 't2' }), account('b', 'Beta'))
     events.fire('switched', atLimit(), terminal({ id: 't3', muted: true }), account('b', 'Beta'))
     settingsValue.notifications.onLimit = false

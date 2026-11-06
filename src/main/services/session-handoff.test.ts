@@ -123,7 +123,7 @@ describe('SessionHandoff.continueTerminal', () => {
     const result = await handoff().continueTerminal('old', 'token')
     expect(result?.id).toBe('new')
     expect(terminalFns.trustedCwd).toHaveBeenCalledWith('own', cwd)
-    expect(createdOptions()).toEqual({ accountId: 'own', authAccountId: 'token', cwd, resumeSessionId: S, title: null, muted: false })
+    expect(createdOptions()).toEqual({ accountId: 'own', authAccountId: 'token', cwd, resumeSessionId: S, title: null, muted: false, replaces: 'old' })
     expect(steps).toEqual(['stop old', 'create', 'close old'])
     expect(existsSync(transcriptOf('token'))).toBe(false)
   })
@@ -143,7 +143,7 @@ describe('SessionHandoff.continueTerminal', () => {
 
     await handoff().continueTerminal('old', 'other')
     expect(terminalFns.trustedCwd).toHaveBeenCalledWith('other', cwd)
-    expect(createdOptions()).toEqual({ accountId: 'other', cwd, resumeSessionId: S, title: null, muted: false })
+    expect(createdOptions()).toEqual({ accountId: 'other', cwd, resumeSessionId: S, title: null, muted: false, replaces: 'old' })
     expect(await readFile(transcriptOf('other'), 'utf8')).toBe('{"type":"user"}\n')
     expect(await readFile(join(transcriptOf('other'), '..', S, 'subagents', 'agent-1.jsonl'), 'utf8')).toBe('sub\n')
     expect(steps).toEqual(['stop old', 'create', 'close old'])
@@ -153,16 +153,16 @@ describe('SessionHandoff.continueTerminal', () => {
     tabs.set('old', tab({ authAccountId: 'token' }))
     await writeTranscript()
     await handoff().continueTerminal('old', 'own')
-    expect(createdOptions()).toEqual({ accountId: 'own', cwd, resumeSessionId: S, title: null, muted: false })
+    expect(createdOptions()).toEqual({ accountId: 'own', cwd, resumeSessionId: S, title: null, muted: false, replaces: 'old' })
   })
 
   it('starts a new session when nothing was written yet', async () => {
     await handoff().continueTerminal('old', 'key')
-    expect(createdOptions()).toEqual({ accountId: 'own', authAccountId: 'key', cwd, title: null, muted: false })
+    expect(createdOptions()).toEqual({ accountId: 'own', authAccountId: 'key', cwd, title: null, muted: false, replaces: 'old' })
 
     vi.clearAllMocks()
     await handoff().continueTerminal('old', 'other')
-    expect(createdOptions()).toEqual({ accountId: 'other', cwd, title: null, muted: false })
+    expect(createdOptions()).toEqual({ accountId: 'other', cwd, title: null, muted: false, replaces: 'old' })
   })
 
   it('keeps a chosen title and the muting', async () => {
@@ -238,7 +238,7 @@ describe('SessionHandoff.continueTerminal', () => {
     tabs.set('old', tab({ status: 'exited' }))
     await writeTranscript()
     await handoff().continueTerminal('old', 'own')
-    expect(createdOptions()).toEqual({ accountId: 'own', cwd, resumeSessionId: S, title: null, muted: false })
+    expect(createdOptions()).toEqual({ accountId: 'own', cwd, resumeSessionId: S, title: null, muted: false, replaces: 'old' })
   })
 
   it.each([

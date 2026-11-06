@@ -1,4 +1,6 @@
 import { join } from 'node:path'
+import { isSplit, mapPanes, paneIds, parsePaneNode, removePanes } from '@shared/panes'
+import type { PaneNode } from '@shared/types'
 import { readJsonSync, writeJsonAtomicSync } from '../lib/json-file'
 import { findTranscript, SESSION_ID_RE } from '../lib/session-files'
 import type { AccountService } from './account-service'
@@ -18,6 +20,11 @@ interface SavedTerminal {
   fixedTitle?: boolean
   /** Missing in files of older versions. */
   muted?: boolean
+  /**
+   * On the first terminal of a tab that holds several: how they share its space. Instead of ids its
+   * parts name the terminals by their index in the file. Older versions open them in tabs of their own.
+   */
+  layout?: PaneNode
 }
 
 /**
@@ -65,14 +72,16 @@ export class TerminalRestore {
     const saved = readJsonSync<unknown>(this.file)
     if (!Array.isArray(saved)) return
     const accounts = new Map(this.accounts.list().map((a) => [a.id, a]))
-    for (const tab of saved) {
+    /** Index in the file → id of the terminal opened for it. */
+    const opened = new Map<string, string>()
+    for (const [index, tab] of saved.entries()) {
       if (!isSavedTerminal(tab) || !accounts.has(tab.accountId)) continue
       // Without the lending account the session runs with its own login again.
       const auth = accounts.get(tab.authAccountId) ?? accounts.get(tab.accountId)!
       // Older versions saved no flag: a title other than the default was chosen.
       const fixedTitle = tab.fixedTitle ?? tab.title !== defaultTerminalTitle(tab.mode, auth.name, tab.cwd)
       try {
-        this.terminals.create({
+        const info = this.terminals.create({
           accountId: tab.accountId,
           authAccountId: auth.id,
           cwd: tab.cwd,
@@ -81,9 +90,18 @@ export class TerminalRestore {
           title: fixedTitle ? tab.title : null,
           muted: tab.muted === true,
         })
+        opened.set(String(index), info.id)
       } catch {
         // e.g. the folder no longer exists: the tab is left out.
       }
+    }
+    for (const tab of saved) {
+      const layout = parsePaneNode((tab as SavedTerminal | null)?.layout)
+      if (!layout) continue
+      // Terminals that didn't open leave their space to the others.
+      const missing = new Set(paneIds(layout).filter((index) => !opened.has(index)))
+      const rest = removePanes(layout, missing)
+      if (isSplit(rest)) this.terminals.arrange(mapPanes(rest, (index) => opened.get(index)!))
     }
   }
 
@@ -108,22 +126,25 @@ export class TerminalRestore {
   }
 
   private snapshot(): SavedTerminal[] {
-    return this.terminals.list().flatMap((t) =>
-      t.mode === 'login'
-        ? []
-        : [
-            {
-              accountId: t.accountId,
-              authAccountId: t.authAccountId,
-              cwd: t.cwd,
-              mode: t.mode,
-              sessionId: t.sessionId,
-              title: t.title,
-              fixedTitle: t.fixedTitle,
-              muted: t.muted,
-            },
-          ],
-    )
+    const terminals = this.terminals.list().flatMap((t) => (t.mode === 'login' ? [] : [{ ...t, mode: t.mode }]))
+    const index = new Map(terminals.map((t, i) => [t.id, String(i)]))
+    /** Id of a tab's first terminal → how the tab shares its space, by index. Login tabs are left out. */
+    const layouts = new Map<string, PaneNode>()
+    for (const split of this.terminals.layouts()) {
+      const saved = removePanes(split, new Set(paneIds(split).filter((id) => !index.has(id))))
+      if (isSplit(saved)) layouts.set(paneIds(saved)[0], mapPanes(saved, (id) => index.get(id)!))
+    }
+    return terminals.map((t) => ({
+      accountId: t.accountId,
+      authAccountId: t.authAccountId,
+      cwd: t.cwd,
+      mode: t.mode,
+      sessionId: t.sessionId,
+      title: t.title,
+      fixedTitle: t.fixedTitle,
+      muted: t.muted,
+      ...(layouts.has(t.id) ? { layout: layouts.get(t.id) } : {}),
+    }))
   }
 }
 

@@ -27,9 +27,19 @@ export function useShortcuts() {
     if (router.currentRoute.value.name !== 'terminals') void router.push({ name: 'terminals' })
   }
 
+  const onTerminals = () => router.currentRoute.value.name === 'terminals'
+
   useEventListener(window, 'keydown', (event: KeyboardEvent) => {
     const shortcut = matchShortcut(event)
     if (!shortcut) return
+    if (shortcut.action === 'focus-pane') {
+      // At the edge of the tab (or in a tab with one terminal) the keys stay with the terminal.
+      const next = onTerminals() && terminals.activeId ? terminals.neighbour(terminals.activeId, shortcut.direction!) : null
+      if (!next) return
+      event.preventDefault()
+      terminals.activate(next)
+      return
+    }
     event.preventDefault()
     const { action } = shortcut
     switch (action) {
@@ -66,7 +76,11 @@ export function useShortcuts() {
         zoom(null)
         break
       case 'find':
-        if (router.currentRoute.value.name === 'terminals') ui.searchRequest++
+        if (onTerminals()) ui.searchRequest++
+        break
+      case 'split-right':
+      case 'split-down':
+        if (onTerminals() && terminals.active) void launcher.split(terminals.active, action === 'split-right' ? 'row' : 'column')
         break
     }
   })

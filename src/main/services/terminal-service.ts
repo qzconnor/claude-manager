@@ -5,7 +5,17 @@ import { userInfo } from 'node:os'
 import { basename, join } from 'node:path'
 import type * as Pty from 'node-pty'
 import { applyOrder } from '@shared/order'
-import type { AttentionKind, CloseOnExit, SessionLimit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
+import { dropPanes, isSplit, paneIds, removePanes, replacePane, splitPane } from '@shared/panes'
+import type {
+  AttentionKind,
+  CloseOnExit,
+  PaneNode,
+  PaneSplit,
+  SessionLimit,
+  SplitDirection,
+  TerminalCreateOptions,
+  TerminalInfo,
+} from '@shared/types'
 import { colorFgBg, colorSchemeReport, ColorSchemeUpdates } from '../lib/color-scheme'
 import { fallbackSessionFolder } from '../lib/session-folder'
 import {
@@ -127,6 +137,8 @@ type Events = {
 
 export class TerminalService extends TypedEmitter<Events> {
   private readonly terminals = new Map<string, TerminalRecord>()
+  /** Tabs with more than one terminal; every other terminal has a tab of its own. */
+  private splits: PaneSplit[] = []
   private readonly trackTimer: NodeJS.Timeout
   private tracking = false
   /** A new tab arrived during a round: run another one right after it. */
@@ -146,6 +158,11 @@ export class TerminalService extends TypedEmitter<Events> {
 
   list(): TerminalInfo[] {
     return [...this.terminals.values()].map((t) => ({ ...t.info }))
+  }
+
+  /** The tabs with more than one terminal, as they share their space. */
+  layouts(): PaneSplit[] {
+    return [...this.splits]
   }
 
   get(id: string): TerminalInfo {
@@ -284,6 +301,10 @@ export class TerminalService extends TypedEmitter<Events> {
       viewed: false,
     }
     this.terminals.set(id, record)
+    if (options.replaces && this.terminals.has(options.replaces)) this.takePlace(id, options.replaces)
+    else if (options.split && this.terminals.has(options.split.terminalId)) {
+      this.addPane(options.split.terminalId, id, options.split.direction === 'column' ? 'column' : 'row')
+    }
 
     proc.onData((data) => this.handleData(record, data))
     proc.onExit(({ exitCode }) => {
@@ -349,6 +370,7 @@ export class TerminalService extends TypedEmitter<Events> {
     if (record.flushTimer) clearTimeout(record.flushTimer)
     this.kill(id)
     this.terminals.delete(id)
+    this.splits = dropPanes(this.splits, new Set([id]))
     this.emitChanged()
   }
 
@@ -374,11 +396,18 @@ export class TerminalService extends TypedEmitter<Events> {
    * tabs and the next start restores them in that order. Tabs missing from `ids` stay at the end.
    */
   reorder(ids: string[]): void {
-    const records = [...this.terminals.values()]
-    const ordered = applyOrder(records, ids, (record) => record.info.id)
-    if (ordered.every((record, index) => record === records[index])) return
-    this.terminals.clear()
-    for (const record of ordered) this.terminals.set(record.info.id, record)
+    if (this.applyOrder(ids)) this.emitChanged()
+  }
+
+  /**
+   * Puts these terminals together in one tab, as `layout` shares its space, and takes them out of the
+   * tabs they were in. A single id gives the terminal a tab of its own. Terminals that closed in the
+   * meantime leave their space to the others.
+   */
+  arrange(layout: PaneNode): void {
+    const open = removePanes(layout, new Set(paneIds(layout).filter((id) => !this.terminals.has(id))))
+    if (open === null) return
+    this.splits = [...dropPanes(this.splits, new Set(paneIds(open))), ...(isSplit(open) ? [open] : [])]
     this.emitChanged()
   }
 
@@ -629,6 +658,34 @@ export class TerminalService extends TypedEmitter<Events> {
     const record = this.terminals.get(id)
     if (!record) throw new Error('Terminal nicht gefunden.')
     return record
+  }
+
+  /** Whether the order changed. */
+  private applyOrder(ids: string[]): boolean {
+    const records = [...this.terminals.values()]
+    const ordered = applyOrder(records, ids, (record) => record.info.id)
+    if (ordered.every((record, index) => record === records[index])) return false
+    this.terminals.clear()
+    for (const record of ordered) this.terminals.set(record.info.id, record)
+    return true
+  }
+
+  /** The new terminal `id` goes where `oldId` is, in the order and in its tab; `oldId` is left with a tab of its own. */
+  private takePlace(id: string, oldId: string): void {
+    const ids = [...this.terminals.keys()].filter((key) => key !== id)
+    ids.splice(ids.indexOf(oldId), 0, id)
+    this.applyOrder(ids)
+    this.splits = this.splits.map((split) => replacePane(split, oldId, id) as PaneSplit)
+  }
+
+  /** The new terminal `id` takes half the part of `of`, in its tab, and follows it in the order. */
+  private addPane(of: string, id: string, direction: SplitDirection): void {
+    const ids = [...this.terminals.keys()].filter((key) => key !== id)
+    ids.splice(ids.indexOf(of) + 1, 0, id)
+    this.applyOrder(ids)
+    const index = this.splits.findIndex((split) => paneIds(split).includes(of))
+    if (index === -1) this.splits = [...this.splits, splitPane(of, of, id, direction) as PaneSplit]
+    else this.splits = this.splits.map((split, i) => (i === index ? (splitPane(split, of, id, direction) as PaneSplit) : split))
   }
 
   private emitChanged(): void {

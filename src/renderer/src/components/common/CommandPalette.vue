@@ -2,12 +2,14 @@
 import {
   BellIcon,
   BellOffIcon,
+  Columns2Icon,
   FolderIcon,
   FolderOpenIcon,
   GaugeIcon,
   HistoryIcon,
   PlusIcon,
   RefreshCwIcon,
+  Rows2Icon,
   SettingsIcon,
   SparklesIcon,
   SquareTerminalIcon,
@@ -106,6 +108,18 @@ function switchTo(id: string) {
           <FolderOpenIcon />
           Neue Session in Ordner…
         </CommandItem>
+        <template v-if="terminals.active">
+          <CommandItem value="split-right" @select="run(() => launcher.split(terminals.active!, 'row'))">
+            <Columns2Icon />
+            Vertikal teilen
+            <CommandShortcut>Alt+Umschalt+Plus</CommandShortcut>
+          </CommandItem>
+          <CommandItem value="split-down" @select="run(() => launcher.split(terminals.active!, 'column'))">
+            <Rows2Icon />
+            Horizontal teilen
+            <CommandShortcut>Alt+Umschalt+Minus</CommandShortcut>
+          </CommandItem>
+        </template>
         <CommandItem value="refresh-usage" @select="run(() => usage.refresh())">
           <RefreshCwIcon />
           Usage aktualisieren

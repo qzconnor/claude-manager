@@ -13,7 +13,11 @@ import { useUiStore } from '@/stores/ui'
 import TerminalLimitBanner from './TerminalLimitBanner.vue'
 import TerminalSearch from './TerminalSearch.vue'
 
-const props = defineProps<{ terminal: TerminalInfo; active: boolean }>()
+/** `active`: has the keyboard while the terminals page is shown. `focused`: marked as the part with the keyboard, in a split tab. */
+// Placed by TerminalWorkspace (absolute, with its share of the tab).
+const props = defineProps<{ terminal: TerminalInfo; active: boolean; focused?: boolean }>()
+/** The terminal was clicked or took the keyboard: it should become the active one. */
+const emit = defineEmits<{ focus: [] }>()
 
 const container = ref<HTMLElement | null>(null)
 const search = ref<InstanceType<typeof TerminalSearch> | null>(null)
@@ -105,12 +109,14 @@ function closeSearch() {
 
 <template>
   <div
-    class="relative size-full overflow-hidden"
+    class="size-full overflow-hidden"
     :style="{ background: containerBackground, paddingBottom }"
     @dragenter="onDragEnter"
     @dragover="onDragOver"
     @dragleave="onDragLeave"
     @drop="onDrop"
+    @pointerdown.capture="!active && emit('focus')"
+    @focusin="!active && emit('focus')"
   >
     <!-- Aligned to the bottom, so the prompt keeps just the padding there; the top row reaches above
          the container and is cut at the edge of the pane. -->
@@ -128,6 +134,8 @@ function closeSearch() {
     <div v-if="searchOpen" class="absolute top-3 right-5 z-10">
       <TerminalSearch ref="search" :find-next="term.findNext" :find-previous="term.findPrevious" @close="closeSearch" />
     </div>
+
+    <div v-if="focused" aria-hidden="true" class="pointer-events-none absolute inset-0 z-20 ring-1 ring-primary/50 ring-inset" />
 
     <div
       v-if="dragging"
