@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { TerminalCreateOptions, TerminalInfo } from '@shared/types'
+import type { PaneNode, PaneSplit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
 
 // terminal-service (for the default title) pulls in modules that import electron.
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: false } }))
@@ -39,15 +39,19 @@ let dir: string
 let configDir: string
 let file: string
 let terminalList: TerminalInfo[]
+let layoutList: PaneSplit[]
 let restoreTerminals: boolean
 const terminalEvents = new Emitter()
 const settingsEvents = new Emitter()
 const create = vi.fn<(options: TerminalCreateOptions) => TerminalInfo>()
+const arrange = vi.fn<(layout: PaneNode) => void>()
 
 const terminals = {
   on: (event: string, listener: Listener) => terminalEvents.on(event, listener),
   list: () => terminalList,
+  layouts: () => layoutList,
   create,
+  arrange,
 } as unknown as TerminalService
 
 const accounts = {
@@ -102,7 +106,9 @@ beforeEach(async () => {
   configDir = join(dir, 'config')
   file = join(dir, 'open-terminals.json')
   terminalList = []
+  layoutList = []
   restoreTerminals = true
+  arrange.mockReset()
   create.mockReset()
   create.mockImplementation((options) => info({ id: `new-${create.mock.calls.length}`, cwd: options.cwd ?? '' }))
 })
@@ -177,6 +183,33 @@ describe('TerminalRestore on start', () => {
     expect(create.mock.calls.map(([options]) => options.title)).toEqual(['first', 'second'])
   })
 
+  it('puts the terminals of a split tab together again, without those that did not open', async () => {
+    const tab = { accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'shell', sessionId: null, fixedTitle: false }
+    const split = (first: PaneNode, second: PaneNode, direction: 'row' | 'column' = 'row') => ({ direction, ratio: 0.3, first, second })
+    await writeFile(
+      file,
+      JSON.stringify([
+        { ...tab, title: 'a', layout: split('0', split('1', '2', 'column')) },
+        { ...tab, title: 'b' },
+        { ...tab, title: 'c' },
+        { ...tab, title: 'alone' },
+        // Broken: refers to itself twice.
+        { ...tab, title: 'd', layout: split('4', '4') },
+        { ...tab, title: 'e' },
+        { ...tab, title: 'f', layout: split('6', '7') },
+        { ...tab, title: 'g' },
+      ]),
+    )
+    // The terminals of b and g fail to open.
+    create.mockImplementation(() => {
+      const n = create.mock.calls.length
+      if (n === 2 || n === 8) throw new Error('folder missing')
+      return info({ id: `new-${n}` })
+    })
+    await start().init()
+    expect(arrange.mock.calls).toEqual([[split('new-1', 'new-3')]])
+  })
+
   it('opens nothing for a file that is no list', async () => {
     await writeFile(file, JSON.stringify({ accountId: 'acc-a' }))
     await start().init()
@@ -223,6 +256,18 @@ describe('TerminalRestore while running', () => {
         muted: false,
       },
     ])
+  })
+
+  it('saves how split tabs share their space, by index and without login tabs', async () => {
+    await start().init()
+    terminalList = [info({ id: 'a' }), info({ id: 'login', mode: 'login' }), info({ id: 'b' }), info({ id: 'c' }), info({ id: 'd' })]
+    layoutList = [
+      { direction: 'row', ratio: 0.6, first: 'a', second: { direction: 'column', ratio: 0.5, first: 'login', second: 'b' } },
+      { direction: 'column', ratio: 0.5, first: 'c', second: 'login' },
+    ]
+    terminalEvents.fire('changed', terminalList)
+    const saved = (await readSaved()) as { title: string; layout?: PaneNode }[]
+    expect(saved.map((t) => t.layout ?? null)).toEqual([{ direction: 'row', ratio: 0.6, first: '0', second: '1' }, null, null, null])
   })
 
   it('does not write unchanged tabs again', async () => {

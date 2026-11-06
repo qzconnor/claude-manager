@@ -78,8 +78,9 @@ Die App wurde in acht Schritten gebaut. Jeder Schritt baut auf dem vorherigen au
 - Einstellungen lassen sich als JSON-Datei exportieren und importieren, ohne Accounts. Fremde Pfade, die es hier nicht gibt, bleiben unverändert, der Import ist rückgängig zu machen.
 - Zuletzt genutzte Ordner im Menü neben dem Plus, in der Befehlspalette und auf der leeren Terminal-Seite. Ein Klick startet dort eine Session mit dem Standard-Account, das Untermenü mit einem anderen Account oder als Shell. Die Ordner kommen aus offenen Tabs und gespeicherten Sessions; die Startordner, in denen eine neue Session ohnehin beginnt, fehlen.
 - Automatischer Account-Wechsel am Limit (Einstellung, standardmäßig aus): Die Session läuft ohne Klick mit dem vorgeschlagenen Account weiter, der neue Tab nimmt den Platz des alten ein, die Benachrichtigung nennt den neuen Account. Verlassene Accounts bleiben bis zu ihrem Reset gesperrt. Die Auswahl der Accounts liegt jetzt in `src/shared/account-choice.ts` für Hauptprozess und Fenster; Accounts mit demselben Login gelten zusammen als am Limit.
+- Geteilte Tabs: vertikal und horizontal teilen (Alt+Umschalt+Plus/Minus, Kontextmenü, Befehlspalette), beliebig verschachtelt, Trennlinien ziehen, Alt+Pfeil zwischen den Terminals. Die Aufteilung liegt im Hauptprozess (`src/shared/panes.ts`), übersteht ein Neuladen und wird mit den Tabs wiederhergestellt; ein neu gestartetes oder auf einen anderen Account gewechseltes Terminal behält seinen Platz.
 
 ## Mögliche nächste Schritte
 
 - Code-Signing, sobald ein Zertifikat vorhanden ist (dann prüft electron-updater auch die Signatur des Updates).
-- Geteilte Terminal-Ansicht (Split Panes).
+- Tabs per Drag & Drop in einen anderen Tab ziehen, um sie dort als Teil anzuzeigen.

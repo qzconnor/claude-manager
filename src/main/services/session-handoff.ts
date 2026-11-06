@@ -58,8 +58,14 @@ export class SessionHandoff extends TypedEmitter<Events> {
       const options = await this.prepare(old.accountId, old.sessionId, cwd, target)
       // The session stopped at its limit: let Claude carry on where it was, so nobody has to type.
       if (old.limit && options.resumeSessionId) options.prompt = this.settings.get().claude.continuePrompt || null
-      const info = this.terminals.create({ ...options, title: old.fixedTitle ? old.title : null, muted: old.muted })
-      // Before the old tab goes, so the window can put the new one in its place.
+      const info = this.terminals.create({
+        ...options,
+        title: old.fixedTitle ? old.title : null,
+        muted: old.muted,
+        // Its place in the tab order and in a split tab.
+        replaces: terminalId,
+      })
+      // Before the old tab goes, so the window can select the new one if the old one was.
       this.emit('replaced', terminalId, info)
       this.terminals.close(terminalId)
       return info

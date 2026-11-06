@@ -42,10 +42,11 @@ const frameMask = computed(() => {
   }
 })
 
-// The main process learns which tab is on screen: its news counts as seen (notifications, unread dot).
+// The main process learns which terminals are on screen, those of the selected tab: their news
+// counts as seen (notifications, unread dot).
 watch(
-  () => (onTerminals.value ? terminals.activeId : null),
-  (id) => window.api.terminals.viewing(id),
+  () => (onTerminals.value ? (terminals.activeTab?.panes.map((p) => p.id).join(',') ?? '') : ''),
+  (ids) => window.api.terminals.viewing(ids ? ids.split(',') : []),
   { immediate: true },
 )
 

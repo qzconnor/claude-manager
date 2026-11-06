@@ -9,11 +9,12 @@ interface Keys {
   alt?: boolean
   meta?: boolean
   type?: string
+  keyCode?: number
 }
 
 /** Just the fields matchShortcut reads; there is no KeyboardEvent in node. */
-function press({ key, code = '', ctrl = true, shift = false, alt = false, meta = false, type = 'keydown' }: Keys) {
-  return { key, code, ctrlKey: ctrl, shiftKey: shift, altKey: alt, metaKey: meta, type } as KeyboardEvent
+function press({ key, code = '', ctrl = true, shift = false, alt = false, meta = false, type = 'keydown', keyCode = 0 }: Keys) {
+  return { key, code, ctrlKey: ctrl, shiftKey: shift, altKey: alt, metaKey: meta, type, keyCode } as KeyboardEvent
 }
 
 describe('matchShortcut', () => {
@@ -48,6 +49,31 @@ describe('matchShortcut', () => {
     expect(matchShortcut(press({ key: 'T', shift: true, type: 'keyup' }))).toBeNull()
     expect(matchShortcut(press({ key: '1', code: 'Digit1', ctrl: false }))).toBeNull()
     expect(matchShortcut(press({ key: 'X', shift: true }))).toBeNull()
+  })
+
+  describe('split panes', () => {
+    const alt = (key: string, extra: Partial<Keys> = {}) => press({ key, ctrl: false, alt: true, ...extra })
+
+    it('splits with Alt+Shift+Plus and Alt+Shift+Minus, also where Shift types other characters', () => {
+      expect(matchShortcut(alt('+', { shift: true, keyCode: 187 }))).toEqual({ action: 'split-right' })
+      // German layout: Shift makes + a * and - an _.
+      expect(matchShortcut(alt('*', { shift: true, keyCode: 187, code: 'BracketRight' }))).toEqual({ action: 'split-right' })
+      expect(matchShortcut(alt('_', { shift: true, keyCode: 189, code: 'Slash' }))).toEqual({ action: 'split-down' })
+      expect(matchShortcut(alt('+', { shift: true, code: 'NumpadAdd', keyCode: 107 }))).toEqual({ action: 'split-right' })
+      expect(matchShortcut(alt('-', { shift: true, code: 'NumpadSubtract', keyCode: 109 }))).toEqual({ action: 'split-down' })
+    })
+
+    it('moves between the terminals of a tab with Alt+arrow', () => {
+      expect(matchShortcut(alt('ArrowLeft'))).toEqual({ action: 'focus-pane', direction: 'left' })
+      expect(matchShortcut(alt('ArrowDown'))).toEqual({ action: 'focus-pane', direction: 'down' })
+    })
+
+    it('leaves AltGr (Ctrl+Alt), Alt+Shift+arrow and other Alt keys to the terminal', () => {
+      expect(matchShortcut(alt('*', { shift: true, keyCode: 187, ctrl: true }))).toBeNull()
+      expect(matchShortcut(alt('ArrowLeft', { shift: true }))).toBeNull()
+      expect(matchShortcut(alt('b'))).toBeNull()
+      expect(matchShortcut(alt('ArrowLeft', { type: 'keyup' }))).toBeNull()
+    })
   })
 
   describe('select-tab', () => {

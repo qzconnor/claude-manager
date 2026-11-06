@@ -1,6 +1,6 @@
 import { useRouter } from 'vue-router'
 import { SYSTEM_ACCOUNT_ID } from '@shared/defaults'
-import type { SessionSummary, TerminalCreateOptions, TerminalInfo } from '@shared/types'
+import type { SessionSummary, SplitDirection, TerminalCreateOptions, TerminalInfo } from '@shared/types'
 import { toastError } from '@/lib/errors'
 import { useAccountsStore } from '@/stores/accounts'
 import { useSettingsStore } from '@/stores/settings'
@@ -51,5 +51,21 @@ export function useLauncher() {
       }),
     login: (accountId: string) => launch({ accountId, mode: 'login' }),
     shell: (accountId: string, cwd?: string | null) => launch({ accountId, mode: 'shell', cwd }),
+    /**
+     * Splits the part of `from` in its tab: the new terminal comes to the right (`row`) or below
+     * (`column`) and runs like `from`, a new session or a shell with the same account in the same folder.
+     * Next to a login, a new session of the default account starts.
+     */
+    split(from: TerminalInfo, direction: SplitDirection) {
+      const split = { terminalId: from.id, direction }
+      if (from.mode === 'login') return launch({ accountId: defaultAccountId(), split })
+      return launch({
+        accountId: from.accountId,
+        authAccountId: from.authAccountId,
+        cwd: from.cwd,
+        mode: from.mode,
+        split,
+      })
+    },
   }
 }

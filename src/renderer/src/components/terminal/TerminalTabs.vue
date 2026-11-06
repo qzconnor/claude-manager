@@ -3,7 +3,7 @@ import { useEventListener, useMutationObserver } from '@vueuse/core'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useTabDrag } from '@/composables/useTabDrag'
-import { useTerminalsStore } from '@/stores/terminals'
+import { useTerminalsStore, type TerminalTab as Tab } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import NewTerminalMenu from './NewTerminalMenu.vue'
 import TabSearch from './TabSearch.vue'
@@ -48,7 +48,7 @@ function measureSelected() {
   ui.selectedTabEdges = right > left ? { left, right } : null
 }
 
-/** Scrolls the strip so a tab is fully visible and clear of the fades, as far as the strip is wide enough. */
+/** Scrolls the strip so a tab (by its id) is fully visible and clear of the fades, as far as the strip is wide enough. */
 function reveal(id: string | null) {
   const el = strip.value
   const tab = id ? el?.querySelector<HTMLElement>(`[data-terminal-id="${CSS.escape(id)}"]`) : null
@@ -65,7 +65,7 @@ if (!props.vertical) {
   const resizeObserver = new ResizeObserver((entries) => {
     // A narrower window keeps the selected tab in view. Tabs changing width (new title) don't,
     // so a strip scrolled by hand stays where it is.
-    if (entries.some((entry) => entry.target === strip.value)) reveal(terminals.activeId)
+    if (entries.some((entry) => entry.target === strip.value)) reveal(terminals.activeTab?.id ?? null)
     measureSelected()
   })
   const observeTabs = () => {
@@ -84,15 +84,15 @@ if (!props.vertical) {
   })
 }
 
-function select(id: string) {
-  terminals.activate(id)
+function select(tab: Tab) {
+  terminals.activate(tab.focused.id)
   if (route.name !== 'terminals') void router.push({ name: 'terminals' })
 }
 
 // Tabs are reordered by dragging; in the title bar the page follows the selected tab while they move.
 const { dragging } = useTabDrag(strip, {
   vertical: props.vertical,
-  onDrop: (id, index) => terminals.move(id, index),
+  onDrop: (tabId, index) => terminals.move(tabId, index),
   onMove: props.vertical ? undefined : measureSelected,
 })
 watchEffect(() => (ui.draggingTab = dragging.value))
@@ -111,7 +111,7 @@ useEventListener(
 )
 
 watch(
-  () => terminals.activeId,
+  () => terminals.activeTab?.id,
   (id) => {
     if (!id) return
     void nextTick(() => {
@@ -138,12 +138,12 @@ watch(
       class="-mx-1 flex min-h-0 flex-col gap-1 overflow-y-auto p-1"
     >
       <TerminalTab
-        v-for="terminal in terminals.terminals"
-        :key="terminal.id"
-        :terminal="terminal"
-        :selected="route.name === 'terminals' && terminal.id === terminals.activeId"
+        v-for="tab in terminals.tabs"
+        :key="tab.id"
+        :tab="tab"
+        :selected="route.name === 'terminals' && tab.id === terminals.activeTab?.id"
         vertical
-        @select="select(terminal.id)"
+        @select="select(tab)"
       />
     </div>
     <!-- Stays below the list while it scrolls; -mt-1 gives it the same gap as between two tabs. -->
@@ -160,11 +160,11 @@ watch(
       :style="stripMask"
     >
       <TerminalTab
-        v-for="terminal in terminals.terminals"
-        :key="terminal.id"
-        :terminal="terminal"
-        :selected="route.name === 'terminals' && terminal.id === terminals.activeId"
-        @select="select(terminal.id)"
+        v-for="tab in terminals.tabs"
+        :key="tab.id"
+        :tab="tab"
+        :selected="route.name === 'terminals' && tab.id === terminals.activeTab?.id"
+        @select="select(tab)"
       />
     </div>
     <NewTerminalMenu />

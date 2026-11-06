@@ -34,8 +34,8 @@ export interface NotificationTargets {
  * Also warns when an account's limit is nearly used up.
  */
 export class NotificationService {
-  /** The tab the window shows: the selected one while the terminals page is open, otherwise none. */
-  private viewing: string | null = null
+  /** The terminals the window shows: those of the selected tab while the terminals page is open, otherwise none. */
+  private viewing = new Set<string>()
   /**
    * The latest notification of each tab. Kept so it can be taken back once the tab was seen, and
    * so a click on it still arrives (Electron loses the events of collected notifications).
@@ -103,15 +103,15 @@ export class NotificationService {
     autoSwitch.on('failed', (from, target, message) => this.switchFailed(from, target, message))
   }
 
-  /** The window tells which tab it shows (null: another page); that tab is seen. */
-  setViewing(id: string | null): void {
-    this.viewing = id
-    if (id) this.seen(id)
+  /** The window tells which terminals it shows (none: another page); they are seen. */
+  setViewing(ids: readonly string[]): void {
+    this.viewing = new Set(ids)
+    for (const id of ids) this.seen(id)
   }
 
   /** The window came to the front: the notification of the tab it shows is no longer needed. */
   windowFocused(): void {
-    if (this.viewing) this.seen(this.viewing)
+    for (const id of this.viewing) this.seen(id)
   }
 
   /** Shows what a notification looks like with the current settings. */
@@ -138,7 +138,7 @@ export class NotificationService {
     } catch {
       return
     }
-    const shown = this.viewing === id
+    const shown = this.viewing.has(id)
 
     // The dot also marks short answers and muted tabs: it doesn't interrupt anybody.
     if (settings.unreadDot && !shown) this.terminals.setAttention(id, turn.kind)
@@ -153,7 +153,7 @@ export class NotificationService {
     const settings = this.settings.get().notifications
     if (!settings.enabled || !settings.onLimit || to.muted) return
     const limit = `${limitLabel(from.limit?.type ?? null)} von „${this.accountName(from.authAccountId)}“ erreicht`
-    const shown = this.viewing === from.id || this.viewing === to.id
+    const shown = this.viewing.has(from.id) || this.viewing.has(to.id)
     this.alert(to, `Weiter mit „${target.name}“`, limit, shown, settings)
   }
 
@@ -161,7 +161,7 @@ export class NotificationService {
     const settings = this.settings.get().notifications
     if (!settings.enabled || !settings.onLimit || from.muted) return
     const limit = `${limitLabel(from.limit?.type ?? null)} erreicht`
-    this.alert(from, `Wechsel zu „${target.name}“ fehlgeschlagen`, `${limit} · ${message}`, this.viewing === from.id, settings)
+    this.alert(from, `Wechsel zu „${target.name}“ fehlgeschlagen`, `${limit} · ${message}`, this.viewing.has(from.id), settings)
   }
 
   private accountName(id: string): string {

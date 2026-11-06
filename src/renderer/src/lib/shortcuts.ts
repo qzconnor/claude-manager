@@ -1,3 +1,5 @@
+import type { PaneDirection } from '@shared/panes'
+
 /**
  * Global keyboard shortcuts. They are checked inside xterm's key handler as well,
  * so the terminal never swallows them.
@@ -15,19 +17,42 @@ export type ShortcutAction =
   | 'zoom-out'
   | 'zoom-reset'
   | 'find'
+  | 'split-right'
+  | 'split-down'
+  | 'focus-pane'
 
 export interface Shortcut {
   action: ShortcutAction
   /** 'select-tab': index of the tab, -1 for the last one. */
   index?: number
+  /** 'focus-pane': where the terminal to move to lies. */
+  direction?: PaneDirection
 }
 
+const ARROWS: Record<string, PaneDirection> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
+
 export function matchShortcut(e: KeyboardEvent): Shortcut | null {
+  if (e.type === 'keydown' && e.altKey && !e.ctrlKey && !e.metaKey) return matchPaneShortcut(e)
   const action = matchAction(e)
   if (action !== 'select-tab') return action ? { action } : null
   // Like in browsers: Ctrl+1–8 select that tab, Ctrl+9 the last one.
   const digit = Number(tabDigit(e))
   return { action, index: digit === 9 ? -1 : digit - 1 }
+}
+
+/**
+ * Like in Windows Terminal: Alt+Shift+Plus splits to the right, Alt+Shift+Minus down, Alt+arrow
+ * moves to the terminal in that direction. Plus and minus by the key (`keyCode`), as Shift turns
+ * them into other characters depending on the layout (`*` and `_` on a German keyboard).
+ */
+function matchPaneShortcut(e: KeyboardEvent): Shortcut | null {
+  if (e.shiftKey) {
+    if (e.keyCode === 187 || e.code === 'NumpadAdd' || e.key === '+') return { action: 'split-right' }
+    if (e.keyCode === 189 || e.code === 'NumpadSubtract' || e.key === '-') return { action: 'split-down' }
+    return null
+  }
+  const direction = ARROWS[e.key]
+  return direction ? { action: 'focus-pane', direction } : null
 }
 
 function matchAction(e: KeyboardEvent): ShortcutAction | null {

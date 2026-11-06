@@ -59,6 +59,8 @@ const api: ManagerApi = {
   },
   terminals: {
     list: () => invoke(IpcInvoke.terminalsList),
+    layouts: () => invoke(IpcInvoke.terminalsLayouts),
+    arrange: (layout) => invoke(IpcInvoke.terminalsArrange, layout),
     create: (options) => invoke(IpcInvoke.terminalsCreate, options),
     write: (id, data) => ipcRenderer.send(IpcSend.terminalWrite, id, data),
     resize: (id, cols, rows) => ipcRenderer.send(IpcSend.terminalResize, id, cols, rows),
@@ -68,7 +70,7 @@ const api: ManagerApi = {
     attach: (id) => invoke(IpcInvoke.terminalsAttach, id),
     continueWith: (id, accountId) => invoke(IpcInvoke.terminalsContinueWith, id, accountId),
     setMuted: (id, muted) => invoke(IpcInvoke.terminalsSetMuted, id, muted),
-    viewing: (id) => ipcRenderer.send(IpcSend.terminalViewing, id),
+    viewing: (ids) => ipcRenderer.send(IpcSend.terminalViewing, ids),
     colorScheme: (dark) => ipcRenderer.send(IpcSend.terminalColorScheme, dark),
     reorder: (ids) => ipcRenderer.send(IpcSend.terminalReorder, ids),
     onChanged: (cb) => subscribe(IpcEvent.terminalsChanged, cb),

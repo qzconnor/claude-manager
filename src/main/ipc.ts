@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell, type IpcMainInvokeEvent } from 'electron'
 import { IpcEvent, IpcInvoke, IpcSend } from '@shared/ipc'
+import { parsePaneNode } from '@shared/panes'
 import type {
   AccountCreateInput,
   AccountUpdateInput,
@@ -136,6 +137,12 @@ export function registerIpc(ctx: AppContext): void {
 
   // --- terminals -----------------------------------------------------------
   ipcMain.handle(IpcInvoke.terminalsList, () => ctx.terminals.list())
+  ipcMain.handle(IpcInvoke.terminalsLayouts, () => ctx.terminals.layouts())
+  ipcMain.handle(IpcInvoke.terminalsArrange, (_e, layout: unknown) => {
+    const parsed = parsePaneNode(layout)
+    if (!parsed) throw new Error('Ungültiger Parameter: layout')
+    ctx.terminals.arrange(parsed)
+  })
   ipcMain.handle(IpcInvoke.terminalsCreate, (_e, options: TerminalCreateOptions) => ctx.terminals.open(options))
   ipcMain.handle(IpcInvoke.terminalsKill, (_e, id: unknown) => ctx.terminals.kill(requireString(id, 'id')))
   ipcMain.handle(IpcInvoke.terminalsClose, (_e, id: unknown) => ctx.terminals.close(requireString(id, 'id')))
@@ -152,8 +159,8 @@ export function registerIpc(ctx: AppContext): void {
     if (typeof muted !== 'boolean') throw new Error('Ungültiger Parameter: muted')
     ctx.terminals.setMuted(requireString(id, 'id'), muted)
   })
-  ipcMain.on(IpcSend.terminalViewing, (_e, id: unknown) => {
-    ctx.notifications.setViewing(typeof id === 'string' && id ? id : null)
+  ipcMain.on(IpcSend.terminalViewing, (_e, ids: unknown) => {
+    ctx.notifications.setViewing(Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string' && !!id) : [])
   })
   ipcMain.on(IpcSend.terminalColorScheme, (_e, dark: unknown) => {
     if (typeof dark === 'boolean') ctx.terminals.setColorScheme(dark)
@@ -167,7 +174,7 @@ export function registerIpc(ctx: AppContext): void {
   ipcMain.on(IpcSend.terminalResize, (_e, id: unknown, cols: unknown, rows: unknown) => {
     if (typeof id === 'string' && typeof cols === 'number' && typeof rows === 'number') ctx.terminals.resize(id, cols, rows)
   })
-  ctx.terminals.on('changed', (terminals) => broadcast(IpcEvent.terminalsChanged, terminals))
+  ctx.terminals.on('changed', (terminals) => broadcast(IpcEvent.terminalsChanged, terminals, ctx.terminals.layouts()))
   ctx.handoff.on('replaced', (oldId, info) => broadcast(IpcEvent.terminalReplaced, oldId, info))
   ctx.autoSwitch.on('switched', (from, to, target) =>
     broadcast(IpcEvent.terminalAutoSwitch, { from, to, targetId: target.id, error: null } satisfies AutoSwitchEvent),

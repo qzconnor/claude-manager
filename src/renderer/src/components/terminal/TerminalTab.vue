@@ -4,17 +4,20 @@ import {
   BellIcon,
   BellOffIcon,
   CircleStopIcon,
+  Columns2Icon,
   FolderOpenIcon,
   KeyRoundIcon,
   LoaderCircleIcon,
   PencilIcon,
   RotateCwIcon,
+  Rows2Icon,
+  SquareArrowOutUpRightIcon,
   SquareTerminalIcon,
   TriangleAlertIcon,
   XIcon,
 } from '@lucide/vue'
 import { computed, nextTick, ref, watch } from 'vue'
-import type { TerminalInfo } from '@shared/types'
+import type { AttentionKind } from '@shared/types'
 import AccountChoiceItems from '@/components/common/AccountChoiceItems.vue'
 import AccountDot from '@/components/common/AccountDot.vue'
 import {
@@ -31,31 +34,48 @@ import {
 } from '@/components/ui/context-menu'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { useAccountSwitch } from '@/composables/useAccountSwitch'
+import { useLauncher } from '@/composables/useLauncher'
 import { useTerminalActions } from '@/composables/useTerminalActions'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
 import { attentionLook } from '@/lib/attention'
 import { attempt } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
-import { useTerminalsStore } from '@/stores/terminals'
+import { useTerminalsStore, type TerminalTab } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import TerminalTabCard from './TerminalTabCard.vue'
 
-/** `vertical`: a full-width row in the sidebar, with the hover card beside it. */
-const props = defineProps<{ terminal: TerminalInfo; selected: boolean; vertical?: boolean }>()
+/**
+ * A tab shows the terminal in it that has (or last had) the keyboard; its menu acts on that one.
+ * `vertical`: a full-width row in the sidebar, with the hover card beside it.
+ */
+const props = defineProps<{ tab: TerminalTab; selected: boolean; vertical?: boolean }>()
 const emit = defineEmits<{ select: [] }>()
 
 const accounts = useAccountsStore()
 const terminals = useTerminalsStore()
-const { closeTerminal, stopTerminal, restartTerminal } = useTerminalActions()
+const launcher = useLauncher()
+const { closeTerminal, closeTab, stopTerminal, restartTerminal } = useTerminalActions()
 const accountSwitch = useAccountSwitch()
 
-/** The account whose limits the tab uses; the session may lie with another one after a switch. */
-const account = computed(() => accounts.get(props.terminal.authAccountId))
-const sessionAccount = computed(() =>
-  props.terminal.accountId === props.terminal.authAccountId ? undefined : accounts.get(props.terminal.accountId),
+const terminal = computed(() => props.tab.focused)
+/** The tab holds several terminals: a symbol shows how the first split divides it. */
+const split = computed(() => props.tab.panes.length > 1)
+const splitIcon = computed(() =>
+  typeof props.tab.layout === 'object' && props.tab.layout.direction === 'column' ? Rows2Icon : Columns2Icon,
 )
-const exited = computed(() => props.terminal.status === 'exited')
+
+/** The account whose limits the tab uses; the session may lie with another one after a switch. */
+const account = computed(() => accounts.get(terminal.value.authAccountId))
+const sessionAccount = computed(() =>
+  terminal.value.accountId === terminal.value.authAccountId ? undefined : accounts.get(terminal.value.accountId),
+)
+const exited = computed(() => terminal.value.status === 'exited')
+/** The colour of a terminal of the tab that is at work. */
+const busyColor = computed(() => {
+  const busy = props.tab.panes.find((p) => p.busy)
+  return busy ? (accounts.get(busy.authAccountId)?.color ?? '') : null
+})
 
 // The terminal pane lays its own colour over the page's surface; the selected tab in the title bar
 // stacks the same two layers, so it has exactly the colour of the terminal it joins.
@@ -68,16 +88,23 @@ const joinedBackground = computed(() =>
 // Choices are built when the menu opens, so they reflect the current limits.
 const menuOpen = ref(false)
 const choices = computed(() =>
-  menuOpen.value ? accountSwitch.choices(props.terminal.accountId, props.terminal.authAccountId) : [],
+  menuOpen.value ? accountSwitch.choices(terminal.value.accountId, terminal.value.authAccountId) : [],
 )
-const canSwitch = computed(() => props.terminal.mode === 'session' && Boolean(props.terminal.sessionId))
+const canSwitch = computed(() => terminal.value.mode === 'session' && Boolean(terminal.value.sessionId))
 
-/** News the user hasn't seen: a dot where the close button is (until hovered), orange when Claude waits. */
-const attention = computed(() => (props.terminal.attention ? attentionLook[props.terminal.attention] : null))
+/**
+ * News the user hasn't seen, in any terminal of the tab: a dot where the close button is (until
+ * hovered), orange when Claude waits.
+ */
+const ATTENTION_ORDER: AttentionKind[] = ['input', 'limit', 'done']
+const attention = computed(() => {
+  const kind = ATTENTION_ORDER.find((k) => props.tab.panes.some((p) => p.attention === k))
+  return kind ? attentionLook[kind] : null
+})
 
 function toggleMuted() {
   void attempt(
-    () => terminals.setMuted(props.terminal.id, !props.terminal.muted),
+    () => terminals.setMuted(terminal.value.id, !terminal.value.muted),
     'Benachrichtigungen des Tabs konnten nicht geändert werden',
   )
 }
@@ -104,7 +131,7 @@ function onMenuOpen(open: boolean) {
 }
 
 function startRename() {
-  draft.value = props.terminal.title
+  draft.value = terminal.value.title
   editing.value = true
   hovered.value = false
   void nextTick(() => {
@@ -118,8 +145,8 @@ async function commitRename() {
   editing.value = false
   const title = draft.value.trim()
   // Empty gives the tab back the session's title.
-  if (title ? title !== props.terminal.title : props.terminal.fixedTitle) {
-    await attempt(() => terminals.rename(props.terminal.id, title), 'Umbenennen fehlgeschlagen')
+  if (title ? title !== terminal.value.title : terminal.value.fixedTitle) {
+    await attempt(() => terminals.rename(terminal.value.id, title), 'Umbenennen fehlgeschlagen')
   }
 }
 
@@ -132,18 +159,18 @@ function onMouseDown(event: MouseEvent) {
   // Middle click closes like in Windows Terminal and browsers.
   if (event.button === 1) {
     event.preventDefault()
-    void closeTerminal(props.terminal.id)
+    void closeTab(props.tab)
   }
 }
 
 async function closeOthers() {
-  for (const other of terminals.terminals.filter((t) => t.id !== props.terminal.id)) {
-    await closeTerminal(other.id)
+  for (const other of terminals.tabs.filter((t) => t.id !== props.tab.id)) {
+    await closeTab(other)
   }
 }
 
 function openFolder() {
-  void attempt(() => window.api.app.openPath(props.terminal.cwd), 'Ordner konnte nicht geöffnet werden')
+  void attempt(() => window.api.app.openPath(terminal.value.cwd), 'Ordner konnte nicht geöffnet werden')
 }
 </script>
 
@@ -154,7 +181,7 @@ function openFolder() {
         <HoverCardTrigger as-child>
           <div
             role="tab"
-            :data-terminal-id="terminal.id"
+            :data-terminal-id="tab.id"
             :aria-selected="selected"
             :class="
               cn(
@@ -187,11 +214,11 @@ function openFolder() {
             <span class="flex size-3.5 shrink-0 items-center justify-center">
               <KeyRoundIcon v-if="terminal.mode === 'login'" class="size-3.5" />
               <LoaderCircleIcon
-                v-else-if="terminal.busy"
+                v-else-if="busyColor !== null"
                 role="status"
                 aria-label="Claude Code arbeitet"
                 class="size-3.5 animate-spin"
-                :style="{ color: account?.color ?? undefined }"
+                :style="{ color: busyColor || undefined }"
               />
               <SquareTerminalIcon v-else-if="terminal.mode === 'shell'" class="size-3.5" />
               <TriangleAlertIcon v-else-if="terminal.limit" class="size-3.5 text-warning" />
@@ -222,6 +249,13 @@ function openFolder() {
             >
               {{ terminal.title }}
             </span>
+            <component
+              :is="splitIcon"
+              v-if="split && !editing"
+              role="img"
+              :aria-label="`${tab.panes.length} Terminals`"
+              class="size-3 shrink-0 text-muted-foreground"
+            />
             <BellOffIcon
               v-if="terminal.muted && !editing"
               aria-label="Benachrichtigungen stummgeschaltet"
@@ -237,7 +271,7 @@ function openFolder() {
                   (selected || attention) && 'opacity-100',
                 )
               "
-              @click.stop="closeTerminal(terminal.id)"
+              @click.stop="closeTab(tab)"
               @dblclick.stop
             >
               <span
@@ -302,12 +336,34 @@ function openFolder() {
       </template>
       <ContextMenuSeparator />
       <ContextMenuGroup>
-        <ContextMenuItem @select="closeTerminal(terminal.id)">
+        <ContextMenuItem @select="launcher.split(terminal, 'row')">
+          <Columns2Icon />
+          Vertikal teilen
+          <ContextMenuShortcut>Alt+Umschalt+Plus</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem @select="launcher.split(terminal, 'column')">
+          <Rows2Icon />
+          Horizontal teilen
+          <ContextMenuShortcut>Alt+Umschalt+Minus</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem v-if="split" @select="terminals.detach(terminal.id)">
+          <SquareArrowOutUpRightIcon />
+          In eigenen Tab verschieben
+        </ContextMenuItem>
+      </ContextMenuGroup>
+      <ContextMenuSeparator />
+      <ContextMenuGroup>
+        <ContextMenuItem v-if="split" @select="closeTerminal(terminal.id)">
           <XIcon />
-          Tab schließen
+          Terminal schließen
           <ContextMenuShortcut>Strg+Umschalt+W</ContextMenuShortcut>
         </ContextMenuItem>
-        <ContextMenuItem :disabled="terminals.terminals.length < 2" @select="closeOthers">
+        <ContextMenuItem @select="closeTab(tab)">
+          <XIcon v-if="!split" />
+          Tab schließen
+          <ContextMenuShortcut v-if="!split">Strg+Umschalt+W</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem :disabled="terminals.tabs.length < 2" @select="closeOthers">
           Andere Tabs schließen
         </ContextMenuItem>
       </ContextMenuGroup>
