@@ -304,10 +304,15 @@ export interface TerminalInfo {
   attention: AttentionKind | null
   /** No notifications and no flashing taskbar for this tab; the unread dot stays. */
   muted: boolean
-  /** The session's title as in `/resume`, unless `fixedTitle`; without one a default. */
+  /** What the tab shows: the name it was given (`fixedTitle`), otherwise `autoTitle`. */
   title: string
   /** The title was given (renamed, or passed when opening) and doesn't follow the session. */
   fixedTitle: boolean
+  /**
+   * The title the tab has without a name of its own, also while it has one: the session's as in
+   * `/resume` (the one Claude gave it), a browser's page title, otherwise a default.
+   */
+  autoTitle: string
   /** Empty for a browser, as are the account ids. */
   cwd: string
   mode: TerminalMode

@@ -1,5 +1,15 @@
 <script setup lang="ts">
-import { BellDotIcon, BellOffIcon, CircleStopIcon, FolderIcon, FolderOpenIcon, HardDriveIcon, TriangleAlertIcon } from '@lucide/vue'
+import {
+  BellDotIcon,
+  BellOffIcon,
+  CircleStopIcon,
+  FolderIcon,
+  FolderOpenIcon,
+  HardDriveIcon,
+  PencilIcon,
+  TagIcon,
+  TriangleAlertIcon,
+} from '@lucide/vue'
 import { computed } from 'vue'
 import type { Account, TerminalInfo } from '@shared/types'
 import AccountDot from '@/components/common/AccountDot.vue'
@@ -12,7 +22,10 @@ import { cn } from '@/lib/utils'
 import { limitLabel } from '@/lib/usage'
 import BrowserFavicon from './BrowserFavicon.vue'
 
-/** What the hover card of a tab shows: the full title and where the session runs. */
+/**
+ * What the hover card of a tab shows: the full title and where the session runs. The title is the
+ * session's (the one Claude gave it), also when the tab has a name of its own; that one is listed below.
+ */
 const props = defineProps<{
   terminal: TerminalInfo
   /** The account whose limits the tab uses. */
@@ -20,9 +33,10 @@ const props = defineProps<{
   /** Set when the session lies with another account than the one it runs with. */
   sessionAccount?: Account
 }>()
-defineEmits<{ openFolder: [] }>()
+defineEmits<{ openFolder: []; rename: [] }>()
 
 const openLabel = `Im ${fileManagerLabel} öffnen`
+const named = computed(() => props.terminal.fixedTitle && props.terminal.title !== props.terminal.autoTitle)
 // A limit has its own line below.
 const attention = computed(() =>
   props.terminal.attention && props.terminal.attention !== 'limit' ? attentionLook[props.terminal.attention] : null,
@@ -32,11 +46,32 @@ const folder = computed(() => props.terminal.cwd.split(/[\\/]/).filter(Boolean).
 
 <template>
   <div class="flex flex-col gap-3">
-    <p class="line-clamp-3 leading-snug font-medium break-words">{{ terminal.title }}</p>
+    <div class="flex gap-2">
+      <p class="line-clamp-3 min-w-0 flex-1 leading-snug font-medium break-words">{{ terminal.autoTitle }}</p>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        class="-my-1 -mr-1 text-muted-foreground"
+        aria-label="Tab umbenennen"
+        title="Tab umbenennen"
+        @click="$emit('rename')"
+      >
+        <PencilIcon class="size-3.5" />
+      </Button>
+    </div>
 
     <div class="flex flex-col gap-2.5 text-xs">
-      <div v-if="account" class="flex gap-2">
-        <span class="flex h-4 w-3.5 shrink-0 items-center justify-center">
+      <!-- Rows of two lines have their symbol in the middle of them. -->
+      <div v-if="named" class="flex items-center gap-2">
+        <TagIcon class="size-3.5 shrink-0 text-muted-foreground" />
+        <div class="min-w-0 flex-1">
+          <p class="leading-4 font-medium break-words">{{ terminal.title }}</p>
+          <p class="text-muted-foreground">Eigener Name des Tabs</p>
+        </div>
+      </div>
+
+      <div v-if="account" class="flex items-center gap-2">
+        <span class="flex w-3.5 shrink-0 justify-center">
           <AccountDot :color="account.color" />
         </span>
         <div class="min-w-0 flex-1">
@@ -53,8 +88,8 @@ const folder = computed(() => props.terminal.cwd.split(/[\\/]/).filter(Boolean).
         <BrowserFavicon :terminal-id="terminal.id" class="mt-px size-3.5 shrink-0 text-muted-foreground" />
         <p class="min-w-0 flex-1 break-all text-muted-foreground">{{ terminal.url === 'about:blank' ? 'Leere Seite' : terminal.url }}</p>
       </div>
-      <div v-else class="flex gap-2">
-        <FolderIcon class="mt-px size-3.5 shrink-0 text-muted-foreground" />
+      <div v-else class="flex items-center gap-2">
+        <FolderIcon class="size-3.5 shrink-0 text-muted-foreground" />
         <div class="min-w-0 flex-1">
           <p class="truncate leading-4 font-medium">{{ folder }}</p>
           <p class="break-all text-muted-foreground">{{ terminal.cwd }}</p>

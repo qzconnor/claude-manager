@@ -134,6 +134,7 @@ function terminal(overrides: Partial<TerminalInfo> = {}): TerminalInfo {
     muted: false,
     title: 'Tab',
     fixedTitle: false,
+    autoTitle: 'Tab',
     cwd: '/work',
     mode: 'session',
     url: null,
