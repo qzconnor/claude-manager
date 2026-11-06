@@ -144,7 +144,7 @@ export function registerIpc(ctx: AppContext): void {
     if (typeof title !== 'string') throw new Error('Ungültiger Parameter: title')
     ctx.terminals.rename(requireString(id, 'id'), title)
   })
-  ipcMain.handle(IpcInvoke.terminalsBuffer, (_e, id: unknown) => ctx.terminals.buffer(requireString(id, 'id')))
+  ipcMain.handle(IpcInvoke.terminalsAttach, (_e, id: unknown) => ctx.terminals.attach(requireString(id, 'id')))
   ipcMain.handle(IpcInvoke.terminalsContinueWith, (_e, id: unknown, accountId: unknown) =>
     ctx.handoff.continueTerminal(requireString(id, 'id'), requireString(accountId, 'accountId')),
   )

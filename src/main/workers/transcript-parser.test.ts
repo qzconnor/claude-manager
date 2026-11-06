@@ -235,6 +235,20 @@ describe('parseTranscript', () => {
     expect(summary).toMatchObject({ firstPrompt: '/model opus', lastPrompt: 'Explain this', messageCount: 2 })
   })
 
+  it('leaves the replies Claude Code writes itself out of the message count and the model', () => {
+    const { summary } = parseTranscript(
+      jsonl(
+        user('Hi', '2026-11-06T10:00:00.000Z'),
+        assistant('msg_01', [text('Hello')], '2026-11-06T10:00:01.000Z'),
+        user('Go on', '2026-11-06T10:00:02.000Z'),
+        assistant('msg_02', [text('API Error')], '2026-11-06T10:00:03.000Z', {}, { model: '<synthetic>' }),
+      ),
+      SESSION,
+      true,
+    )
+    expect(summary).toMatchObject({ messageCount: 3, model: MODEL })
+  })
+
   it('only collects token usage without the summary', () => {
     const { summary, usage } = parseTranscript(session, SESSION, false)
     expect(summary).toMatchObject({ cwd: null, gitBranch: null, version: null, model: null, firstPrompt: null, messageCount: 0 })

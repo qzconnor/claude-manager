@@ -327,9 +327,16 @@ export function useTerminal(options: UseTerminalOptions) {
     term.attachCustomKeyEventHandler(handleKey)
 
     const t = term
+    // The output so far may hold queries (device attributes, cursor position, colors). When an earlier
+    // view answered them (the window reloaded), replies now would reach the program as input and show
+    // up in its prompt, e.g. `[?1;2c`; they are dropped while that output is replayed.
+    let replaying = false
+    const forward = (data: string) => {
+      if (!replaying) write(data)
+    }
     const subscriptions = [
-      t.onData((data) => write(data)),
-      t.onBinary((data) => write(data)),
+      t.onData(forward),
+      t.onBinary(forward),
       t.onResize(({ cols, rows }) => window.api.terminals.resize(terminalId, cols, rows)),
       t.onScroll(() => align()),
       t.onWriteParsed(() => {
@@ -371,9 +378,14 @@ export function useTerminal(options: UseTerminalOptions) {
       }),
     )
     try {
-      const buffer = await window.api.terminals.buffer(terminalId)
+      const buffer = await window.api.terminals.attach(terminalId)
       if (disposed) return
-      t.write(filterOutput(buffer.data))
+      const replay = filterOutput(buffer.data)
+      if (buffer.answered && replay) {
+        replaying = true
+        // Called once xterm has parsed it, before the output that came in meanwhile.
+        t.write(replay, () => (replaying = false))
+      } else t.write(replay)
       end = buffer.end
     } catch {
       end = 0

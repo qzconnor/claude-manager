@@ -65,6 +65,10 @@ export function parseLaunchArgs(args: readonly string[]): LaunchCommand {
       break
     }
     const [flag, inline] = arg.startsWith('-') && arg.includes('=') ? [arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)] : [arg, null]
+    /** Switches take no value; `-c=foo` would otherwise drop `foo` without a word. */
+    const noValue = () => {
+      if (inline !== null) throw new Error(`${flag} nimmt keinen Wert („${arg}“).`)
+    }
     switch (flag) {
       case '-a':
       case '--account': {
@@ -75,6 +79,7 @@ export function parseLaunchArgs(args: readonly string[]): LaunchCommand {
       }
       case '-c':
       case '--continue':
+        noValue()
         command.continue = true
         break
       case '-r':
@@ -86,10 +91,12 @@ export function parseLaunchArgs(args: readonly string[]): LaunchCommand {
       }
       case '-s':
       case '--shell':
+        noValue()
         command.shell = true
         break
       case '-n':
       case '--new':
+        noValue()
         command.newTab = true
         break
       default:

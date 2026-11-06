@@ -64,7 +64,7 @@ export const IpcInvoke = {
   terminalsKill: 'terminals:kill',
   terminalsClose: 'terminals:close',
   terminalsRename: 'terminals:rename',
-  terminalsBuffer: 'terminals:buffer',
+  terminalsAttach: 'terminals:attach',
   terminalsContinueWith: 'terminals:continue-with',
   terminalsSetMuted: 'terminals:set-muted',
 
@@ -204,8 +204,11 @@ export interface ManagerApi {
     /** Kill (if needed) and forget the terminal. */
     close(id: string): Promise<void>
     rename(id: string, title: string): Promise<void>
-    /** Output produced so far (for re-attaching a view); `end` is the stream offset after `data`. */
-    buffer(id: string): Promise<{ data: string; end: number }>
+    /**
+     * Output produced so far, for a view of the tab; `end` is the stream offset after `data`.
+     * `answered`: an earlier view already answered the queries in it, they mustn't be answered again.
+     */
+    attach(id: string): Promise<{ data: string; end: number; answered: boolean }>
     /**
      * Ends the tab and continues its session in a new one with `accountId`'s limits.
      * Tokens and API keys run the session where it lies; for a browser login it is copied over.
