@@ -104,6 +104,8 @@ export const IpcSend = {
   terminalViewing: 'terminals:viewing',
   /** Whether the terminal theme is dark (see TerminalService.setColorScheme). */
   terminalColorScheme: 'terminals:color-scheme',
+  /** Order of the tabs in the window, after one was moved. */
+  terminalReorder: 'terminals:reorder',
   /** The page listens for dialog requests (see src/main/window/dialogs.ts). */
   dialogsReady: 'dialogs:ready',
   dialogAnswer: 'dialogs:answer',
@@ -211,6 +213,8 @@ export interface ManagerApi {
     viewing(id: string | null): void
     /** Tells whether the terminal theme is dark; programs that asked for it hear when that changes. */
     colorScheme(dark: boolean): void
+    /** Order of the tabs (ids) after one was moved; the next start restores them in it. */
+    reorder(ids: string[]): void
     onChanged(cb: (terminals: TerminalInfo[]) => void): Unsubscribe
     onData(cb: (id: string, data: string, offset: number) => void): Unsubscribe
     onExit(cb: (id: string, exitCode: number) => void): Unsubscribe

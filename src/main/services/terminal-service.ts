@@ -4,6 +4,7 @@ import { stat } from 'node:fs/promises'
 import { userInfo } from 'node:os'
 import { basename, join } from 'node:path'
 import type * as Pty from 'node-pty'
+import { applyOrder } from '@shared/order'
 import type { AttentionKind, CloseOnExit, SessionLimit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
 import { colorFgBg, colorSchemeReport, ColorSchemeUpdates } from '../lib/color-scheme'
 import { fallbackSessionFolder } from '../lib/session-folder'
@@ -362,6 +363,19 @@ export class TerminalService extends TypedEmitter<Events> {
     const record = this.terminals.get(id)
     if (!record || record.info.attention === attention) return
     record.info.attention = attention
+    this.emitChanged()
+  }
+
+  /**
+   * Takes over the order of the window's tab bar (e.g. after dragging a tab), so the API lists the
+   * tabs and the next start restores them in that order. Tabs missing from `ids` stay at the end.
+   */
+  reorder(ids: string[]): void {
+    const records = [...this.terminals.values()]
+    const ordered = applyOrder(records, ids, (record) => record.info.id)
+    if (ordered.every((record, index) => record === records[index])) return
+    this.terminals.clear()
+    for (const record of ordered) this.terminals.set(record.info.id, record)
     this.emitChanged()
   }
 

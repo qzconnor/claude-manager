@@ -4,7 +4,7 @@ Desktop-App für Windows 11 und Linux, die mehrere Claude-Code-Instanzen nebenei
 
 ## Funktionen
 
-- **Terminals**: xterm.js (WebGL) mit ConPTY bzw. einem Pseudo-Terminal unter Linux. Farben, Emoji inkl. ZWJ-Sequenzen, Box-Drawing und Nerd-Font-Icons werden korrekt dargestellt. Tabs bleiben beim Seitenwechsel erhalten. Suche, Zoom, Kopieren/Einfügen, Umschalt+Enter für Zeilenumbrüche in Claude Code. Dateien lassen sich ins Terminal ziehen: Wie in Windows Terminal wird ihr Pfad eingefügt, Bilder hängt Claude Code dann an. Beendest du Claude mit Strg+C oder `/exit` (bzw. die Shell mit `exit`), schließt sich der Tab. Bei einem Fehler bleibt er offen, einstellbar unter Einstellungen › Claude Code. Auf Wunsch merkt sich die App die offenen Tabs und öffnet sie beim nächsten Start wieder, Claude-Sessions werden dabei fortgesetzt (Einstellungen › Claude Code › Tabs beim Start wiederherstellen).
+- **Terminals**: xterm.js (WebGL) mit ConPTY bzw. einem Pseudo-Terminal unter Linux. Farben, Emoji inkl. ZWJ-Sequenzen, Box-Drawing und Nerd-Font-Icons werden korrekt dargestellt. Tabs bleiben beim Seitenwechsel erhalten und lassen sich per Drag & Drop umsortieren, oben in der Titelleiste wie in der Seitenleiste. Wird es eng, werden sie schmaler wie im Browser. Suche, Zoom, Kopieren/Einfügen, Umschalt+Enter für Zeilenumbrüche in Claude Code. Dateien lassen sich ins Terminal ziehen: Wie in Windows Terminal wird ihr Pfad eingefügt, Bilder hängt Claude Code dann an. Beendest du Claude mit Strg+C oder `/exit` (bzw. die Shell mit `exit`), schließt sich der Tab. Bei einem Fehler bleibt er offen, einstellbar unter Einstellungen › Claude Code. Auf Wunsch merkt sich die App die offenen Tabs und öffnet sie beim nächsten Start in derselben Reihenfolge wieder, Claude-Sessions werden dabei fortgesetzt (Einstellungen › Claude Code › Tabs beim Start wiederherstellen).
 - **Accounts**: beliebig viele Accounts parallel, auch mehrere Tabs mit demselben Account. Ist ein Account am Limit, läuft die Session mit einem anderen weiter (siehe unten). Accounts aus cswap lassen sich übernehmen.
 - **Sessions**: alle gespeicherten Claude-Code-Sessions, gruppiert nach Account. Suche über Titel, ersten und letzten Prompt, Ordner, Git-Branch und Session-ID, Verlauf mit Markdown und Tool-Aufrufen, die sich aufklappen lassen: vollständige Eingabe und Ergebnis, Fehler rot markiert. Fortsetzen per Doppelklick oder als neue Session abzweigen (`--fork-session`). Filter zeigen nur Sessions der letzten Tage oder solche, die älter sind als eine Woche bis ein Jahr, und nach Größe des Verlaufs die großen (über 1, 10 oder 50 MB) oder die fast leeren (unter 10 KB bis 1 MB). Anzahl und Gesamtgröße der gefilterten Sessions stehen daneben. Mit *Mehrere auswählen* (oder Strg+Klick) lassen sich Sessions markieren, mit Umschalt+Klick als Bereich, und gesammelt löschen, einzelne auch über das Kontextmenü. Sie kommen samt Subagents und `/rewind`-Ständen in den Papierkorb und lassen sich dort wiederherstellen. Sessions, die in einem Tab offen sind oder gerade in Claude Code laufen, bleiben. Der Token-Verbrauch im Dashboard wird aus den Transcripts berechnet, gelöschte Sessions fehlen dort danach.
 - **Usage-Dashboard**: 5-Stunden- und Wochen-Limits (live, wie bei [cswap](https://github.com/realiti4/claude-swap), auch für Accounts, die gerade nicht genutzt werden: ihr abgelaufener Zugangstoken wird dafür erneuert) sowie Token-Verbrauch pro Tag und Modell, berechnet aus den lokalen Transcripts. Ist der Login von `~/.claude` schon als eigener Account hinterlegt (etwa nach dem cswap-Import), lassen Dashboard und Accounts-Seite den Standard-Account weg, damit dieselben Limits nicht doppelt erscheinen. Auf der Accounts-Seite lässt er sich über den Hinweis unter den Karten wieder einblenden. Die Limits des Accounts im aktiven Tab stehen außerdem in der Titelleiste, ein Klick zeigt Details und Reset-Zeiten. Balken und Ringe sind grün (unter 60 %), orange (ab 60 %) und rot (ab 85 %), in den Farben des gewählten Themes.
@@ -99,11 +99,14 @@ Danach meldest du jeden Account einmal über „Anmelden“ an, die E-Mail ist a
 npm install
 npm run dev          # App mit Hot Reload starten
 npm run typecheck    # Main/Preload (tsc) und Renderer (vue-tsc) prüfen
+npm test             # Unit-Tests (Vitest), `npm run test:watch` läuft bei Änderungen mit
 npm run build:win    # Typecheck, Build, cm.exe und NSIS-Installer → release/<version>/
 npm run build:linux  # unter Linux: Typecheck, Build, AppImage, deb und rpm → release/<version>/
 ```
 
 Die Linux-Pakete lassen sich nur unter Linux bauen, weil node-pty dort keine fertigen Binärdateien mitbringt: `npm install` kompiliert es (dafür `python3`, `make` und `g++`; `allowScripts` in der package.json erlaubt das auch unter npm 12, das Install-Skripte sonst blockiert), für das rpm-Paket braucht es zusätzlich `rpmbuild` (Paket `rpm`). Ohne Linux-Rechner geht es z. B. in WSL oder im Container `node:24-bookworm`.
+
+Die Tests liegen als `*.test.ts` neben ihrem Modul und prüfen die Logik, die ohne Electron und Fenster auskommt: Parser für Transcripts, Fenstertitel und die Usage-API, Regeln wie die Limit-Warnung, Hilfsfunktionen und Themes. Beispieldaten sind kleine, anonymisierte Ausschnitte im Format von Claude Code. CI führt sie bei jedem Pull Request unter Windows und Linux aus.
 
 `npm run dev` und `npm start` nutzen ein eigenes Profil (`%APPDATA%\Claude Manager Dev`), damit sie neben der installierten App laufen. Einstellungen und Accounts sind dort getrennt, der Standard-Account (`~/.claude`) ist immer da.
 
@@ -151,6 +154,7 @@ src/
 | Strg+Umschalt+T | neue Session (Standard-Account) |
 | Strg+Umschalt+W | Tab schließen (fragt nach, wenn der Prozess noch läuft) |
 | Strg+Tab / Strg+Umschalt+Tab | nächster / vorheriger Tab |
+| Strg+1 … Strg+8 / Strg+9 | Tab 1 bis 8 / letzter Tab |
 | Strg+Umschalt+F | im Terminal suchen |
 | Strg+Umschalt+P | Befehlspalette |
 | Strg+, | Einstellungen |

@@ -157,6 +157,9 @@ export function registerIpc(ctx: AppContext): void {
   ipcMain.on(IpcSend.terminalColorScheme, (_e, dark: unknown) => {
     if (typeof dark === 'boolean') ctx.terminals.setColorScheme(dark)
   })
+  ipcMain.on(IpcSend.terminalReorder, (_e, ids: unknown) => {
+    if (Array.isArray(ids) && ids.every((id) => typeof id === 'string')) ctx.terminals.reorder(ids)
+  })
   ipcMain.on(IpcSend.terminalWrite, (_e, id: unknown, data: unknown) => {
     if (typeof id === 'string' && typeof data === 'string') ctx.terminals.write(id, data)
   })

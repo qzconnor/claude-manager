@@ -1,0 +1,28 @@
+import { describe, expect, it } from 'vitest'
+import { compareVersions } from './version'
+
+const sign = (n: number) => Math.sign(n)
+
+describe('compareVersions', () => {
+  it('compares each part numerically', () => {
+    expect(sign(compareVersions('1.10.0', '1.9.2'))).toBe(1)
+    expect(sign(compareVersions('1.9.2', '1.10.0'))).toBe(-1)
+    expect(sign(compareVersions('2.0.0', '1.99.99'))).toBe(1)
+    expect(sign(compareVersions('0.1.10', '0.1.9'))).toBe(1)
+  })
+
+  it('treats equal versions as equal', () => {
+    expect(compareVersions('1.2.3', '1.2.3')).toBe(0)
+  })
+
+  it('fills missing parts with zero', () => {
+    expect(compareVersions('1.2', '1.2.0')).toBe(0)
+    expect(sign(compareVersions('1.2.1', '1.2'))).toBe(1)
+    expect(sign(compareVersions('1', '1.0.1'))).toBe(-1)
+  })
+
+  it('compares the numbers in front of a pre-release suffix', () => {
+    expect(sign(compareVersions('1.3.0-beta.1', '1.2.9'))).toBe(1)
+    expect(sign(compareVersions('1.2.9', '1.3.0-rc.2'))).toBe(-1)
+  })
+})

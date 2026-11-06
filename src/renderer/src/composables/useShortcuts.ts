@@ -23,10 +23,15 @@ export function useShortcuts() {
     if (next !== current) void settings.update({ terminal: { fontSize: next } })
   }
 
+  const showTerminals = () => {
+    if (router.currentRoute.value.name !== 'terminals') void router.push({ name: 'terminals' })
+  }
+
   useEventListener(window, 'keydown', (event: KeyboardEvent) => {
-    const action = matchShortcut(event)
-    if (!action) return
+    const shortcut = matchShortcut(event)
+    if (!shortcut) return
     event.preventDefault()
+    const { action } = shortcut
     switch (action) {
       case 'new-tab':
         void launcher.newSession()
@@ -37,7 +42,10 @@ export function useShortcuts() {
       case 'next-tab':
       case 'previous-tab':
         terminals.cycle(action === 'next-tab' ? 1 : -1)
-        if (router.currentRoute.value.name !== 'terminals') void router.push({ name: 'terminals' })
+        showTerminals()
+        break
+      case 'select-tab':
+        if (terminals.activateAt(shortcut.index ?? 0)) showTerminals()
         break
       case 'open-settings':
         void router.push({ name: 'settings' })

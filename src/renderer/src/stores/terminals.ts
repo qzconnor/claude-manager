@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { moveItem } from '@shared/order'
 import type { TerminalCreateOptions, TerminalInfo } from '@shared/types'
 
 export const useTerminalsStore = defineStore('terminals', () => {
@@ -60,12 +61,28 @@ export const useTerminalsStore = defineStore('terminals', () => {
     await window.api.terminals.setMuted(id, muted)
   }
 
+  /** Tells main the order of the tabs, so the next start restores them in it. */
+  function saveOrder(): void {
+    window.api.terminals.reorder(terminals.value.map((t) => t.id))
+  }
+
+  /** Moves a tab to `index`, its position in the new order. */
+  function move(id: string, index: number): void {
+    const from = terminals.value.findIndex((t) => t.id === id)
+    if (from === -1) return
+    const next = moveItem(terminals.value, from, index)
+    if (next.every((t, i) => t === terminals.value[i])) return
+    terminals.value = next
+    saveOrder()
+  }
+
   /** Puts the tab that replaces `oldId` at its position and selects it. */
   function replace(oldId: string, index: number, info: TerminalInfo): void {
     const list = terminals.value.filter((t) => t.id !== oldId && t.id !== info.id)
     list.splice(Math.min(index, list.length), 0, info)
     terminals.value = list
     activeId.value = info.id
+    saveOrder()
   }
 
   /** Starts the same command again in a new tab at the same position; the old one stays without trust. */
@@ -114,6 +131,14 @@ export const useTerminalsStore = defineStore('terminals', () => {
     activeId.value = terminals.value[next].id
   }
 
+  /** Selects the tab at `index`; -1 is the last one. False when there is no such tab. */
+  function activateAt(index: number): boolean {
+    const tab = terminals.value.at(index)
+    if (!tab) return false
+    activeId.value = tab.id
+    return true
+  }
+
   window.api.terminals.onChanged((next) => {
     // Keep the local tab order; append unknown terminals (e.g. opened through the API).
     const known = terminals.value.map((t) => next.find((n) => n.id === t.id)).filter((t): t is TerminalInfo => !!t)
@@ -137,5 +162,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     continueWith,
     continueSession,
     cycle,
+    activateAt,
+    move,
   }
 })

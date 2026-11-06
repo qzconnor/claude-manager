@@ -21,6 +21,8 @@ export const useUiStore = defineStore('ui', () => {
    * The page below opens its top border there, so the tab merges into it.
    */
   const selectedTabEdges = ref<{ left: number; right: number } | null>(null)
+  /** Id of the tab being dragged to another position; hover cards stay closed meanwhile. */
+  const draggingTab = ref<string | null>(null)
 
   const confirmState = ref<(ConfirmOptions & { open: boolean }) | null>(null)
   let confirmResolve: ((value: boolean) => void) | null = null
@@ -46,6 +48,7 @@ export const useUiStore = defineStore('ui', () => {
     focusTerminalRequest,
     sessionToShow,
     selectedTabEdges,
+    draggingTab,
     confirmState,
     confirm,
     settleConfirm,
