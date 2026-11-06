@@ -26,6 +26,8 @@ const onDone = notificationSetting('onDone')
 const minBusySeconds = notificationSetting('minBusySeconds', 300)
 const onInput = notificationSetting('onInput')
 const onLimit = notificationSetting('onLimit')
+const onNearLimit = notificationSetting('onNearLimit')
+const nearLimitPercent = notificationSetting('nearLimitPercent', 300)
 const when = notificationSetting('when')
 const toast = notificationSetting('toast')
 const preview = notificationSetting('preview')
@@ -34,6 +36,7 @@ const flashTaskbar = notificationSetting('flashTaskbar')
 const unreadDot = notificationSetting('unreadDot')
 
 const off = computed(() => !enabled.value)
+const toastName = isWindows ? 'Windows-Benachrichtigung' : 'Systembenachrichtigung'
 
 const WHEN: { value: NotifyWhen; label: string }[] = [
   { value: 'background', label: 'Fenster im Hintergrund' },
@@ -57,7 +60,7 @@ async function sendTest() {
   <div class="flex flex-col gap-4">
     <SettingsSection
       title="Benachrichtigungen"
-      description="Hinweise auf Tabs, in denen Claude fertig ist oder dich braucht. Einzelne Tabs lassen sich über ihr Kontextmenü stummschalten."
+      description="Hinweise auf Tabs, in denen Claude fertig ist oder dich braucht, und auf fast verbrauchte Limits. Einzelne Tabs lassen sich über ihr Kontextmenü stummschalten."
       reset-section="notifications"
     >
       <SettingField
@@ -101,6 +104,27 @@ async function sendTest() {
       >
         <Switch id="notify-limit" v-model="onLimit" :disabled="off" />
       </SettingField>
+      <SettingField
+        for="notify-near-limit"
+        label="Limit fast verbraucht"
+        :description="`Ein Limit eines Accounts hat die Schwelle unten erreicht: 5-Stunden-Fenster, Woche oder das Wochenlimit eines Modells. Einmal pro Account und Zeitraum, nur als ${toastName}, ein Klick öffnet die Usage-Seite.`"
+      >
+        <Switch id="notify-near-limit" v-model="onNearLimit" :disabled="off || !toast" />
+      </SettingField>
+      <SettingField
+        for="notify-near-limit-percent"
+        label="Schwelle (%)"
+        description="Die Werte kommen mit jeder Abfrage der Limits (Usage-Aktualisierung unter Claude Code) und aus laufenden Sessions."
+      >
+        <NumberControl
+          id="notify-near-limit-percent"
+          v-model="nearLimitPercent"
+          :min="10"
+          :max="99"
+          :step="5"
+          :disabled="off || !toast || !onNearLimit"
+        />
+      </SettingField>
     </SettingsSection>
 
     <SettingsSection title="Hinweise" description="Wie die App auf den Tab hinweist.">
@@ -109,7 +133,7 @@ async function sendTest() {
       </SettingField>
       <SettingField
         for="notify-toast"
-        :label="isWindows ? 'Windows-Benachrichtigung' : 'Systembenachrichtigung'"
+        :label="toastName"
         :description="
           isWindows
             ? 'Bleibt in der Mitteilungszentrale, bis du den Tab öffnest. Ein Klick darauf öffnet den Tab.'

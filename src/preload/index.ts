@@ -92,6 +92,7 @@ const api: ManagerApi = {
     refresh: (accountId) => invoke(IpcInvoke.usageRefresh, accountId),
     stats: (accountId, days) => invoke(IpcInvoke.usageStats, accountId, days),
     onChanged: (cb) => subscribe(IpcEvent.usageChanged, cb),
+    onShow: (cb) => subscribe(IpcEvent.usageShow, cb),
   },
   git: {
     branch: (cwd) => invoke(IpcInvoke.gitBranch, cwd),

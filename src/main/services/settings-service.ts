@@ -195,6 +195,7 @@ function sanitize(s: AppSettings): AppSettings {
   s.api.port = clamp(Math.round(s.api.port), 1024, 65535, d.api.port)
   s.general.closeOnExit = closeOnExit.includes(s.general.closeOnExit) ? s.general.closeOnExit : d.general.closeOnExit
   s.notifications.minBusySeconds = clamp(Math.round(s.notifications.minBusySeconds), 0, 3600, d.notifications.minBusySeconds)
+  s.notifications.nearLimitPercent = clamp(Math.round(s.notifications.nearLimitPercent), 10, 99, d.notifications.nearLimitPercent)
   s.notifications.when = s.notifications.when === 'hidden' ? 'hidden' : 'background'
   return s
 }

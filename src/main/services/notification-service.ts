@@ -1,16 +1,36 @@
+import { join } from 'node:path'
 import { Notification, type BrowserWindow } from 'electron'
-import type { AttentionKind, NotificationSettings, TerminalInfo } from '@shared/types'
-import { limitLabel } from '@shared/utils'
+import { SYSTEM_ACCOUNT_ID } from '@shared/defaults'
+import type { Account, AccountUsage, AttentionKind, NotificationSettings, TerminalInfo } from '@shared/types'
+import { isPlainObject, limitLabel, standardTwin } from '@shared/utils'
+import { readJson, writeJsonAtomic } from '../lib/json-file'
+import { nearLimits, type NearLimit, type WarnedWindows } from '../lib/near-limit'
 import { resourceIcon } from '../window/tray'
+import type { AccountService } from './account-service'
 import type { SettingsService } from './settings-service'
 import type { TerminalService, TurnEnd } from './terminal-service'
+import type { UsageService } from './usage-service'
 
 /** Longest text of an answer, command or question in a notification. */
 const MAX_DETAIL_CHARS = 180
 
+interface WarnedFile {
+  version: 1
+  warned: WarnedWindows
+}
+
+/** Where the app goes when a notification is clicked; both bring the window to the front. */
+export interface NotificationTargets {
+  /** Selects the terminal's tab. */
+  terminal(id: string): void
+  /** Shows the usage page. */
+  usage(): void
+}
+
 /**
  * Points to tabs in which Claude Code is done, waits for the user or hit a limit (settings
  * `notifications`): a system notification, the flashing taskbar button and the dot on the tab.
+ * Also warns when an account's limit is nearly used up.
  */
 export class NotificationService {
   /** The tab the window shows: the selected one while the terminals page is open, otherwise none. */
@@ -20,17 +40,32 @@ export class NotificationService {
    * so a click on it still arrives (Electron loses the events of collected notifications).
    */
   private readonly shown = new Map<string, Notification>()
+  /** The latest warning about a limit of each account, kept for the same reasons. */
+  private readonly limitWarnings = new Map<string, Notification>()
   private test: Notification | null = null
+  private readonly warnedFile: string
+  /** Limit windows that were already warned about, kept across restarts. */
+  private warned: WarnedWindows = {}
 
   constructor(
     private readonly terminals: TerminalService,
+    private readonly accounts: AccountService,
+    private readonly usage: UsageService,
     private readonly settings: SettingsService,
+    userDataDir: string,
     private readonly window: () => BrowserWindow | null,
-    /** Brings the window to the front and selects the tab. */
-    private readonly showTerminal: (id: string) => void,
-  ) {}
+    private readonly open: NotificationTargets,
+  ) {
+    this.warnedFile = join(userDataDir, 'cache', 'limit-warnings.json')
+  }
 
-  init(): void {
+  async init(): Promise<void> {
+    const stored = await readJson<WarnedFile>(this.warnedFile)
+    if (stored?.version === 1 && isPlainObject(stored.warned)) {
+      for (const [key, resetsAt] of Object.entries(stored.warned)) {
+        if (typeof resetsAt === 'string' || resetsAt === null) this.warned[key] = resetsAt
+      }
+    }
     this.terminals.on('turnEnded', (id, turn) => this.turnEnded(id, turn))
     this.terminals.on('changed', (terminals) => {
       // A closed tab takes its notification along.
@@ -38,13 +73,22 @@ export class NotificationService {
         if (!terminals.some((t) => t.id === id)) this.dismiss(id)
       }
     })
-    this.settings.on('changed', (next) => {
+    this.settings.on('changed', (next, previous) => {
+      // Switched on or another threshold: windows that are above it now warn right away.
+      if (
+        nearLimitWanted(next.notifications) !== nearLimitWanted(previous.notifications) ||
+        next.notifications.nearLimitPercent !== previous.notifications.nearLimitPercent
+      ) {
+        this.checkLimits()
+      }
       const { enabled, unreadDot } = next.notifications
       if (enabled && unreadDot) return
       for (const terminal of this.terminals.list()) {
         if (terminal.attention) this.terminals.setAttention(terminal.id, null)
       }
     })
+    this.usage.on('changed', () => this.checkLimits())
+    this.checkLimits()
   }
 
   /** The window tells which tab it shows (null: another page); that tab is seen. */
@@ -99,11 +143,66 @@ export class NotificationService {
     if (!Notification.isSupported()) return
     const { title, detail } = describe(terminal, turn, settings.preview)
     const notification = this.create(title, detail ? `${terminal.title}\n${detail}` : terminal.title, settings)
-    notification.on('click', () => this.showTerminal(terminal.id))
+    notification.on('click', () => this.open.terminal(terminal.id))
     // One notification per tab: the newer one replaces the older.
     this.dismiss(terminal.id)
     this.shown.set(terminal.id, notification)
     notification.show()
+  }
+
+  /**
+   * Warns about limit windows that reached the threshold (setting `nearLimitPercent`), once per
+   * account, window and reset. Only while the warning is on: windows that reach it meanwhile warn
+   * once it is switched on again, unless they reset in between.
+   */
+  private checkLimits(): void {
+    const settings = this.settings.get().notifications
+    if (!nearLimitWanted(settings)) return
+    const accounts = this.accounts.list()
+    // The standard account shares its limits with its twin and isn't on the usage page then.
+    const twin = standardTwin(accounts)
+    const before = JSON.stringify(this.warned)
+    for (const key of Object.keys(this.warned)) {
+      if (!accounts.some((account) => key.startsWith(`${account.id}\n`))) delete this.warned[key]
+    }
+    for (const id of [...this.limitWarnings.keys()]) {
+      if (!accounts.some((account) => account.id === id)) this.dismissLimitWarning(id)
+    }
+    const usage = new Map(this.usage.getAll().map((u): [string, AccountUsage] => [u.accountId, u]))
+    for (const account of accounts) {
+      const accountUsage = usage.get(account.id)
+      if (!accountUsage || (twin && account.id === SYSTEM_ACCOUNT_ID)) continue
+      const reached = nearLimits(accountUsage, settings.nearLimitPercent, this.warned, Date.now())
+      if (reached.length > 0) this.warnLimit(account, reached, settings)
+    }
+    if (JSON.stringify(this.warned) !== before) {
+      void writeJsonAtomic(this.warnedFile, { version: 1, warned: this.warned } satisfies WarnedFile).catch(() => undefined)
+    }
+  }
+
+  /** One notification per account; a click shows the usage page. */
+  private warnLimit(account: Account, reached: NearLimit[], settings: NotificationSettings): void {
+    if (!Notification.isSupported()) return
+    const lines = reached.map(({ window, percent }) => {
+      const reset = window.resetsAt ? formatReset(window.resetsAt) : ''
+      return `${window.label}: ${percent} %${reset ? `, Reset ${reset}` : ''}`
+    })
+    const notification = this.create(
+      reached[0].percent >= 100 ? 'Limit erreicht' : 'Limit fast erreicht',
+      [account.name, ...lines].join('\n'),
+      settings,
+    )
+    notification.on('click', () => this.open.usage())
+    this.dismissLimitWarning(account.id)
+    this.limitWarnings.set(account.id, notification)
+    notification.show()
+  }
+
+  private dismissLimitWarning(accountId: string): void {
+    const notification = this.limitWarnings.get(accountId)
+    if (!notification) return
+    this.limitWarnings.delete(accountId)
+    notification.close()
   }
 
   private create(title: string, body: string, settings: NotificationSettings): Notification {
@@ -128,6 +227,11 @@ export class NotificationService {
     this.shown.delete(id)
     notification.close()
   }
+}
+
+/** Warnings about limits only come as system notifications. */
+function nearLimitWanted(settings: NotificationSettings): boolean {
+  return settings.enabled && settings.onNearLimit && settings.toast
 }
 
 function wanted(settings: NotificationSettings, kind: AttentionKind): boolean {
