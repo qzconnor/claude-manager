@@ -149,16 +149,17 @@ function openFolder() {
             :aria-selected="selected"
             :class="
               cn(
-                'app-no-drag group/tab relative flex shrink-0 cursor-pointer items-center gap-2 pr-1 pl-3 text-xs transition-colors',
+                'app-no-drag group/tab relative flex cursor-pointer items-center gap-2 pr-1 pl-3 text-xs transition-colors',
                 vertical
                   ? cn(
-                      'h-8 w-full rounded-lg',
+                      'h-8 w-full shrink-0 rounded-lg',
                       selected
                         ? 'bg-surface-strong text-foreground shadow-sm ring-1 ring-foreground/10'
                         : 'text-muted-foreground hover:bg-accent hover:text-foreground',
                     )
                   : // In the title bar the selected tab has the terminal's colour and the page's border and
                     // stays open at the bottom, so it joins the terminal below. The others light up as a floating pill.
+                    // Tabs narrow down to min-w-28 like in a browser before the strip starts to scroll.
                     cn(
                       'isolate max-w-56 min-w-28 rounded-t-lg border-x border-t',
                       selected
