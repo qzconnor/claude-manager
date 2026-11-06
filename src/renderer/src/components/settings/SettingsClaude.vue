@@ -151,8 +151,8 @@ async function recheck() {
 
 <template>
   <div class="flex flex-col gap-4">
-    <SettingsSection title="Claude Code" description="Programm und Startoptionen." reset-section="claude">
-      <SettingField label="Gefundene Installation">
+    <SettingsSection anchor="claude.program" title="Claude Code" description="Programm und Startoptionen." reset-section="claude">
+      <SettingField anchor="claude.installation" label="Gefundene Installation">
         <Badge v-if="app.info?.claudeExecutable" variant="outline" class="max-w-80">
           <CircleCheckIcon class="text-success" />
           <span class="truncate">{{ app.info.claudeVersion ?? 'Version unbekannt' }}</span>
@@ -167,6 +167,7 @@ async function recheck() {
         </Button>
       </SettingField>
       <SettingField
+        anchor="claude.executablePath"
         for="claude-path"
         :label="isWindows ? 'Pfad zur claude.exe' : 'Pfad zu claude'"
         :description="app.info?.claudeExecutable ? `Automatisch: ${app.info.claudeExecutable}` : 'Leer lassen für automatische Suche im PATH.'"
@@ -181,6 +182,7 @@ async function recheck() {
         />
       </SettingField>
       <SettingField
+        anchor="claude.defaultArgs"
         for="claude-args"
         label="Standard-Argumente"
         description="Werden an jede neue Session angehängt, z. B. --model sonnet."
@@ -194,7 +196,7 @@ async function recheck() {
           @change="commitArgs"
         />
       </SettingField>
-      <SettingField for="claude-cwd" label="Standard-Arbeitsordner" description="Leer = Downloads-Ordner. Accounts können eigene Ordner festlegen.">
+      <SettingField anchor="claude.defaultCwd" for="claude-cwd" label="Standard-Arbeitsordner" description="Leer = Downloads-Ordner. Accounts können eigene Ordner festlegen.">
         <div class="w-80">
           <DirectoryInput
             id="claude-cwd"
@@ -204,6 +206,7 @@ async function recheck() {
         </div>
       </SettingField>
       <SettingField
+        anchor="claude.autoSwitch"
         for="auto-switch"
         label="Bei einem Limit automatisch wechseln"
         description="Stößt eine Session an ein Limit, läuft sie von selbst mit dem nächsten freien Account weiter, wie mit „Mit … fortsetzen“ im Tab. Ohne freien Account bleibt der Hinweis."
@@ -211,6 +214,7 @@ async function recheck() {
         <Switch id="auto-switch" v-model="autoSwitch" />
       </SettingField>
       <SettingField
+        anchor="claude.continuePrompt"
         for="continue-prompt"
         label="Nachricht nach Account-Wechsel"
         description="Wechselst du bei einer Session am Limit den Account, wird sie geschickt, damit Claude weitermacht. Leer = nichts schicken."
@@ -226,10 +230,12 @@ async function recheck() {
     </SettingsSection>
 
     <SettingsSection
+      anchor="claude.browser"
       title="Browser"
       description="Claude-Sessions aus Claude Manager bedienen einen Browser neben sich: Seiten öffnen, klicken, tippen, Screenshots. Du siehst jeden Schritt und kannst jederzeit übernehmen. Logins im Browser gelten auch für Claude."
     >
       <SettingField
+        anchor="claude.browserTools"
         for="browser-tools"
         label="Browser für Claude-Sessions"
         description="Gibt jeder Session, die die App danach startet, den Browser als MCP-Server. Andere Claude-Code-Instanzen und deine Einstellungen in ~/.claude bleiben unberührt."
@@ -237,6 +243,7 @@ async function recheck() {
         <Switch id="browser-tools" v-model="browserTools" />
       </SettingField>
       <SettingField
+        anchor="claude.browserToolsAllowed"
         for="browser-tools-allowed"
         label="Ohne Nachfrage bedienen"
         description="Claude fragt nicht vor jedem Schritt im Browser um Erlaubnis. Aus: Claude Code fragt wie bei anderen Werkzeugen."
@@ -244,6 +251,7 @@ async function recheck() {
         <Switch id="browser-tools-allowed" v-model="browserToolsAllowed" :disabled="!browserTools" />
       </SettingField>
       <SettingField
+        anchor="claude.noClaudeInChrome"
         for="no-claude-in-chrome"
         label="Ohne Claude in Chrome"
         description="Sessions aus der App starten ohne Claude in Chrome (--no-chrome), damit Claude den Browser der App nimmt und nicht deinen Chrome. Claude Codes eigene Einstellung bleibt, wie sie ist."
@@ -251,6 +259,7 @@ async function recheck() {
         <Switch id="no-claude-in-chrome" v-model="noClaudeInChrome" :disabled="!browserTools" />
       </SettingField>
       <SettingField
+        anchor="claude.clearBrowserData"
         label="Browserdaten löschen"
         description="Meldet dich auf allen Seiten im Browser der App ab: Cookies, gespeicherte Daten der Seiten und Cache."
       >
@@ -264,27 +273,30 @@ async function recheck() {
 
     <SettingsCommand />
 
-    <SettingsSection title="Allgemein" reset-section="general">
-      <SettingField for="default-account" label="Standard-Account" description="Wird für „+“ und Strg+Umschalt+T verwendet.">
+    <SettingsSection anchor="claude.general" title="Allgemein" reset-section="general">
+      <SettingField anchor="claude.defaultAccount" for="default-account" label="Standard-Account" description="Wird für „+“ und Strg+Umschalt+T verwendet.">
         <AccountSelect id="default-account" v-model="defaultAccountId" size="sm" class="w-56" />
       </SettingField>
       <SettingField
+        anchor="claude.restoreTerminals"
         for="restore-terminals"
         label="Tabs beim Start wiederherstellen"
         description="Merkt sich Ordner und Session jedes offenen Tabs. Beim nächsten Start wird die Session fortgesetzt, ohne gespeicherte Session startet eine neue im selben Ordner."
       >
         <Switch id="restore-terminals" v-model="restoreTerminals" />
       </SettingField>
-      <SettingField for="confirm-close" label="Schließen laufender Terminals bestätigen">
+      <SettingField anchor="claude.confirmClose" for="confirm-close" label="Schließen laufender Terminals bestätigen">
         <Switch id="confirm-close" v-model="confirmCloseRunning" />
       </SettingField>
       <SettingField
+        anchor="claude.closeOnExit"
         label="Tab schließen, wenn der Prozess endet"
         description="Ohne Fehler: nach Strg+C oder /exit in Claude bzw. exit in der Shell. Bei einem Fehler bleibt der Tab zum Nachlesen offen."
       >
         <SegmentedControl v-model="closeOnExit" :options="CLOSE_ON_EXIT" aria-label="Tab schließen, wenn der Prozess endet" />
       </SettingField>
       <SettingField
+        anchor="claude.usageRefresh"
         for="usage-refresh"
         label="Usage-Aktualisierung"
         description="Minuten zwischen zwei Live-Abfragen der Plan-Limits (min. 2)."
@@ -293,8 +305,9 @@ async function recheck() {
       </SettingField>
     </SettingsSection>
 
-    <SettingsSection title="Start und Infobereich" description="Damit Terminals und die lokale API auch ohne Fenster weiterlaufen.">
+    <SettingsSection anchor="claude.startup" title="Start und Infobereich" description="Damit Terminals und die lokale API auch ohne Fenster weiterlaufen.">
       <SettingField
+        anchor="claude.runInTray"
         for="run-in-tray"
         label="Im Infobereich weiterlaufen"
         :description="
@@ -305,7 +318,7 @@ async function recheck() {
       >
         <Switch id="run-in-tray" v-model="runInTray" />
       </SettingField>
-      <SettingField for="launch-at-login" :label="isWindows ? 'Mit Windows starten' : 'Beim Anmelden starten'" :description="launchAtLoginHint">
+      <SettingField anchor="claude.launchAtLogin" for="launch-at-login" :label="isWindows ? 'Mit Windows starten' : 'Beim Anmelden starten'" :description="launchAtLoginHint">
         <Switch id="launch-at-login" v-model="launchAtLogin" :disabled="!canLaunchAtLogin" />
       </SettingField>
     </SettingsSection>

@@ -12,7 +12,7 @@ const props = defineProps<PrimitiveProps & { class?: HTMLAttributes['class'] }>(
 const delegatedProps = reactiveOmit(props, 'class')
 
 const { filterState } = useCommand()
-const isRender = computed(() => !!filterState.search && filterState.filtered.count === 0,
+const isRender = computed(() => !!filterState.search.trim() && filterState.filtered.count === 0,
 )
 </script>
 

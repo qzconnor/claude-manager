@@ -35,7 +35,8 @@ const filterState = reactive({
 })
 
 function filterItems() {
-  if (!filterState.search) {
+  // Only spaces count as no search
+  if (!filterState.search.trim()) {
     filterState.filtered.count = allItems.value.size
     // Do nothing, each item will know to show itself because search is empty
     return
@@ -45,9 +46,10 @@ function filterItems() {
   filterState.filtered.groups = new Set()
   let itemCount = 0
 
-  // Check which items should be included
+  // Check which items should be included: every word of the search has to occur, in any order
+  const terms = filterState.search.split(/\s+/).filter(Boolean)
   for (const [id, value] of allItems.value) {
-    const score = contains(value, filterState.search)
+    const score = terms.every(term => contains(value, term))
     filterState.filtered.items.set(id, score ? 1 : 0)
     if (score)
       itemCount++

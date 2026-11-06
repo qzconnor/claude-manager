@@ -10,14 +10,16 @@ import { provideCommandGroupContext, useCommand } from '.'
 const props = defineProps<ListboxGroupProps & {
   class?: HTMLAttributes['class']
   heading?: string
+  /** Only shown while searching, for groups of `searchOnly` items. */
+  searchOnly?: boolean
 }>()
 
-const delegatedProps = reactiveOmit(props, 'class')
+const delegatedProps = reactiveOmit(props, 'class', 'searchOnly')
 
 const { allGroups, filterState } = useCommand()
 const id = useId()
 
-const isRender = computed(() => !filterState.search ? true : filterState.filtered.groups.has(id))
+const isRender = computed(() => !filterState.search.trim() ? !props.searchOnly : filterState.filtered.groups.has(id))
 
 provideCommandGroupContext({ id })
 onMounted(() => {

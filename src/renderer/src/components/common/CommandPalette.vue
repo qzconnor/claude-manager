@@ -28,11 +28,14 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from '@/components/ui/command'
+import { SETTINGS_TAB_ICONS } from '@/components/settings/settings-tabs'
 import BrowserFavicon from '@/components/terminal/BrowserFavicon.vue'
 import { useLauncher } from '@/composables/useLauncher'
 import { useRecentFolders } from '@/composables/useRecentFolders'
+import { SETTINGS } from '@/composables/useSettingsSearch'
 import { formatRelative, shortenPath } from '@/lib/format'
 import { attempt } from '@/lib/errors'
+import type { SettingsEntry } from '@/lib/settings-index'
 import { NOTIFICATIONS_ROUTE, UPDATES_ROUTE } from '@/router'
 import { useAccountsStore } from '@/stores/accounts'
 import { useAppStore } from '@/stores/app'
@@ -86,16 +89,29 @@ function switchTo(id: string) {
   terminals.activate(id)
   void router.push({ name: 'terminals' })
 }
+
+/** The settings page scrolls there and gives a row's control the keyboard, which the closing palette mustn't take back. */
+let keepFocus = false
+function openSetting(entry: SettingsEntry) {
+  keepFocus = entry.kind === 'field'
+  return router.push({ name: 'settings', query: { tab: entry.tab, setting: entry.id } })
+}
+function onCloseAutoFocus(event: Event) {
+  if (!keepFocus) return
+  keepFocus = false
+  event.preventDefault()
+}
 </script>
 
 <template>
   <CommandDialog
     v-model:open="ui.paletteOpen"
     title="Befehlspalette"
-    description="Aktion, Tab oder Session suchen"
+    description="Aktion, Tab, Session oder Einstellung suchen"
     class="sm:max-w-xl"
+    @close-auto-focus="onCloseAutoFocus"
   >
-    <CommandInput placeholder="Aktion, Tab oder Session suchen…" />
+    <CommandInput placeholder="Aktion, Tab, Session oder Einstellung suchen…" />
     <!-- The dialog starts at 1/3 of the window height, so the list may use the rest minus the input. -->
     <CommandList class="max-h-[min(26rem,calc(66vh_-_5rem))]">
       <CommandEmpty>Keine Treffer.</CommandEmpty>
@@ -174,6 +190,22 @@ function switchTo(id: string) {
         <CommandItem value="go-updates" @select="run(() => router.push(UPDATES_ROUTE))">
           <SparklesIcon />
           Updates und Versionshinweise
+        </CommandItem>
+      </CommandGroup>
+
+      <!-- Every card and row of the settings, only while searching: too many to list otherwise. -->
+      <CommandGroup heading="Einstellungen" search-only>
+        <CommandItem
+          v-for="entry in SETTINGS"
+          :key="entry.id"
+          :value="`setting-${entry.id}`"
+          :filter-text="entry.text"
+          search-only
+          @select="run(() => openSetting(entry))"
+        >
+          <component :is="SETTINGS_TAB_ICONS[entry.tab]" />
+          <span class="min-w-0 truncate">{{ entry.label }}</span>
+          <CommandShortcut class="max-w-[50%] truncate tracking-normal">{{ entry.path.join(' › ') }}</CommandShortcut>
         </CommandItem>
       </CommandGroup>
 

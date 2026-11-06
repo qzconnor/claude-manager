@@ -91,6 +91,7 @@ export function useShortcuts() {
         break
       case 'find':
         if (onTerminals()) ui.searchRequest++
+        else if (router.currentRoute.value.name === 'settings') ui.settingsSearchRequest++
         break
       case 'split-right':
       case 'split-down':

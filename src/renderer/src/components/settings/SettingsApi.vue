@@ -70,11 +70,12 @@ function openDocs() {
 <template>
   <div class="flex flex-col gap-4">
     <SettingsSection
+      anchor="api.server"
       title="Lokale API"
       description="HTTP-Schnittstelle für andere Apps – nur auf 127.0.0.1 erreichbar und per Token geschützt."
       reset-section="api"
     >
-      <SettingField for="api-enabled" label="API aktivieren">
+      <SettingField anchor="api.enabled" for="api-enabled" label="API aktivieren">
         <Badge v-if="status?.running" variant="outline">
           <span class="size-1.5 rounded-full bg-success" />
           Läuft
@@ -83,7 +84,7 @@ function openDocs() {
         <Badge v-else variant="secondary">Aus</Badge>
         <Switch id="api-enabled" v-model="enabled" />
       </SettingField>
-      <SettingField for="api-port" label="Port">
+      <SettingField anchor="api.port" for="api-port" label="Port">
         <NumberControl id="api-port" v-model="port" :min="1024" :max="65535" />
       </SettingField>
 
@@ -92,7 +93,7 @@ function openDocs() {
         <AlertDescription>{{ status.error }}</AlertDescription>
       </Alert>
 
-      <SettingField for="api-url" label="Adresse">
+      <SettingField anchor="api.url" for="api-url" label="Adresse">
         <InputGroup class="w-80">
           <InputGroupInput id="api-url" :model-value="baseUrl" readonly class="font-mono text-xs" />
           <InputGroupAddon align="inline-end">
@@ -102,7 +103,7 @@ function openDocs() {
           </InputGroupAddon>
         </InputGroup>
       </SettingField>
-      <SettingField for="api-token" label="Token" description="Als „Authorization: Bearer <token>“ mitsenden.">
+      <SettingField anchor="api.token" for="api-token" label="Token" description="Als „Authorization: Bearer <token>“ mitsenden.">
         <InputGroup class="w-80">
           <InputGroupInput
             id="api-token"
@@ -133,8 +134,8 @@ function openDocs() {
       </SettingField>
     </SettingsSection>
 
-    <SettingsSection title="Dokumentation" description="Interaktive Referenz aller Endpunkte (OpenAPI 3.1).">
-      <SettingField label="API-Dokumentation" :description="`${baseUrl}/docs`">
+    <SettingsSection anchor="api.docs" title="Dokumentation" description="Interaktive Referenz aller Endpunkte (OpenAPI 3.1).">
+      <SettingField anchor="api.openDocs" label="API-Dokumentation" :description="`${baseUrl}/docs`">
         <Button variant="outline" size="sm" :disabled="!status?.running" @click="openDocs">
           <BookOpenIcon data-icon="inline-start" />
           Im Browser öffnen

@@ -54,6 +54,7 @@ async function setRegistered(registered: boolean) {
 
 <template>
   <SettingsSection
+    anchor="claude.command"
     title="Befehl „cm“"
     :description="
       isWindows
@@ -61,7 +62,7 @@ async function setRegistered(registered: boolean) {
         : 'Öffnet eine Claude-Session im Manager – aus jedem Terminal.'
     "
   >
-    <SettingField for="command-registered" label="Befehl einrichten" :description="registerHint">
+    <SettingField anchor="claude.commandRegistered" for="command-registered" label="Befehl einrichten" :description="registerHint">
       <Spinner v-if="busy" class="text-muted-foreground" />
       <Switch
         id="command-registered"
@@ -71,6 +72,7 @@ async function setRegistered(registered: boolean) {
       />
     </SettingField>
     <SettingField
+      anchor="claude.commandReuseTab"
       for="command-reuse-tab"
       label="Offenen Tab wiederverwenden"
       description="Läuft im Ordner schon eine Session, wechselt „cm“ zu ihrem Tab statt einen neuen zu öffnen, bei -r <id> zum Tab dieser Session. -n, -c, -r ohne ID und Argumente für claude öffnen immer einen neuen."

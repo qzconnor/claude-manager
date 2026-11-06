@@ -43,7 +43,7 @@ function openDataDir() {
 </script>
 
 <template>
-  <Card>
+  <Card data-setting="about.info">
     <CardHeader>
       <CardTitle class="flex items-center gap-2">
         <AppLogo class="size-6" />
@@ -67,7 +67,7 @@ function openDataDir() {
           <SparklesIcon data-icon="inline-start" />
           Updates und Versionshinweise
         </Button>
-        <Button variant="outline" size="sm" @click="openDataDir">
+        <Button variant="outline" size="sm" data-setting="about.dataDir" @click="openDataDir">
           <FolderOpenIcon data-icon="inline-start" />
           Datenordner öffnen
         </Button>

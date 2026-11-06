@@ -50,7 +50,7 @@ function onNotesClick(event: MouseEvent) {
 
 <template>
   <div class="flex flex-col gap-6">
-    <div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+    <div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3" data-setting="updates.status">
       <p class="min-w-64 flex-1 text-sm text-muted-foreground">
         Neue Versionen von Claude Manager und was sich darin geändert hat. Gesucht wird beim Start und alle 4 Stunden.
       </p>
@@ -66,7 +66,7 @@ function onNotesClick(event: MouseEvent) {
     <UpdateStatus />
 
     <section class="flex flex-col gap-4" aria-labelledby="release-notes-heading">
-      <h2 id="release-notes-heading" class="font-heading text-base font-semibold">Versionshinweise</h2>
+      <h2 id="release-notes-heading" class="font-heading text-base font-semibold" data-setting="updates.notes">Versionshinweise</h2>
 
       <div v-if="updates.releasesLoading && !updates.releases" class="flex flex-col gap-4">
         <Skeleton v-for="n in 2" :key="n" class="h-36 w-full rounded-xl" />
