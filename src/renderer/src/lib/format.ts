@@ -68,9 +68,19 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
+/**
+ * Writes the home folder as `~`, only for the folder itself and paths inside it (not `…\conno2` for
+ * `…\conno`). Windows paths compare without regard to case, others with.
+ */
 export function shortenPath(path: string | null | undefined, home?: string | null): string {
   if (!path) return '–'
-  if (home && path.toLowerCase().startsWith(home.toLowerCase())) return `~${path.slice(home.length)}`
+  if (home) {
+    const windows = /^[a-z]:[\\/]/i.test(home)
+    const head = path.slice(0, home.length)
+    const rest = path.slice(home.length)
+    const inside = rest === '' || /^[\\/]/.test(rest) || /[\\/]$/.test(home)
+    if (inside && (windows ? head.toLowerCase() === home.toLowerCase() : head === home)) return `~${rest}`
+  }
   return path
 }
 

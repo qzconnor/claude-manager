@@ -57,7 +57,19 @@ describe('formatArgs', () => {
       ['--append-system-prompt', 'Sei kurz und knapp.'],
       ['', 'x', ''],
       ["it's", 'C:\\My Projects\\a b.txt', '/home/me/it’s here'],
+      ['--append-system-prompt', 'Say "hi"'],
+      ['"', "'", `it's "quoted"`, `"'"`],
     ]
     for (const args of cases) expect(parseArgs(formatArgs(args))).toEqual(args)
+  })
+
+  it('keeps double quotes by quoting with single quotes', () => {
+    expect(formatArgs(['--append-system-prompt', 'Say "hi"'])).toBe(`--append-system-prompt 'Say "hi"'`)
+  })
+
+  it('keeps both kinds of quotes in one argument', () => {
+    const formatted = formatArgs([`it's "x"`])
+    expect(parseArgs(formatted)).toEqual([`it's "x"`])
+    expect(parseArgs(`${formatted} --next`)).toEqual([`it's "x"`, '--next'])
   })
 })

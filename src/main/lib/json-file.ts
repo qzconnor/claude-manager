@@ -37,9 +37,11 @@ export function writeJsonAtomic(file: string, data: unknown): Promise<void> {
     .catch(() => undefined)
     .then(() => writeNow(file, `${JSON.stringify(data, null, 2)}\n`))
   writeQueues.set(file, next)
-  void next.finally(() => {
+  // Cleans up on success and failure; a failure reaches only the caller, not as an unhandled rejection.
+  const forget = () => {
     if (writeQueues.get(file) === next) writeQueues.delete(file)
-  })
+  }
+  void next.then(forget, forget)
   return next
 }
 

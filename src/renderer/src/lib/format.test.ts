@@ -168,6 +168,17 @@ describe('shortenPath', () => {
     expect(shortenPath('c:\\users\\Me\\Projects', 'C:\\Users\\me')).toBe('~\\Projects')
   })
 
+  it('only shortens the home folder itself and paths inside it', () => {
+    expect(shortenPath('/home/bobby/x', '/home/bob')).toBe('/home/bobby/x')
+    expect(shortenPath('C:\\Users\\conno2\\app', 'C:\\Users\\conno')).toBe('C:\\Users\\conno2\\app')
+    expect(shortenPath('C:\\Users\\conno\\app', 'C:\\Users\\conno')).toBe('~\\app')
+    expect(shortenPath('/home/me/app', '/home/me/')).toBe('~app')
+  })
+
+  it('compares other than Windows paths with case', () => {
+    expect(shortenPath('/home/Me/app', '/home/me')).toBe('/home/Me/app')
+  })
+
   it('leaves other paths alone', () => {
     expect(shortenPath('/srv/app', '/home/me')).toBe('/srv/app')
     expect(shortenPath('/home/me/app', null)).toBe('/home/me/app')
