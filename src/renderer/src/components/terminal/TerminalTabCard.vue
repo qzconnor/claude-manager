@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { CircleStopIcon, FolderIcon, FolderOpenIcon, HardDriveIcon, TriangleAlertIcon } from '@lucide/vue'
+import { BellDotIcon, BellOffIcon, CircleStopIcon, FolderIcon, FolderOpenIcon, HardDriveIcon, TriangleAlertIcon } from '@lucide/vue'
 import { computed } from 'vue'
 import type { Account, TerminalInfo } from '@shared/types'
 import AccountDot from '@/components/common/AccountDot.vue'
 import AccountIdentityLine from '@/components/common/AccountIdentityLine.vue'
 import { Button } from '@/components/ui/button'
+import { attentionLook } from '@/lib/attention'
 import { accountKindLabel, formatReset } from '@/lib/format'
 import { fileManagerLabel } from '@/lib/platform'
+import { cn } from '@/lib/utils'
 import { limitLabel } from '@/lib/usage'
 
 /** What the hover card of a tab shows: the full title and where the session runs. */
@@ -20,6 +22,10 @@ const props = defineProps<{
 defineEmits<{ openFolder: [] }>()
 
 const openLabel = `Im ${fileManagerLabel} öffnen`
+// A limit has its own line below.
+const attention = computed(() =>
+  props.terminal.attention && props.terminal.attention !== 'limit' ? attentionLook[props.terminal.attention] : null,
+)
 const folder = computed(() => props.terminal.cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? props.terminal.cwd)
 </script>
 
@@ -71,6 +77,16 @@ const folder = computed(() => props.terminal.cwd.split(/[\\/]/).filter(Boolean).
           {{ limitLabel(terminal.limit.type) }} erreicht
           <template v-if="terminal.limit.resetsAt">· Reset {{ formatReset(terminal.limit.resetsAt) }}</template>
         </p>
+      </div>
+
+      <div v-if="attention" :class="cn('flex gap-2', attention.text)">
+        <BellDotIcon class="mt-px size-3.5 shrink-0" />
+        <p class="min-w-0 flex-1">{{ attention.label }}</p>
+      </div>
+
+      <div v-if="terminal.muted" class="flex gap-2 text-muted-foreground">
+        <BellOffIcon class="mt-px size-3.5 shrink-0" />
+        <p class="min-w-0 flex-1">Benachrichtigungen stummgeschaltet</p>
       </div>
 
       <div v-if="terminal.status === 'exited'" class="flex gap-2 text-muted-foreground">

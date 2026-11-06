@@ -61,10 +61,6 @@ const restoreTerminals = useSetting(
   (s) => s.general.restoreTerminals,
   (restoreTerminals) => ({ general: { restoreTerminals } }),
 )
-const flashOnTurnEnd = useSetting(
-  (s) => s.general.flashOnTurnEnd,
-  (flashOnTurnEnd) => ({ general: { flashOnTurnEnd } }),
-)
 const runInTray = useSetting(
   (s) => s.general.runInTray,
   (runInTray) => ({ general: { runInTray } }),
@@ -190,13 +186,6 @@ async function recheck() {
       </SettingField>
       <SettingField for="confirm-close" label="Schließen laufender Terminals bestätigen">
         <Switch id="confirm-close" v-model="confirmCloseRunning" />
-      </SettingField>
-      <SettingField
-        for="flash-on-turn-end"
-        label="Taskleiste blinken lassen, wenn Claude fertig ist"
-        description="Wenn das Fenster im Hintergrund ist und Claude eine Antwort beendet hat oder auf eine Bestätigung wartet. Hört auf, sobald du das Fenster öffnest."
-      >
-        <Switch id="flash-on-turn-end" v-model="flashOnTurnEnd" />
       </SettingField>
       <SettingField
         label="Tab schließen, wenn der Prozess endet"

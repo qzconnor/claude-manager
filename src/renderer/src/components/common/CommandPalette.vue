@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import {
+  BellIcon,
+  BellOffIcon,
   FolderOpenIcon,
   GaugeIcon,
   HistoryIcon,
@@ -24,9 +26,11 @@ import {
 } from '@/components/ui/command'
 import { useLauncher } from '@/composables/useLauncher'
 import { formatRelative } from '@/lib/format'
-import { UPDATES_ROUTE } from '@/router'
+import { attempt } from '@/lib/errors'
+import { NOTIFICATIONS_ROUTE, UPDATES_ROUTE } from '@/router'
 import { useAccountsStore } from '@/stores/accounts'
 import { useSessionsStore } from '@/stores/sessions'
+import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import { useUsageStore } from '@/stores/usage'
@@ -38,6 +42,7 @@ const accounts = useAccountsStore()
 const terminals = useTerminalsStore()
 const sessions = useSessionsStore()
 const usage = useUsageStore()
+const settings = useSettingsStore()
 const launcher = useLauncher()
 
 const recentSessions = computed(() =>
@@ -58,6 +63,14 @@ watch(
 function run(action: () => unknown) {
   ui.paletteOpen = false
   void action()
+}
+
+const notificationsOn = computed(() => settings.settings.notifications.enabled)
+function toggleNotifications() {
+  return attempt(
+    () => settings.update({ notifications: { enabled: !notificationsOn.value } }),
+    'Benachrichtigungen konnten nicht umgeschaltet werden',
+  )
 }
 
 function switchTo(id: string) {
@@ -92,6 +105,11 @@ function switchTo(id: string) {
           <RefreshCwIcon />
           Usage aktualisieren
         </CommandItem>
+        <CommandItem value="toggle-notifications" @select="run(toggleNotifications)">
+          <BellOffIcon v-if="notificationsOn" />
+          <BellIcon v-else />
+          {{ notificationsOn ? 'Benachrichtigungen ausschalten' : 'Benachrichtigungen einschalten' }}
+        </CommandItem>
       </CommandGroup>
 
       <CommandSeparator />
@@ -116,6 +134,10 @@ function switchTo(id: string) {
           <SettingsIcon />
           Einstellungen
           <CommandShortcut>Strg+,</CommandShortcut>
+        </CommandItem>
+        <CommandItem value="go-notifications" @select="run(() => router.push(NOTIFICATIONS_ROUTE))">
+          <BellIcon />
+          Benachrichtigungs-Einstellungen
         </CommandItem>
         <CommandItem value="go-updates" @select="run(() => router.push(UPDATES_ROUTE))">
           <SparklesIcon />

@@ -50,7 +50,7 @@ export class SessionHandoff {
       const options = await this.prepare(old.accountId, old.sessionId, cwd, target)
       // The session stopped at its limit: let Claude carry on where it was, so nobody has to type.
       if (old.limit && options.resumeSessionId) options.prompt = this.settings.get().claude.continuePrompt || null
-      const info = this.terminals.create({ ...options, title: old.fixedTitle ? old.title : null })
+      const info = this.terminals.create({ ...options, title: old.fixedTitle ? old.title : null, muted: old.muted })
       this.terminals.close(terminalId)
       return info
     } finally {

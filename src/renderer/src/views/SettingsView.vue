@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BotIcon, CircleArrowDownIcon, InfoIcon, PaletteIcon, PlugIcon, SparklesIcon, SquareTerminalIcon } from '@lucide/vue'
+import { BellIcon, BotIcon, CircleArrowDownIcon, InfoIcon, PaletteIcon, PlugIcon, SparklesIcon, SquareTerminalIcon } from '@lucide/vue'
 import { computed, ref, watch, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PageContainer from '@/components/common/PageContainer.vue'
@@ -8,6 +8,7 @@ import SettingsAbout from '@/components/settings/SettingsAbout.vue'
 import SettingsApi from '@/components/settings/SettingsApi.vue'
 import SettingsAppearance from '@/components/settings/SettingsAppearance.vue'
 import SettingsClaude from '@/components/settings/SettingsClaude.vue'
+import SettingsNotifications from '@/components/settings/SettingsNotifications.vue'
 import SettingsTerminal from '@/components/settings/SettingsTerminal.vue'
 import SettingsTransfer from '@/components/settings/SettingsTransfer.vue'
 import SettingsUpdates from '@/components/settings/SettingsUpdates.vue'
@@ -23,6 +24,7 @@ const tabs = computed<{ value: SettingsTab; label: string; icon: Component }[]>(
   { value: 'appearance', label: 'Darstellung', icon: PaletteIcon },
   { value: 'terminal', label: 'Terminal', icon: SquareTerminalIcon },
   { value: 'claude', label: 'Claude Code', icon: BotIcon },
+  { value: 'notifications', label: 'Benachrichtigungen', icon: BellIcon },
   { value: 'api', label: 'API', icon: PlugIcon },
   { value: 'updates', label: 'Updates', icon: updates.hasUpdate ? CircleArrowDownIcon : SparklesIcon },
   { value: 'about', label: 'Info', icon: InfoIcon },
@@ -80,6 +82,7 @@ function select(value: unknown) {
       <TabsContent value="appearance"><SettingsAppearance /></TabsContent>
       <TabsContent value="terminal"><SettingsTerminal /></TabsContent>
       <TabsContent value="claude"><SettingsClaude /></TabsContent>
+      <TabsContent value="notifications"><SettingsNotifications /></TabsContent>
       <TabsContent value="api"><SettingsApi /></TabsContent>
       <TabsContent value="updates"><SettingsUpdates /></TabsContent>
       <TabsContent value="about"><SettingsAbout /></TabsContent>

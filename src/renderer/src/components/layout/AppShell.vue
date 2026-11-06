@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useElementBounding } from '@vueuse/core'
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalWorkspace from '@/components/terminal/TerminalWorkspace.vue'
 import { cn } from '@/lib/utils'
@@ -40,7 +40,14 @@ const frameMask = computed(() => {
   }
 })
 
-// Terminals opened through the local API with `activate: true`.
+// The main process learns which tab is on screen: its news counts as seen (notifications, unread dot).
+watch(
+  () => (onTerminals.value ? terminals.activeId : null),
+  (id) => window.api.terminals.viewing(id),
+  { immediate: true },
+)
+
+// Terminals opened through the local API with `activate: true`, `cm` or a click on a notification.
 const offActivate = window.api.terminals.onActivate((id) => {
   terminals.activate(id)
   if (route.name !== 'terminals') void router.push({ name: 'terminals' })

@@ -5,11 +5,14 @@ import SessionsView from '@/views/SessionsView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import TerminalsView from '@/views/TerminalsView.vue'
 
-export const SETTINGS_TABS = ['appearance', 'terminal', 'claude', 'api', 'updates', 'about'] as const
+export const SETTINGS_TABS = ['appearance', 'terminal', 'claude', 'notifications', 'api', 'updates', 'about'] as const
 export type SettingsTab = (typeof SETTINGS_TABS)[number]
 
 /** The updates and release notes, a tab of the settings. */
 export const UPDATES_ROUTE = { name: 'settings', query: { tab: 'updates' satisfies SettingsTab } }
+
+/** The notification settings, a tab of the settings. */
+export const NOTIFICATIONS_ROUTE = { name: 'settings', query: { tab: 'notifications' satisfies SettingsTab } }
 
 export const router = createRouter({
   history: createWebHashHistory(),

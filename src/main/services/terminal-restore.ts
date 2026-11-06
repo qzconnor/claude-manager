@@ -16,6 +16,8 @@ interface SavedTerminal {
   title: string
   /** Missing in files of older versions. */
   fixedTitle?: boolean
+  /** Missing in files of older versions. */
+  muted?: boolean
 }
 
 /**
@@ -77,6 +79,7 @@ export class TerminalRestore {
           mode: tab.mode,
           resumeSessionId: tab.sessionId && (await this.hasTranscript(tab.accountId, tab.sessionId, tab.cwd)) ? tab.sessionId : null,
           title: fixedTitle ? tab.title : null,
+          muted: tab.muted === true,
         })
       } catch {
         // e.g. the folder no longer exists: the tab is left out.
@@ -117,6 +120,7 @@ export class TerminalRestore {
               sessionId: t.sessionId,
               title: t.title,
               fixedTitle: t.fixedTitle,
+              muted: t.muted,
             },
           ],
     )
@@ -133,6 +137,7 @@ function isSavedTerminal(value: unknown): value is SavedTerminal {
     (t.mode === 'session' || t.mode === 'shell') &&
     (t.sessionId === null || (typeof t.sessionId === 'string' && SESSION_ID_RE.test(t.sessionId))) &&
     typeof t.title === 'string' &&
-    (t.fixedTitle === undefined || typeof t.fixedTitle === 'boolean')
+    (t.fixedTitle === undefined || typeof t.fixedTitle === 'boolean') &&
+    (t.muted === undefined || typeof t.muted === 'boolean')
   )
 }

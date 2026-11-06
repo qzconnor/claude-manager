@@ -2,6 +2,7 @@ import { cp, mkdir, open, readdir, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { SessionLimit } from '@shared/types'
 import type { ClaudePaths } from './claude-paths'
+import { toolSummary } from '../workers/transcript-parser'
 import { readJson } from './json-file'
 
 export const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -106,21 +107,7 @@ export async function sessionFiles(paths: ClaudePaths, sessionId: string, transc
  * possibly with other credentials.
  */
 export async function readSessionLimit(file: string, since: number, now = Date.now()): Promise<SessionLimit | null> {
-  const handle = await open(file, 'r')
-  let text: string
-  try {
-    const { size } = await handle.stat()
-    const length = Math.min(size, TAIL_BYTES)
-    const buffer = Buffer.alloc(length)
-    await handle.read(buffer, 0, length, size - length)
-    text = buffer.toString('utf8')
-    // The first line is cut off unless the whole file fit.
-    if (length < size) text = text.slice(text.indexOf('\n') + 1)
-  } finally {
-    await handle.close()
-  }
-
-  const lines = text.split('\n')
+  const lines = (await readTail(file)).split('\n')
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i]
     if (!line.includes('"assistant"')) continue
@@ -134,6 +121,116 @@ export async function readSessionLimit(file: string, since: number, now = Date.n
     return entry.error === 'rate_limit' ? toLimit(entry, since, now) : null
   }
   return null
+}
+
+/** The end of a transcript, from the first complete line on. */
+async function readTail(file: string): Promise<string> {
+  const handle = await open(file, 'r')
+  try {
+    const { size } = await handle.stat()
+    const length = Math.min(size, TAIL_BYTES)
+    const buffer = Buffer.alloc(length)
+    await handle.read(buffer, 0, length, size - length)
+    const text = buffer.toString('utf8')
+    // The first line is cut off unless the whole file fit.
+    return length < size ? text.slice(text.indexOf('\n') + 1) : text
+  } finally {
+    await handle.close()
+  }
+}
+
+/** How Claude Code ended its turn, from the end of the transcript. */
+export interface TurnOutcome {
+  /** Claude Code wrote the end of the turn (`turn_duration`): the answer is complete. */
+  ended: boolean
+  /** The user stopped the turn (Esc, or declined a permission). */
+  interrupted: boolean
+  /** A tool call without result: Claude Code asks for permission, asks a question or wants a plan approved. */
+  waiting: { tool: string; detail: string } | null
+  /** Text of the latest answer; null when the turn has none (yet). */
+  answer: string | null
+}
+
+/** Marks the user message Claude Code writes when the user stops a turn. */
+const INTERRUPTED_PREFIX = '[Request interrupted by user'
+
+/** Reads how the turn that started at `since` (ms) ended, as far as Claude Code has written it. */
+export async function readTurnOutcome(file: string, since: number): Promise<TurnOutcome> {
+  return turnOutcome(await readTail(file), since)
+}
+
+/**
+ * Walks back from the end of the transcript to the turn's prompt: the latest tool call without a
+ * result means Claude Code waits for the user, otherwise the latest text is the answer. Entries from
+ * before `since` (ms) belong to an earlier turn, the current one isn't written yet then.
+ */
+export function turnOutcome(text: string, since: number): TurnOutcome {
+  const outcome: TurnOutcome = { ended: false, interrupted: false, waiting: null, answer: null }
+  const answered = new Set<string>()
+  const lines = text.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]
+    if (!line.includes('"user"') && !line.includes('"assistant"') && !line.includes('"turn_duration"')) continue
+    let entry: TranscriptEntry
+    try {
+      entry = JSON.parse(line) as TranscriptEntry
+    } catch {
+      continue
+    }
+    if (entry.isSidechain || entry.isMeta) continue
+    const fresh = typeof entry.timestamp === 'string' && Date.parse(entry.timestamp) >= since
+    if (entry.type === 'system') {
+      if (entry.subtype === 'turn_duration' && fresh) outcome.ended = true
+      continue
+    }
+    const content = entry.message?.content
+    if (entry.type === 'user') {
+      const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : []
+      let prompt = false
+      for (const block of blocks as (ContentBlock | null)[]) {
+        if (block?.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+          answered.add(block.tool_use_id)
+        } else if (block?.type === 'text') {
+          prompt = true
+          if (fresh && typeof block.text === 'string' && block.text.startsWith(INTERRUPTED_PREFIX)) outcome.interrupted = true
+        }
+      }
+      // The prompt opens the turn: nothing before it belongs to the answer.
+      if (prompt) return outcome
+      continue
+    }
+    if (entry.type !== 'assistant' || !Array.isArray(content)) continue
+    // An answer of an earlier turn: the current one isn't written yet.
+    if (!fresh) return outcome
+    const blocks = content as (ContentBlock | null)[]
+    for (let j = blocks.length - 1; j >= 0; j--) {
+      const block = blocks[j]
+      if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
+        outcome.answer = block.text.trim()
+        return outcome
+      }
+      if (block?.type === 'tool_use' && typeof block.id === 'string' && !answered.has(block.id)) {
+        const tool = typeof block.name === 'string' && block.name ? block.name : 'Tool'
+        outcome.waiting = { tool, detail: waitingDetail(tool, block.input) }
+        return outcome
+      }
+    }
+  }
+  return outcome
+}
+
+/** What a tool call waiting for the user is about: the question, the plan's heading, the command or file. */
+function waitingDetail(tool: string, input: unknown): string {
+  const i = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  if (tool === 'AskUserQuestion' && Array.isArray(i.questions)) {
+    const question = (i.questions[0] as { question?: unknown } | undefined)?.question
+    if (typeof question === 'string') return question.trim()
+  }
+  if (tool === 'ExitPlanMode' && typeof i.plan === 'string') {
+    const heading = i.plan.split('\n').find((line) => line.trim())
+    return heading ? heading.replace(/^#+\s*/, '').trim() : ''
+  }
+  return toolSummary(tool, input)
 }
 
 /** The titles found in a transcript so far; pass the same object again to read what was appended. */
@@ -228,9 +325,20 @@ function scanTitleLines(lines: Buffer, scan: TitleScan): void {
   }
 }
 
+interface ContentBlock {
+  type?: unknown
+  text?: unknown
+  id?: unknown
+  name?: unknown
+  input?: unknown
+  tool_use_id?: unknown
+}
+
 interface TranscriptEntry {
   type?: unknown
+  subtype?: unknown
   isSidechain?: unknown
+  isMeta?: unknown
   error?: unknown
   timestamp?: unknown
   quotaLimits?: { resetsAt?: unknown; rateLimitType?: unknown }

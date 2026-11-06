@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import {
   ArrowRightLeftIcon,
+  BellIcon,
+  BellOffIcon,
   CircleStopIcon,
   FolderOpenIcon,
   KeyRoundIcon,
@@ -31,6 +33,7 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/h
 import { useAccountSwitch } from '@/composables/useAccountSwitch'
 import { useTerminalActions } from '@/composables/useTerminalActions'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
+import { attentionLook } from '@/lib/attention'
 import { attempt } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
@@ -67,6 +70,16 @@ const choices = computed(() =>
   menuOpen.value ? accountSwitch.choices(props.terminal.accountId, props.terminal.authAccountId) : [],
 )
 const canSwitch = computed(() => props.terminal.mode === 'session' && Boolean(props.terminal.sessionId))
+
+/** News the user hasn't seen: a dot where the close button is (until hovered), orange when Claude waits. */
+const attention = computed(() => (props.terminal.attention ? attentionLook[props.terminal.attention] : null))
+
+function toggleMuted() {
+  void attempt(
+    () => terminals.setMuted(props.terminal.id, !props.terminal.muted),
+    'Benachrichtigungen des Tabs konnten nicht geändert werden',
+  )
+}
 
 const editing = ref(false)
 const draft = ref('')
@@ -186,9 +199,23 @@ function openFolder() {
               @click.stop
               @dblclick.stop
             />
-            <span v-else :class="cn('min-w-0 flex-1 truncate', exited && 'text-muted-foreground line-through')">
+            <span
+              v-else
+              :class="
+                cn(
+                  'min-w-0 flex-1 truncate',
+                  exited && 'text-muted-foreground line-through',
+                  attention && !exited && 'font-medium text-foreground',
+                )
+              "
+            >
               {{ terminal.title }}
             </span>
+            <BellOffIcon
+              v-if="terminal.muted && !editing"
+              aria-label="Benachrichtigungen stummgeschaltet"
+              class="size-3 shrink-0 text-muted-foreground"
+            />
 
             <button
               type="button"
@@ -196,13 +223,19 @@ function openFolder() {
               :class="
                 cn(
                   'flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover/tab:opacity-100 hover:bg-accent hover:text-foreground',
-                  selected && 'opacity-100',
+                  (selected || attention) && 'opacity-100',
                 )
               "
               @click.stop="closeTerminal(terminal.id)"
               @dblclick.stop
             >
-              <XIcon class="size-3.5" />
+              <span
+                v-if="attention"
+                role="status"
+                :aria-label="attention.label"
+                :class="cn('size-2 rounded-full group-hover/tab:hidden', attention.dot)"
+              />
+              <XIcon :class="cn('size-3.5', attention && 'hidden group-hover/tab:block')" />
             </button>
           </div>
         </HoverCardTrigger>
@@ -233,6 +266,11 @@ function openFolder() {
         <ContextMenuItem :disabled="exited" @select="stopTerminal(terminal.id)">
           <CircleStopIcon />
           Prozess beenden
+        </ContextMenuItem>
+        <ContextMenuItem @select="toggleMuted">
+          <BellIcon v-if="terminal.muted" />
+          <BellOffIcon v-else />
+          {{ terminal.muted ? 'Benachrichtigungen einschalten' : 'Benachrichtigungen stummschalten' }}
         </ContextMenuItem>
       </ContextMenuGroup>
       <template v-if="terminal.mode === 'session'">

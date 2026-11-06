@@ -4,6 +4,7 @@ import type { ClaudeCli } from './services/claude-cli'
 import type { CswapImport } from './services/cswap-import'
 import type { GitService } from './services/git-service'
 import type { IndexerClient } from './services/indexer-client'
+import type { NotificationService } from './services/notification-service'
 import type { SessionHandoff } from './services/session-handoff'
 import type { SessionService } from './services/session-service'
 import type { SettingsService } from './services/settings-service'
@@ -26,6 +27,8 @@ export interface AppContext {
   /** Continuing sessions with another account's limits. */
   handoff: SessionHandoff
   usage: UsageService
+  /** Notifications, the flashing taskbar and the unread dot of tabs. */
+  notifications: NotificationService
   /** Branch of the repository a terminal works in, for the title bar. */
   git: GitService
   command: CommandIntegration

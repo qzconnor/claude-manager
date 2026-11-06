@@ -1,6 +1,6 @@
 /**
  * Parsing of Claude Code transcript files (`<configDir>/projects/<project>/<session>.jsonl`).
- * Pure functions — used by the indexer worker thread.
+ * Pure functions — used by the indexer worker thread (`toolSummary` also by the main process).
  */
 import type { TranscriptMessage, TranscriptToolCall, TranscriptToolDetail } from '@shared/types'
 
@@ -280,7 +280,8 @@ export function collectSearchText(buf: Buffer): { text: string; end: number } {
   return { text: parts.join(''), end }
 }
 
-function toolSummary(name: string, input: unknown): string {
+/** One line about a tool call: its command, file, pattern, URL… */
+export function toolSummary(name: string, input: unknown): string {
   if (!input || typeof input !== 'object') return ''
   const i = input as Record<string, unknown>
   const pick =

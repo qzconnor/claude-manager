@@ -64,3 +64,19 @@ export function searchTerms(query: string): string[] {
 export function isPersonalOrganizationName(name: string): boolean {
   return /'s Organization$/i.test(name)
 }
+
+/** Name of a limit Claude Code reports (`rateLimitType`). */
+export function limitLabel(type: string | null): string {
+  switch (type) {
+    case 'five_hour':
+      return '5-Stunden-Limit'
+    case 'seven_day':
+      return 'Wochenlimit'
+    case 'seven_day_opus':
+      return 'Wochenlimit für Opus'
+    case 'seven_day_sonnet':
+      return 'Wochenlimit für Sonnet'
+    default:
+      return 'Nutzungslimit'
+  }
+}
