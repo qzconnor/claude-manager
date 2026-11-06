@@ -24,7 +24,8 @@ interface CacheFile {
   files: Record<string, CacheEntry>
 }
 
-const CACHE_VERSION = 2
+// 3: `<synthetic>` replies no longer count as messages; summaries are parsed again once.
+const CACHE_VERSION = 3
 const { cacheFile, searchCacheFile } = workerData as { cacheFile: string; searchCacheFile: string }
 let cache: Record<string, CacheEntry> = {}
 let cacheLoaded: Promise<void> | null = null

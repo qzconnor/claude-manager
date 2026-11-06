@@ -48,6 +48,15 @@ describe('formatRelative', () => {
     expect(formatRelative(at(-29 * DAY), NOW)).toBe('vor 29 Tagen')
   })
 
+  it('moves on to the next unit when the count rounds up to it', () => {
+    expect(formatRelative(at(-59.6 * MINUTE), NOW)).toBe('vor 1 Stunde')
+    expect(formatRelative(at(-59.4 * MINUTE), NOW)).toBe('vor 59 Minuten')
+    expect(formatRelative(at(-23.6 * HOUR), NOW)).toBe('gestern')
+    expect(formatRelative(at(23.6 * HOUR), NOW)).toBe('morgen')
+    expect(formatRelative(at(-23.4 * HOUR), NOW)).toBe('vor 23 Stunden')
+    expect(formatRelative(at(-29.6 * DAY), NOW)).toBe('07.10.2026, 23:36')
+  })
+
   it('shows the date from 30 days on', () => {
     // 30 days earlier it was still summer time.
     expect(formatRelative(at(-30 * DAY), NOW)).toBe('07.10.2026, 14:00')
@@ -138,17 +147,27 @@ describe('formatNumber', () => {
 })
 
 describe('formatBytes', () => {
-  it('uses bytes below 1 KB and whole KB below 1 MB', () => {
+  it('uses bytes below 1 KB and whole KB below 1 MB, with German digits', () => {
     expect(formatBytes(0)).toBe('0 B')
-    expect(formatBytes(1023)).toBe('1023 B')
+    expect(formatBytes(1023)).toBe('1.023 B')
     expect(formatBytes(1024)).toBe('1 KB')
     expect(formatBytes(1536)).toBe('2 KB')
     expect(formatBytes(500 * 1024)).toBe('500 KB')
+    expect(formatBytes(1023 * 1024)).toBe('1.023 KB')
   })
 
-  it('switches to MB with one decimal at 1 MB', () => {
-    expect(formatBytes(1024 * 1024)).toMatch(/^1[.,]0 MB$/)
-    expect(formatBytes(3 * 1024 * 1024)).toMatch(/^3[.,]0 MB$/)
+  it('switches to MB with one decimal and a comma at 1 MB', () => {
+    expect(formatBytes(1024 * 1024)).toBe('1,0 MB')
+    expect(formatBytes(1.5 * 1024 * 1024)).toBe('1,5 MB')
+    expect(formatBytes(3 * 1024 * 1024)).toBe('3,0 MB')
+  })
+
+  it('shows a size that rounds up to the next unit in it', () => {
+    expect(formatBytes(1024 * 1024 - 1)).toBe('1,0 MB')
+    expect(formatBytes(1024 * 1024 - 400)).toBe('1,0 MB')
+    expect(formatBytes(1024 * 1024 - 600)).toBe('1.023 KB')
+    expect(formatBytes(1024 ** 3 - 1)).toBe('1,0 GB')
+    expect(formatBytes(2.25 * 1024 ** 3)).toBe('2,3 GB')
   })
 })
 

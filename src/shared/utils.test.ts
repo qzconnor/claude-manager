@@ -103,6 +103,13 @@ describe('maskSecret', () => {
     expect(maskSecret('abcdefghijklmnop')).toBe('abcd…mnop')
   })
 
+  it('hides the rest of a short key completely, also after a long prefix', () => {
+    expect(maskSecret('sk-ant-oat01-abc')).toBe('sk-ant-oat01-••••')
+    expect(maskSecret('sk-ant-oat01-abcdefghijk')).toBe('sk-ant-oat01-••••')
+    expect(maskSecret('sk-ant-oat01-abcdefghijkl')).toBe('sk-ant-oat01-…ijkl')
+    expect(maskSecret('abcdefghijklmno')).toBe('••••')
+  })
+
   it('trims whitespace around the secret', () => {
     expect(maskSecret('  sk-ant-oat01-abcdefghijklmnopqrstuvwxyz-a1b2\n')).toBe('sk-ant-oat01-…a1b2')
   })
