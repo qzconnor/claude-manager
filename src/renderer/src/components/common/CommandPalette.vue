@@ -2,6 +2,7 @@
 import {
   BellIcon,
   BellOffIcon,
+  FolderIcon,
   FolderOpenIcon,
   GaugeIcon,
   HistoryIcon,
@@ -25,10 +26,12 @@ import {
   CommandShortcut,
 } from '@/components/ui/command'
 import { useLauncher } from '@/composables/useLauncher'
-import { formatRelative } from '@/lib/format'
+import { useRecentFolders } from '@/composables/useRecentFolders'
+import { formatRelative, shortenPath } from '@/lib/format'
 import { attempt } from '@/lib/errors'
 import { NOTIFICATIONS_ROUTE, UPDATES_ROUTE } from '@/router'
 import { useAccountsStore } from '@/stores/accounts'
+import { useAppStore } from '@/stores/app'
 import { useSessionsStore } from '@/stores/sessions'
 import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
@@ -38,12 +41,14 @@ import AccountDot from './AccountDot.vue'
 
 const ui = useUiStore()
 const router = useRouter()
+const app = useAppStore()
 const accounts = useAccountsStore()
 const terminals = useTerminalsStore()
 const sessions = useSessionsStore()
 const usage = useUsageStore()
 const settings = useSettingsStore()
 const launcher = useLauncher()
+const recent = useRecentFolders(8)
 
 const recentSessions = computed(() =>
   sessions.groups
@@ -55,7 +60,7 @@ const recentSessions = computed(() =>
 watch(
   () => ui.paletteOpen,
   (open) => {
-    if (open && !sessions.loaded) void sessions.load()
+    if (open) recent.load()
   },
 )
 
@@ -156,6 +161,24 @@ function switchTo(id: string) {
           >
             <AccountDot :color="account.color" />
             Neue Session · {{ account.name }}
+          </CommandItem>
+        </CommandGroup>
+      </template>
+
+      <template v-if="recent.folders.value.length">
+        <CommandSeparator />
+        <CommandGroup heading="Zuletzt genutzte Ordner">
+          <CommandItem
+            v-for="folder in recent.folders.value"
+            :key="folder.path"
+            :value="`folder-${folder.path}`"
+            @select="run(() => launcher.newSession(undefined, folder.path))"
+          >
+            <FolderIcon />
+            <span class="min-w-0 truncate">Neue Session in {{ folder.name }}</span>
+            <CommandShortcut class="max-w-[45%] truncate tracking-normal">
+              {{ folder.parent && shortenPath(folder.parent, app.info?.homeDir) }}
+            </CommandShortcut>
           </CommandItem>
         </CommandGroup>
       </template>

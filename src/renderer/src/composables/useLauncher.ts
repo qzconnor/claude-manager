@@ -50,6 +50,6 @@ export function useLauncher() {
         title: fork ? `Fork · ${session.title}` : null,
       }),
     login: (accountId: string) => launch({ accountId, mode: 'login' }),
-    shell: (accountId: string) => launch({ accountId, mode: 'shell' }),
+    shell: (accountId: string, cwd?: string | null) => launch({ accountId, mode: 'shell', cwd }),
   }
 }

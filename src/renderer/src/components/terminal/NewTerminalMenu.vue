@@ -3,6 +3,7 @@ import { ChevronDownIcon, ChevronRightIcon, PlusIcon } from '@lucide/vue'
 import { DropdownMenu, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useLauncher } from '@/composables/useLauncher'
+import { loadRecentFolders } from '@/composables/useRecentFolders'
 import { cn } from '@/lib/utils'
 import NewTerminalMenuContent from './NewTerminalMenuContent.vue'
 
@@ -42,6 +43,7 @@ const titleBarButton =
           type="button"
           aria-label="Weitere Optionen"
           class="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-0 transition-opacity outline-none group-hover/new:opacity-100 hover:bg-foreground/10 focus-visible:opacity-100 aria-expanded:opacity-100"
+          @pointerenter="loadRecentFolders"
         >
           <ChevronRightIcon class="size-3.5" />
         </button>
@@ -70,7 +72,12 @@ const titleBarButton =
     </Tooltip>
     <DropdownMenu>
       <DropdownMenuTrigger as-child>
-        <button type="button" aria-label="Weitere Optionen" :class="cn(titleBarButton, 'w-6')">
+        <button
+          type="button"
+          aria-label="Weitere Optionen"
+          :class="cn(titleBarButton, 'w-6')"
+          @pointerenter="loadRecentFolders"
+        >
           <ChevronDownIcon class="size-3.5" />
         </button>
       </DropdownMenuTrigger>
