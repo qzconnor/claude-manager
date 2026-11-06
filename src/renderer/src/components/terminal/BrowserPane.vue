@@ -608,11 +608,11 @@ watch(
           <Button variant="outline" size="sm" @click="reload">Erneut versuchen</Button>
         </div>
 
-        <!-- Where Claude acts: the element and what it does. -->
+        <!-- Where Claude acts: the element and what it does. A click shows only its ripple at the pointer. -->
         <Transition leave-active-class="transition-opacity duration-500" leave-to-class="opacity-0">
           <div v-if="highlight" :key="highlight.seq" aria-hidden="true" class="absolute inset-0">
             <div
-              v-if="highlight.rect"
+              v-if="highlight.rect && !highlight.click"
               class="absolute rounded-[4px] border-2 border-primary bg-primary/10 shadow-[0_0_0_4px] shadow-primary/20 animate-in fade-in zoom-in-95 duration-150"
               :style="{
                 left: `${highlight.rect.x * shownScale - 2}px`,
@@ -630,14 +630,23 @@ watch(
             </span>
           </div>
         </Transition>
-        <!-- Claude's mouse pointer, with what it does next to it, and a ring where it clicked. -->
+        <!-- Claude's mouse pointer, with what it does next to it, and a ripple where it clicked. -->
         <div aria-hidden="true" class="absolute inset-0">
           <span
             v-if="pointerClick"
             :key="pointerClick.seq"
-            class="absolute size-8 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-primary bg-primary/25 opacity-0 animate-[browser-click_500ms_ease-out] motion-reduce:animate-[browser-click-fade_500ms_ease-out]"
+            class="absolute"
             :style="{ left: `${pointerClick.x * shownScale}px`, top: `${pointerClick.y * shownScale}px` }"
-          />
+          >
+            <!-- A light tint of Claude's color: it stands out on colored parts of the page too (a blue button). -->
+            <span
+              class="absolute size-11 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[color-mix(in_oklab,color-mix(in_oklab,var(--primary)_60%,white)_85%,transparent)] opacity-0 animate-[browser-click_550ms_ease-out] motion-reduce:animate-[browser-click-fade_550ms_ease-out]"
+            />
+            <!-- The ring runs out past the tint; light seams and a shadow keep it visible on any page. -->
+            <span
+              class="absolute size-18 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-primary opacity-0 shadow-[0_0_0_1px_rgb(255_255_255/0.7),inset_0_0_0_1px_rgb(255_255_255/0.7),0_0_8px_rgb(0_0_0/0.25)] animate-[browser-click_800ms_ease-out_60ms] motion-reduce:hidden"
+            />
+          </span>
           <div
             class="absolute top-0 left-0"
             :style="{

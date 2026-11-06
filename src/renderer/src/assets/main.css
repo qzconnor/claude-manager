@@ -153,14 +153,17 @@
   --surface-strong: oklch(0.2 0 0 / 85%);
 }
 
-/* Claude's click in a browser page: a ring that widens from the pointer's tip and fades. */
+/* Claude's click in a browser page: a soft ripple that widens from the pointer's tip and fades. */
 @keyframes browser-click {
   from {
-    scale: 0.3;
-    opacity: 0.9;
+    scale: 0.2;
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.85;
   }
   to {
-    scale: 1.7;
+    scale: 1;
     opacity: 0;
   }
 }
