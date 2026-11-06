@@ -102,6 +102,8 @@ export const IpcSend = {
   terminalResize: 'terminals:resize',
   /** The tab the window shows, null while another page is open. */
   terminalViewing: 'terminals:viewing',
+  /** Whether the terminal theme is dark (see TerminalService.setColorScheme). */
+  terminalColorScheme: 'terminals:color-scheme',
   /** The page listens for dialog requests (see src/main/window/dialogs.ts). */
   dialogsReady: 'dialogs:ready',
   dialogAnswer: 'dialogs:answer',
@@ -207,6 +209,8 @@ export interface ManagerApi {
     setMuted(id: string, muted: boolean): Promise<void>
     /** Tells which tab the window shows (null: another page): its news counts as seen. */
     viewing(id: string | null): void
+    /** Tells whether the terminal theme is dark; programs that asked for it hear when that changes. */
+    colorScheme(dark: boolean): void
     onChanged(cb: (terminals: TerminalInfo[]) => void): Unsubscribe
     onData(cb: (id: string, data: string, offset: number) => void): Unsubscribe
     onExit(cb: (id: string, exitCode: number) => void): Unsubscribe

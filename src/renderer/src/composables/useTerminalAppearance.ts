@@ -42,6 +42,8 @@ export function useTerminalAppearance() {
 
   const theme = computed(() => findTheme(store.settings.terminal.colorSchemeId ?? store.settings.appearance.themeId))
   const palette = computed<TerminalPalette>(() => theme.value.terminal)
+  /** Whether the terminal's colors are dark: programs that ask (Claude Code's "Auto" theme) are told. */
+  const dark = computed(() => theme.value.mode === 'dark')
   /** See-through colors of the palette slots that Claude's backgrounds are exchanged for. */
   const slotTints = computed<SlotTints>(() => themeSlotTints(palette.value))
   /** Which of Claude's backgrounds the output filter exchanges, and for what. */
@@ -56,5 +58,5 @@ export function useTerminalAppearance() {
     return `color-mix(in oklab, ${palette.value.background} ${effective}%, transparent)`
   })
 
-  return { palette, slotTints, containerBackground, backgrounds }
+  return { palette, dark, slotTints, containerBackground, backgrounds }
 }

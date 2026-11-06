@@ -4,7 +4,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectSeparator, Select
 import { Switch } from '@/components/ui/switch'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useSetting } from '@/composables/useSetting'
-import { supportsMaterial } from '@/lib/platform'
+import { isWindows, supportsMaterial } from '@/lib/platform'
 import { THEMES } from '@/themes/themes'
 import FontPicker from './FontPicker.vue'
 import NumberControl from './NumberControl.vue'
@@ -49,6 +49,7 @@ const minimumContrastRatio = t('minimumContrastRatio', 150)
 const colorSchemeId = t('colorSchemeId')
 const panelBackground = t('panelBackground')
 const diffColors = t('diffColors')
+const modernConpty = t('modernConpty')
 
 const WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900]
 const CURSORS: { value: CursorStyle; label: string }[] = [
@@ -241,6 +242,14 @@ function onScheme(value: unknown) {
       </SettingField>
       <SettingField label="Unicode" description="Unicode 15 mit Graphem-Clustern stellt zusammengesetzte Emoji korrekt dar.">
         <SegmentedControl :model-value="unicode" :options="UNICODE_VERSIONS" aria-label="Unicode" @update:model-value="onUnicode" />
+      </SettingField>
+      <SettingField
+        v-if="isWindows"
+        for="terminal-modern-conpty"
+        label="ConPTY aus Windows Terminal"
+        description="Neuere Konsolen-Schicht statt der von Windows. Sie reicht Abfragen wie die Hintergrundfarbe weiter, damit z. B. Claude Codes Theme „Auto“ dem Theme der App folgt, auch beim Wechsel. Gilt für neue Tabs."
+      >
+        <Switch id="terminal-modern-conpty" v-model="modernConpty" />
       </SettingField>
     </SettingsSection>
   </div>
