@@ -18,6 +18,7 @@ import { ClaudeCli } from './services/claude-cli'
 import { CswapImport } from './services/cswap-import'
 import { GitService } from './services/git-service'
 import { IndexerClient } from './services/indexer-client'
+import { NotificationService } from './services/notification-service'
 import { LoginProfiles } from './services/login-profiles'
 import { SessionHandoff } from './services/session-handoff'
 import { SessionService } from './services/session-service'
@@ -79,6 +80,13 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   void command.init()
   const updates = new UpdateService(userAgent)
   updates.init()
+  const notifications = new NotificationService(
+    terminals,
+    settings,
+    () => mainWindow,
+    (id) => showTerminal(id),
+  )
+  notifications.init()
 
   settings.on('changed', (next, previous) => {
     if (next.claude.executablePath !== previous.claude.executablePath) cli.invalidate()
@@ -95,6 +103,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     sessions,
     handoff,
     usage,
+    notifications,
     git,
     command,
     updates,
@@ -218,8 +227,11 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
       }
     })
     forwardWindowState(win)
-    // The taskbar button flashes after a turn (see below) until the window is in front.
-    win.on('focus', () => win.flashFrame(false))
+    // The taskbar button flashes after a turn (NotificationService) until the window is in front.
+    win.on('focus', () => {
+      win.flashFrame(false)
+      notifications.windowFocused()
+    })
     // Windows is shutting down or logging off: the window must not hold it back.
     win.on('session-end', () => (quitting = true))
 
@@ -251,13 +263,6 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
       // Without the icon a hidden window could not be opened again.
       if (!tray.visible && mainWindow && !mainWindow.isVisible()) revealWindow(mainWindow)
     }
-  })
-
-  // Claude Code is done or waits for the user: draw attention when the window is in the background.
-  terminals.on('turnEnded', () => {
-    const win = mainWindow
-    if (!win || win.isDestroyed() || win.isFocused() || !settings.get().general.flashOnTurnEnd) return
-    win.flashFrame(true)
   })
 
   // Started by the system at login: with the tray icon the window stays hidden until it is opened.

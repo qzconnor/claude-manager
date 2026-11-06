@@ -167,9 +167,19 @@ export interface TerminalCreateOptions {
   /** Run a special command instead of the interactive session. */
   mode?: 'session' | 'login' | 'shell'
   title?: string | null
+  /** Start without notifications for this tab (see `TerminalInfo.muted`). */
+  muted?: boolean
   cols?: number
   rows?: number
 }
+
+/**
+ * Why a tab wants attention after Claude Code ended its turn.
+ * - `done`:  the answer is finished
+ * - `input`: Claude Code waits for the user: a permission, the answer to a question or the approval of a plan
+ * - `limit`: the session stopped at a usage limit
+ */
+export type AttentionKind = 'done' | 'input' | 'limit'
 
 /** A Claude Code session whose last answer was a usage limit. */
 export interface SessionLimit {
@@ -192,6 +202,10 @@ export interface TerminalInfo {
   limit: SessionLimit | null
   /** Claude Code works on a turn, as its window title shows (also when started in a shell tab). */
   busy: boolean
+  /** Something happened in the tab while it wasn't shown; cleared once it is (setting `notifications.unreadDot`). */
+  attention: AttentionKind | null
+  /** No notifications and no flashing taskbar for this tab; the unread dot stays. */
+  muted: boolean
   /** The session's title as in `/resume`, unless `fixedTitle`; without one a default. */
   title: string
   /** The title was given (renamed, or passed when opening) and doesn't follow the session. */
@@ -476,12 +490,41 @@ export interface GeneralSettings {
   restoreTerminals: boolean
   /** `cm` shows a running tab in the same folder instead of opening another one (`cm -n` always opens one). */
   cmReuseTab: boolean
-  /** Flash the taskbar button when Claude Code ends its turn while the window is in the background. */
-  flashOnTurnEnd: boolean
   /** Closing the window only hides it; the app keeps running in the notification area (tray). */
   runInTray: boolean
   /** Start with Windows; with `runInTray` without a window, only in the notification area. */
   launchAtLogin: boolean
+}
+
+/**
+ * When a tab interrupts with a notification (and the flashing taskbar):
+ * `background` only while the window is in the background, `hidden` also when another tab or page is shown.
+ */
+export type NotifyWhen = 'background' | 'hidden'
+
+/** How the app points to a tab in which Claude Code is done or needs the user. */
+export interface NotificationSettings {
+  /** Main switch: off, the app never points to a tab (no notification, no flashing, no dot). */
+  enabled: boolean
+  /** Claude Code finished its answer. */
+  onDone: boolean
+  /** A finished answer only interrupts after Claude worked at least this long (s); shorter ones only get the dot. 0 = always. */
+  minBusySeconds: number
+  /** Claude Code waits for a permission, the answer to a question or the approval of a plan. */
+  onInput: boolean
+  /** The session stopped at a usage limit. */
+  onLimit: boolean
+  when: NotifyWhen
+  /** System notification (Windows: in the notification center). */
+  toast: boolean
+  /** The notification shows the beginning of the answer, the command waiting for permission or the question. */
+  preview: boolean
+  /** The notification plays the system sound. */
+  sound: boolean
+  /** The taskbar button flashes until the window is in front. */
+  flashTaskbar: boolean
+  /** A dot on tabs with news you haven't seen yet. */
+  unreadDot: boolean
 }
 
 export interface ApiSettings {
@@ -494,6 +537,7 @@ export interface AppSettings {
   terminal: TerminalSettings
   claude: ClaudeSettings
   general: GeneralSettings
+  notifications: NotificationSettings
   api: ApiSettings
 }
 

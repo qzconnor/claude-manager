@@ -70,11 +70,11 @@ Die App wurde in acht Schritten gebaut. Jeder Schritt baut auf dem vorherigen au
 - Die Nachfragen des Hauptprozesses (Beenden mit laufenden Terminals, Fehler von `cm`) erscheinen als Dialog in der App statt als Windows-Fenster. Nur wenn die Oberfläche abgestürzt ist, kommt die Windows-Box als Rückfall, damit sich das Fenster immer schließen lässt.
 - Updates direkt in der App (electron-updater, GitHub-Releases) mit Versionshinweisen, als Tab in den Einstellungen. Releases erstellt semantic-release bei jedem Push auf `master` aus den Conventional Commits.
 - Die Einstellungen haben eine Tab-Leiste über die ganze Breite mit Symbolen statt der kleinen Umschalter.
+- Benachrichtigungen, wenn Claude in einem Tab fertig ist, auf eine Erlaubnis, Antwort oder Plan-Freigabe wartet oder an ein Limit stößt: Windows-Benachrichtigung mit Vorschau, Blinken der Taskleiste und ein Punkt an Tabs mit ungesehenen Neuigkeiten. Eigener Einstellungs-Tab, Glocke zum An- und Ausschalten, einzelne Tabs stummschaltbar. Der Grund kommt aus dem Transcript (`turn_duration`, offene Tool-Aufrufe), das Claude Code gepuffert schreibt.
 - Einstellungen lassen sich als JSON-Datei exportieren und importieren, ohne Accounts. Fremde Pfade, die es hier nicht gibt, bleiben unverändert, der Import ist rückgängig zu machen.
 
 ## Mögliche nächste Schritte
 
 - Code-Signing, sobald ein Zertifikat vorhanden ist (dann prüft electron-updater auch die Signatur des Updates).
 - Geteilte Terminal-Ansicht (Split Panes) und Drag & Drop für Tabs.
-- Benachrichtigung, wenn Claude Code in einem Hintergrund-Tab auf eine Eingabe wartet.
 - Warnung, wenn ein Limit eine einstellbare Schwelle überschreitet.

@@ -153,6 +153,13 @@ export const schemas: Record<string, Schema> = {
     sessionId: { ...nullable(str), description: 'Claude-Code-Session, die gerade im Tab läuft' },
     limit: { ...nullable(ref('SessionLimit')), description: 'Gesetzt, solange die Session an einem Nutzungslimit steht' },
     busy: { type: 'boolean', description: 'Claude Code arbeitet gerade an einer Antwort (laut Fenstertitel)' },
+    attention: {
+      ...nullable({ type: 'string', enum: ['done', 'input', 'limit'] }),
+      description:
+        'Ungesehene Neuigkeit im Tab: done = Antwort fertig, input = wartet auf Erlaubnis, Antwort oder Freigabe, ' +
+        'limit = Nutzungslimit. null, sobald der Tab in der App angezeigt wurde',
+    },
+    muted: { type: 'boolean', description: 'Keine Benachrichtigungen und kein Blinken der Taskleiste für diesen Tab' },
     title: { type: 'string', description: 'Titel der Session wie in /resume, sofern fixedTitle nicht gesetzt ist' },
     fixedTitle: { type: 'boolean', description: 'Titel wurde vergeben (umbenannt oder beim Öffnen) und folgt nicht der Session' },
     cwd: str,
@@ -177,6 +184,7 @@ export const schemas: Record<string, Schema> = {
       mode: { type: 'string', enum: ['session', 'login', 'shell'], default: 'session' },
       args: { ...arrayOf(str), description: 'Zusätzliche Argumente für claude' },
       title: nullable(str),
+      muted: { type: 'boolean', description: 'Ohne Benachrichtigungen für diesen Tab starten' },
       cols: { type: 'integer', minimum: 20, maximum: 500 },
       rows: { type: 'integer', minimum: 5, maximum: 300 },
       activate: { type: 'boolean', description: 'Tab in der App anzeigen und Fenster in den Vordergrund holen' },

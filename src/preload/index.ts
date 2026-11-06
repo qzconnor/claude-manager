@@ -67,6 +67,8 @@ const api: ManagerApi = {
     rename: (id, title) => invoke(IpcInvoke.terminalsRename, id, title),
     buffer: (id) => invoke(IpcInvoke.terminalsBuffer, id),
     continueWith: (id, accountId) => invoke(IpcInvoke.terminalsContinueWith, id, accountId),
+    setMuted: (id, muted) => invoke(IpcInvoke.terminalsSetMuted, id, muted),
+    viewing: (id) => ipcRenderer.send(IpcSend.terminalViewing, id),
     onChanged: (cb) => subscribe(IpcEvent.terminalsChanged, cb),
     onData: (cb) => subscribe(IpcEvent.terminalData, cb),
     onExit: (cb) => subscribe(IpcEvent.terminalExit, cb),
@@ -81,6 +83,9 @@ const api: ManagerApi = {
       invoke(IpcInvoke.sessionsContinueWith, accountId, sessionId, targetAccountId),
     remove: (sessions) => invoke(IpcInvoke.sessionsRemove, sessions),
     onChanged: (cb) => subscribe(IpcEvent.sessionsChanged, cb),
+  },
+  notifications: {
+    test: () => invoke(IpcInvoke.notificationsTest),
   },
   usage: {
     get: () => invoke(IpcInvoke.usageGet),

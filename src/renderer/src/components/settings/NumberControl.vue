@@ -7,7 +7,7 @@ import {
   NumberFieldInput,
 } from '@/components/ui/number-field'
 
-defineProps<{ id?: string; min?: number; max?: number; step?: number }>()
+defineProps<{ id?: string; min?: number; max?: number; step?: number; disabled?: boolean }>()
 const model = defineModel<number>({ required: true })
 
 function onUpdate(value: number | undefined) {
@@ -22,6 +22,7 @@ function onUpdate(value: number | undefined) {
     :min="min"
     :max="max"
     :step="step ?? 1"
+    :disabled="disabled"
     :format-options="{ useGrouping: false, maximumFractionDigits: 2 }"
     locale="de"
     class="w-32"

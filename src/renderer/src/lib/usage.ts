@@ -1,5 +1,7 @@
 import type { UsageWindow } from '@shared/types'
 
+export { limitLabel } from '@shared/utils'
+
 /** Green below 60 %, orange from 60 %, red from 85 %. */
 export type UsageLevel = 'low' | 'medium' | 'high'
 
@@ -23,22 +25,6 @@ export const usageFillClass: Record<UsageLevel, string> = {
   low: '*:data-[slot=progress-indicator]:bg-usage-low',
   medium: '*:data-[slot=progress-indicator]:bg-usage-medium',
   high: '*:data-[slot=progress-indicator]:bg-usage-high',
-}
-
-/** Name of a limit Claude Code reports (`rateLimitType`). */
-export function limitLabel(type: string | null): string {
-  switch (type) {
-    case 'five_hour':
-      return '5-Stunden-Limit'
-    case 'seven_day':
-      return 'Wochenlimit'
-    case 'seven_day_opus':
-      return 'Wochenlimit für Opus'
-    case 'seven_day_sonnet':
-      return 'Wochenlimit für Sonnet'
-    default:
-      return 'Nutzungslimit'
-  }
 }
 
 /** A window without reset time and usage hasn't started yet — it begins with the next message. */

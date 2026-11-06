@@ -260,6 +260,7 @@ export const routes: Route[] = [
         forkSession: optionalBoolean(body, 'forkSession') ?? false,
         args: optionalStringArray(body, 'args'),
         title: optionalString(body, 'title', 120) ?? null,
+        muted: optionalBoolean(body, 'muted') ?? false,
         cols: optionalInteger(body, 'cols', 20, 500),
         rows: optionalInteger(body, 'rows', 5, 300),
       }
@@ -291,18 +292,30 @@ export const routes: Route[] = [
     path: '/api/v1/terminals/{id}',
     doc: {
       tag: 'Terminals',
-      summary: 'Tab umbenennen',
+      summary: 'Tab umbenennen oder stummschalten',
+      description:
+        'Ein leerer `title` lässt den Tab wieder dem Titel der Session folgen. `muted: true` schaltet ' +
+        'Benachrichtigungen und das Blinken der Taskleiste für diesen Tab ab.',
       pathParams: [terminalIdParam],
       requestBody: {
         required: true,
-        schema: { type: 'object', properties: { title: { type: 'string', maxLength: 120 } }, required: ['title'] },
-        example: { title: 'Refactoring' },
+        schema: {
+          type: 'object',
+          properties: { title: { type: 'string', maxLength: 120 }, muted: { type: 'boolean' } },
+          minProperties: 1,
+        },
+        example: { title: 'Refactoring', muted: true },
       },
       response: { description: 'Terminal', schema: ref('Terminal') },
     },
     handler: async (ctx) => {
       requireTerminal(ctx, ctx.params.id)
-      ctx.app.terminals.rename(ctx.params.id, requiredString(await ctx.body(), 'title', 120))
+      const body = await ctx.body()
+      const title = optionalString(body, 'title', 120)
+      const muted = optionalBoolean(body, 'muted')
+      if (title === undefined && muted === undefined) throw new HttpError(400, '„title“ oder „muted“ fehlt.')
+      if (title !== undefined) ctx.app.terminals.rename(ctx.params.id, title)
+      if (muted !== undefined) ctx.app.terminals.setMuted(ctx.params.id, muted)
       return ctx.app.terminals.get(ctx.params.id)
     },
   },

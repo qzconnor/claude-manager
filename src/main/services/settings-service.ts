@@ -139,13 +139,22 @@ function clamp(value: number, min: number, max: number, fallback: number): numbe
 
 /** Brings a settings file of an older version into the current shape. */
 function migrate(stored: unknown): unknown {
-  const terminal = (stored as { terminal?: { padding?: unknown } } | null)?.terminal
+  if (!isPlainObject(stored)) return {}
+  const terminal = stored.terminal
   // Earlier there was one padding for all sides; on the right at least the scrollbar's 14 px were kept free.
-  if (terminal && typeof terminal.padding === 'number') {
+  if (isPlainObject(terminal) && typeof terminal.padding === 'number') {
     const p = terminal.padding
     terminal.padding = { top: p, right: Math.max(p, 14), bottom: p, left: p }
   }
-  return stored ?? {}
+  // The flashing taskbar was a setting of its own before the notifications got their page.
+  const general = stored.general
+  if (isPlainObject(general) && typeof general.flashOnTurnEnd === 'boolean') {
+    const notifications = isPlainObject(stored.notifications) ? stored.notifications : {}
+    if (!('flashTaskbar' in notifications)) notifications.flashTaskbar = general.flashOnTurnEnd
+    stored.notifications = notifications
+    delete general.flashOnTurnEnd
+  }
+  return stored
 }
 
 /** Keeps every numeric setting in a sane range, whatever the settings file contains. */
@@ -185,5 +194,7 @@ function sanitize(s: AppSettings): AppSettings {
   s.claude.continuePrompt = typeof s.claude.continuePrompt === 'string' ? s.claude.continuePrompt.trim().slice(0, 2000) : d.claude.continuePrompt
   s.api.port = clamp(Math.round(s.api.port), 1024, 65535, d.api.port)
   s.general.closeOnExit = closeOnExit.includes(s.general.closeOnExit) ? s.general.closeOnExit : d.general.closeOnExit
+  s.notifications.minBusySeconds = clamp(Math.round(s.notifications.minBusySeconds), 0, 3600, d.notifications.minBusySeconds)
+  s.notifications.when = s.notifications.when === 'hidden' ? 'hidden' : 'background'
   return s
 }

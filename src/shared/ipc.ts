@@ -65,6 +65,9 @@ export const IpcInvoke = {
   terminalsRename: 'terminals:rename',
   terminalsBuffer: 'terminals:buffer',
   terminalsContinueWith: 'terminals:continue-with',
+  terminalsSetMuted: 'terminals:set-muted',
+
+  notificationsTest: 'notifications:test',
 
   sessionsList: 'sessions:list',
   sessionsGet: 'sessions:get',
@@ -97,6 +100,8 @@ export const IpcInvoke = {
 export const IpcSend = {
   terminalWrite: 'terminals:write',
   terminalResize: 'terminals:resize',
+  /** The tab the window shows, null while another page is open. */
+  terminalViewing: 'terminals:viewing',
   /** The page listens for dialog requests (see src/main/window/dialogs.ts). */
   dialogsReady: 'dialogs:ready',
   dialogAnswer: 'dialogs:answer',
@@ -196,6 +201,10 @@ export interface ManagerApi {
      * Null when the folder isn't trusted for that account: the tab then stays as it is.
      */
     continueWith(id: string, accountId: string): Promise<TerminalInfo | null>
+    /** A muted tab sends no notifications and doesn't flash the taskbar. */
+    setMuted(id: string, muted: boolean): Promise<void>
+    /** Tells which tab the window shows (null: another page): its news counts as seen. */
+    viewing(id: string | null): void
     onChanged(cb: (terminals: TerminalInfo[]) => void): Unsubscribe
     onData(cb: (id: string, data: string, offset: number) => void): Unsubscribe
     onExit(cb: (id: string, exitCode: number) => void): Unsubscribe
@@ -219,6 +228,10 @@ export interface ManagerApi {
      */
     remove(sessions: SessionRef[]): Promise<SessionRemoveResult>
     onChanged(cb: (accountId: string) => void): Unsubscribe
+  }
+  notifications: {
+    /** Shows an example notification with the current settings. */
+    test(): Promise<void>
   }
   usage: {
     get(): Promise<AccountUsage[]>

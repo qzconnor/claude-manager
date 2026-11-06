@@ -37,7 +37,7 @@ Die API läuft, solange die App läuft. Soll sie immer erreichbar sein, unter *E
 | GET | `/api/v1/terminals` | offene Terminals |
 | POST | `/api/v1/terminals` | Terminal öffnen (Session, Login oder Shell) |
 | GET | `/api/v1/terminals/{id}` | ein Terminal |
-| PATCH | `/api/v1/terminals/{id}` | Tab umbenennen (`{"title": "…"}`) |
+| PATCH | `/api/v1/terminals/{id}` | Tab umbenennen (`{"title": "…"}`) oder stummschalten (`{"muted": true}`) |
 | DELETE | `/api/v1/terminals/{id}` | Terminal schließen |
 | POST | `/api/v1/terminals/{id}/input` | Eingabe senden (`{"data": "…"}`) |
 | GET | `/api/v1/terminals/{id}/output?since=&tail=` | Ausgabe lesen |
@@ -72,6 +72,8 @@ Mit `authAccountId` läuft die Session über die Limits eines anderen Accounts: 
 `title` ist der Titel der Claude-Code-Session wie in `/resume` (bei `/rename` der neue Name), solange es noch keinen gibt, `Account · Ordner`. Wird ein Tab mit `title` geöffnet oder umbenannt, bleibt der Titel fest (`fixedTitle: true`).
 
 Jedes Terminal meldet außerdem `sessionId` (die Session, die gerade darin läuft), `authAccountId`, `busy` (Claude Code arbeitet gerade an einer Antwort) und `limit`. `limit` ist gesetzt, solange die Session an einem Nutzungslimit steht, mit `type` (z. B. `five_hour`), `resetsAt` und der Meldung von Claude Code. Über den `terminals`-Stream lässt sich so automatisch auf ein Limit reagieren.
+
+`attention` zeigt, was im Tab passiert ist, seit er zuletzt in der App angezeigt wurde: `done` (Antwort fertig), `input` (Claude wartet auf eine Erlaubnis, eine Antwort oder die Freigabe eines Plans) oder `limit`, sonst `null`. `muted` ist gesetzt, wenn der Tab keine Benachrichtigungen schickt. Beides folgt den Einstellungen unter *Benachrichtigungen*; `muted` lässt sich beim Öffnen und per `PATCH` setzen.
 
 ### Ausgabe lesen
 

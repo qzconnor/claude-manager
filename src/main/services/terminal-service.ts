@@ -4,7 +4,7 @@ import { stat } from 'node:fs/promises'
 import { userInfo } from 'node:os'
 import { basename, join } from 'node:path'
 import type * as Pty from 'node-pty'
-import type { CloseOnExit, SessionLimit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
+import type { AttentionKind, CloseOnExit, SessionLimit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
 import { fallbackSessionFolder } from '../lib/session-folder'
 import {
   findTranscript,
@@ -12,6 +12,7 @@ import {
   readLiveSessionId,
   readSessionLimit,
   readSessionTitles,
+  readTurnOutcome,
   scannedTitle,
   SESSION_ID_RE,
   type TitleScan,
@@ -29,6 +30,18 @@ const MAX_BUFFER_CHARS = 2_000_000
 const FLUSH_INTERVAL_MS = 6
 /** How often running sessions are checked for their current session id and a usage limit. */
 const TRACK_INTERVAL_MS = 2000
+/**
+ * After Claude Code's title says the turn ended, the transcript tells why. Claude Code buffers its
+ * own entries (answer, tool calls) for about 3 s, so it is read again until the end is clear.
+ */
+const TURN_END_POLL_MS = 300
+/**
+ * A tool call without result means Claude Code waits for the user only after this long: before, its
+ * result may still be in Claude Code's buffer. A finished answer is known earlier by `turn_duration`.
+ */
+const TURN_END_SETTLE_MS = 4500
+/** Without a clear end in the transcript the turn counts as done after this long. */
+const TURN_END_TIMEOUT_MS = 8000
 /** Arguments with which Claude Code picks the session itself. */
 const SESSION_CHOICE_ARG_RE = /^(-c|--continue|-r|--resume|--session-id|--from-pr|--teleport)(=|$)/
 
@@ -61,6 +74,17 @@ interface TrackedTranscript {
   titles: TitleScan
 }
 
+/** Claude Code ended its turn in a tab: what happened, for notifications and the unread dot. */
+export interface TurnEnd {
+  kind: AttentionKind
+  /** How long Claude Code worked on the turn (ms). */
+  busyMs: number
+  /** `input`: the tool that waits for the user, e.g. `Bash` or `AskUserQuestion`. */
+  tool: string | null
+  /** The beginning of the answer, the command or question waiting for the user, or the limit message. */
+  detail: string | null
+}
+
 interface TerminalRecord {
   info: TerminalInfo
   /** Shown while the session has no title (and for shells and logins). */
@@ -78,6 +102,12 @@ interface TerminalRecord {
   /** The app ended the process (kill, close, account switch): its tab never closes by itself. */
   killed: boolean
   titles: TitleReader
+  /** When Claude Code started working on the current turn (ms). */
+  busySince: number
+  /** The end of the turn is being looked up in the transcript. */
+  turnEnding: boolean
+  /** Counts turn ends and restarts: a lookup that is no longer the latest stops. */
+  turnEndRun: number
 }
 
 type Events = {
@@ -85,8 +115,8 @@ type Events = {
   /** `offset` = position of `data` in the terminal's output stream */
   data: [id: string, data: string, offset: number]
   exit: [id: string, exitCode: number]
-  /** Claude Code ended its turn: it is done or waits for the user (e.g. a permission prompt). */
-  turnEnded: [id: string]
+  /** Claude Code ended its turn: it is done, waits for the user (e.g. a permission prompt) or hit a limit. */
+  turnEnded: [id: string, turn: TurnEnd]
 }
 
 export class TerminalService extends TypedEmitter<Events> {
@@ -204,6 +234,8 @@ export class TerminalService extends TypedEmitter<Events> {
       sessionId,
       limit: null,
       busy: false,
+      attention: null,
+      muted: options.muted === true,
       title: fixedTitle ?? defaultTitle,
       fixedTitle: fixedTitle !== null,
       cwd,
@@ -229,6 +261,9 @@ export class TerminalService extends TypedEmitter<Events> {
       flushTimer: null,
       killed: false,
       titles: new TitleReader(),
+      busySince: 0,
+      turnEnding: false,
+      turnEndRun: 0,
     }
     this.terminals.set(id, record)
 
@@ -305,6 +340,22 @@ export class TerminalService extends TypedEmitter<Events> {
     const next = title.trim().slice(0, 120)
     record.info.fixedTitle = next.length > 0
     record.info.title = next || this.autoTitle(record)
+    this.emitChanged()
+  }
+
+  /** Marks the tab as having news the user hasn't seen, or as seen (`null`). */
+  setAttention(id: string, attention: AttentionKind | null): void {
+    const record = this.terminals.get(id)
+    if (!record || record.info.attention === attention) return
+    record.info.attention = attention
+    this.emitChanged()
+  }
+
+  /** A muted tab sends no notifications and doesn't flash the taskbar. */
+  setMuted(id: string, muted: boolean): void {
+    const record = this.require(id)
+    if (record.info.muted === muted) return
+    record.info.muted = muted
     this.emitChanged()
   }
 
@@ -421,9 +472,69 @@ export class TerminalService extends TypedEmitter<Events> {
   private followActivity(record: TerminalRecord, title: string): void {
     const activity = claudeActivity(title)
     if (activity === null || (activity === 'busy') === record.info.busy) return
-    record.info.busy = activity === 'busy'
+    const { info } = record
+    info.busy = activity === 'busy'
+    // Stops a lookup of the previous turn end.
+    const run = ++record.turnEndRun
+    if (info.busy) {
+      // Back at work before the end was clear: the same turn goes on, its time keeps running.
+      if (record.turnEnding) record.turnEnding = false
+      else record.busySince = Date.now()
+      // A permission or question was answered (also through the API): it no longer waits.
+      if (info.attention === 'input') info.attention = null
+    } else {
+      record.turnEnding = true
+      void this.reportTurnEnd(record, run)
+    }
     this.emitChanged()
-    if (!record.info.busy) this.emit('turnEnded', record.info.id)
+  }
+
+  /** Tells once whether Claude Code is done, waits for the user or stopped at a limit. */
+  private async reportTurnEnd(record: TerminalRecord, run: number): Promise<void> {
+    const idleAt = Date.now()
+    const since = record.busySince
+    const current = () =>
+      run === record.turnEndRun && !record.info.busy && record.info.status === 'running' && this.terminals.has(record.info.id)
+    while (current()) {
+      await delay(TURN_END_POLL_MS)
+      if (!current()) return
+      const elapsed = Date.now() - idleAt
+      let turn: Omit<TurnEnd, 'busyMs'> | 'interrupted' | null = null
+      try {
+        turn = await this.inspectTurnEnd(record, since, elapsed)
+      } catch {
+        // The transcript is being rewritten: look again.
+      }
+      if (turn === null && elapsed >= TURN_END_TIMEOUT_MS) turn = { kind: 'done', tool: null, detail: null }
+      if (turn === null || !current()) continue
+      record.turnEnding = false
+      // Stopped by the user (Esc, or a permission declined): they are at the tab already.
+      if (turn !== 'interrupted') this.emit('turnEnded', record.info.id, { ...turn, busyMs: since ? idleAt - since : 0 })
+      return
+    }
+  }
+
+  /** What the transcript says about the turn that started at `since`; null while that isn't clear yet. */
+  private async inspectTurnEnd(
+    record: TerminalRecord,
+    since: number,
+    elapsed: number,
+  ): Promise<Omit<TurnEnd, 'busyMs'> | 'interrupted' | null> {
+    // Shell tabs run Claude Code without a known session: it can only be done.
+    if (record.info.mode !== 'session') return { kind: 'done', tool: null, detail: null }
+    // Also brings the session, its limit and title up to date right away.
+    if (await this.trackSession(record)) this.emitChanged()
+    const limit = record.info.limit
+    if (limit) return { kind: 'limit', tool: null, detail: limit.message }
+    const tracked = record.transcript
+    if (!tracked || tracked.sessionId !== record.info.sessionId) return null
+    const outcome = await readTurnOutcome(tracked.file, since)
+    if (outcome.interrupted) return 'interrupted'
+    if (outcome.ended) return { kind: 'done', tool: null, detail: outcome.answer }
+    if (elapsed < TURN_END_SETTLE_MS) return null
+    if (outcome.waiting) return { kind: 'input', tool: outcome.waiting.tool, detail: outcome.waiting.detail || null }
+    // Older Claude Code versions write no `turn_duration`.
+    return outcome.answer ? { kind: 'done', tool: null, detail: outcome.answer } : null
   }
 
   private flush(record: TerminalRecord): void {
@@ -467,6 +578,8 @@ export class TerminalService extends TypedEmitter<Events> {
     this.emit('changed', this.list())
   }
 }
+
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 /** A limit also ends at its reset time, even if the transcript doesn't change. */
 function currentLimit(limit: SessionLimit | null): SessionLimit | null {

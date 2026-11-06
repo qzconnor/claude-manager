@@ -147,6 +147,13 @@ export function registerIpc(ctx: AppContext): void {
   ipcMain.handle(IpcInvoke.terminalsContinueWith, (_e, id: unknown, accountId: unknown) =>
     ctx.handoff.continueTerminal(requireString(id, 'id'), requireString(accountId, 'accountId')),
   )
+  ipcMain.handle(IpcInvoke.terminalsSetMuted, (_e, id: unknown, muted: unknown) => {
+    if (typeof muted !== 'boolean') throw new Error('Ungültiger Parameter: muted')
+    ctx.terminals.setMuted(requireString(id, 'id'), muted)
+  })
+  ipcMain.on(IpcSend.terminalViewing, (_e, id: unknown) => {
+    ctx.notifications.setViewing(typeof id === 'string' && id ? id : null)
+  })
   ipcMain.on(IpcSend.terminalWrite, (_e, id: unknown, data: unknown) => {
     if (typeof id === 'string' && typeof data === 'string') ctx.terminals.write(id, data)
   })
@@ -160,6 +167,9 @@ export function registerIpc(ctx: AppContext): void {
     // A login terminal finishing usually means new credentials.
     ctx.accounts.refresh()
   })
+
+  // --- notifications -------------------------------------------------------
+  ipcMain.handle(IpcInvoke.notificationsTest, () => ctx.notifications.showTest())
 
   // --- sessions ------------------------------------------------------------
   ipcMain.handle(IpcInvoke.sessionsList, (_e, accountId?: unknown) =>

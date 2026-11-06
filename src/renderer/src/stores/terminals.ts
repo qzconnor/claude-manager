@@ -56,6 +56,10 @@ export const useTerminalsStore = defineStore('terminals', () => {
     await window.api.terminals.rename(id, title)
   }
 
+  async function setMuted(id: string, muted: boolean): Promise<void> {
+    await window.api.terminals.setMuted(id, muted)
+  }
+
   /** Puts the tab that replaces `oldId` at its position and selects it. */
   function replace(oldId: string, index: number, info: TerminalInfo): void {
     const list = terminals.value.filter((t) => t.id !== oldId && t.id !== info.id)
@@ -76,6 +80,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
       mode: old.mode,
       resumeSessionId: old.resumeSessionId,
       title: old.fixedTitle ? old.title : null,
+      muted: old.muted,
     })
     if (!info) return
     await window.api.terminals.close(id)
@@ -127,6 +132,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     close,
     kill,
     rename,
+    setMuted,
     restart,
     continueWith,
     continueSession,
