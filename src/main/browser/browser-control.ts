@@ -1,25 +1,32 @@
-import { webContents, type NativeImage, type WebContents } from 'electron'
+import { webContents, type WebContents } from 'electron'
 import { BLANK_PAGE } from '@shared/browser'
 import { hasPane, paneIds } from '@shared/panes'
-import type {
-  BrowserActivity,
-  BrowserControlState,
-  BrowserDownload,
-  BrowserEmulation,
-  BrowserHighlight,
-  BrowserLoginRequest,
-  BrowserNetworkPreset,
-  BrowserViewport,
-} from '@shared/types'
+import type { BrowserActivity, BrowserControlState, BrowserDownload, BrowserEmulation, BrowserHighlight, BrowserLoginRequest, BrowserViewport } from '@shared/types'
 import { TypedEmitter } from '../lib/typed-emitter'
 import { browserDownloads } from '../window/browser-downloads'
 import { browserLogins } from '../window/browser-logins'
-import { mobileUserAgent } from '../window/browser-policy'
 import type { TerminalService } from '../services/terminal-service'
-import { PageFrames } from './frames'
+import type { ActionContext, ActionStep, BrowserTab, ConsoleEntry, FileChooser, PageEvent } from './action-context'
+import { autoAttachFrames, PageFrames } from './frames'
+import { networkEvent, type NetworkEntry, shortUrl } from './network-log'
 import { delay, isClaudesMouse, PageDriver, withTimeout } from './page-driver'
+import {
+  caughtDialog,
+  type CaughtDialog,
+  describeDialog,
+  DIALOG_BINDING,
+  DIALOG_GRACE_MS,
+  DIALOG_SHIM_OFF,
+  type DialogAnswer,
+  dialogShim,
+  dialogSignal,
+  type DialogSignal,
+  type PageDialog,
+} from './page-dialogs'
+import { applyEmulation, applyFrameEmulation, isEmulating, setPhoneMode, untilViewport } from './page-emulation'
 import { pointerMoveMs, type PointerSpot } from './pointer'
 import { snapshotChanges } from './snapshot-diff'
+import { ToolError } from './tool-args'
 
 /** Claude's last action keeps the page drawn this long, also while its tab is hidden. */
 const ACTIVE_MS = 60_000
@@ -29,155 +36,8 @@ const TAKE_OVER_WAIT_MS = 10 * 60_000
 const ATTACH_WAIT_MS = 20_000
 const LOG_LIMIT = 300
 const CONSOLE_LIMIT = 300
-const NETWORK_LIMIT = 300
+
 const PAGE_EVENT_LIMIT = 50
-
-export interface ConsoleEntry {
-  at: string
-  level: string
-  text: string
-  source: string
-}
-
-export interface NetworkEntry {
-  /** Its number for Claude (browser_network_request). */
-  id: number
-  /** The DevTools protocol's id, and the session of its frame (undefined: the page's), for its body. */
-  requestId: string
-  session: string | undefined
-  method: string
-  url: string
-  type: string
-  status: number | null
-  statusText: string
-  failure: string | null
-  mimeType: string | null
-  requestHeaders: Record<string, string>
-  responseHeaders: Record<string, string> | null
-  /** The body the page sent; null with `hasPostData`: too large for the event, ask the protocol. */
-  postData: string | null
-  hasPostData: boolean
-  /** When it started (ms since the epoch) and how long it took until its end. */
-  startedAt: number
-  durationMs: number | null
-  /** Bytes that came over the network (compressed). */
-  encodedBytes: number | null
-  fromCache: boolean
-  /** Monotonic protocol time (s) of its start, for its duration. */
-  timestamp: number
-}
-
-export interface PageDialog {
-  type: string
-  message: string
-  defaultPrompt: string
-}
-
-/** A dialog the page opened while Claude acted, answered right away (see `dialogShim`). */
-export interface CaughtDialog extends PageDialog {
-  at: string
-  /** How it was answered: OK, Cancel or the text given to a prompt. */
-  answer: string
-}
-
-/** How Claude wants the next dialog answered (browser_handle_dialog before the action). */
-export interface DialogAnswer {
-  accept: boolean
-  promptText: string | null
-}
-
-export interface FileChooser {
-  backendNodeId: number
-  multiple: boolean
-}
-
-interface Box {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
-/** Something the page did by itself that Claude should hear of: a popup window, a download. */
-export interface PageEvent {
-  at: string
-  text: string
-}
-
-/** A browser tab as browser_tabs lists it. */
-export interface BrowserTab {
-  index: number
-  id: string
-  title: string
-  url: string
-  /** The session's actions go to it. */
-  current: boolean
-  /** The session opened it (it may close it). */
-  openedBySession: boolean
-  /** Another Claude session drives it right now. */
-  otherSession: string | null
-}
-
-/** A tool's error for Claude: it ends up in the result, not as a failure of the protocol. */
-export class ToolError extends Error {}
-
-/** What a tool can do while its action runs (see `BrowserControl.perform`). */
-export interface ActionContext {
-  readonly browserId: string
-  readonly page: PageDriver
-  /** The log line's text, once the target is known (e.g. the name of the clicked button). */
-  label(text: string): void
-  /** What came out, for the log line. */
-  note(text: string): void
-  /** A small picture of the page for the log line. */
-  image(image: NativeImage): void
-  /**
-   * Shows the user where Claude acts: the element and the spot Claude's mouse pointer goes to (and
-   * clicks, with `pointer.click`), in CSS pixels of the page's viewport. Returns how long the
-   * pointer takes to get there (ms): the action should wait for it.
-   */
-  highlight(label: string, box?: Box | null, pointer?: { x: number; y: number; click?: boolean } | null): number
-  /**
-   * The page as Claude reads it. `changes`: only what changed since the session's last snapshot of
-   * this document (see snapshot-diff.ts), when that is shorter; otherwise the whole outline.
-   */
-  snapshot(changes: boolean): Promise<string>
-  consoleEntries(): ConsoleEntry[]
-  networkEntries(): NetworkEntry[]
-  /** What the page pretends right now (browser_emulate). */
-  emulation(): BrowserEmulation | null
-  /** Has the page pretend this from now on (null: nothing); it stays until the session ends or the user resets it. */
-  setEmulation(emulation: BrowserEmulation | null): Promise<void>
-  /** A dialog that blocks the page until it is answered (one the page opened while Claude didn't act). */
-  dialog(): PageDialog | null
-  /** Resolves when the page opens such a dialog. */
-  untilDialog(): Promise<PageDialog>
-  /** The dialogs answered right away since then (ISO time). */
-  caughtDialogs(since: string): CaughtDialog[]
-  /** Popups and downloads of the page that no result named yet (also those of a moment after an action). */
-  pageEvents(): PageEvent[]
-  /** The page waits for a user name and password, which the user enters in its pane. */
-  login(): BrowserLoginRequest | null
-  /** Resolves when the page asks for a login. */
-  untilLogin(): Promise<BrowserLoginRequest>
-  /** How the next dialog is answered; null: OK, and a prompt's default. */
-  setDialogAnswer(answer: DialogAnswer | null): void
-  fileChooser(): FileChooser | null
-  clearFileChooser(): void
-  /** The page's file chooser comes to Claude instead of the user while `work` runs. */
-  interceptFileChooser<T>(work: () => Promise<T>): Promise<T>
-  /**
-   * Gives the page a size of its own (CSS pixels; null: its part of the tab again), as a phone with
-   * `mobile`. Resolves once the page has it; true when phone mode changed (the page should load again).
-   */
-  setViewport(size: ViewportSize | null): Promise<boolean>
-}
-
-export interface ViewportSize {
-  width: number
-  height: number
-  mobile: boolean
-}
 
 interface Control {
   sessionId: string
@@ -206,7 +66,7 @@ interface Browser {
   /** What the page pretends for Claude; it ends with the session. */
   emulation: BrowserEmulation | null
   dialog: PageDialog | null
-  dialogSignal: { promise: Promise<PageDialog>; resolve: (dialog: PageDialog) => void }
+  dialogSignal: DialogSignal
   caught: CaughtDialog[]
   dialogAnswer: DialogAnswer | null
   /** The script that catches dialogs in new documents while Claude acts. */
@@ -226,67 +86,6 @@ interface Browser {
   /** The log line of each running download of the page. */
   downloads: Map<string, BrowserActivity>
 }
-
-function signal(): Browser['dialogSignal'] {
-  let resolve!: (dialog: PageDialog) => void
-  const promise = new Promise<PageDialog>((r) => (resolve = r))
-  return { promise, resolve }
-}
-
-/** The page calls it with the dialogs it caught. */
-const DIALOG_BINDING = '__claudeManagerDialog'
-/** How long after an action its dialogs are still caught (a page may open one a moment later). */
-const DIALOG_GRACE_MS = 1500
-
-/**
- * Catches the page's dialogs while Claude acts and answers them at once, in the page's own world.
- * Electron shows a dialog of a page as a message box of its own, which stays open when the
- * DevTools protocol answers the dialog: so the page never gets to open one while Claude acts.
- */
-function dialogShim(answer: DialogAnswer | null): string {
-  return `(() => {
-  const answer = ${JSON.stringify(answer)}
-  const own = window.__claudeManagerDialogs
-  if (own) {
-    own.on = true
-    own.answer = answer
-    return
-  }
-  const native = { alert: window.alert, confirm: window.confirm, prompt: window.prompt }
-  const state = { on: true, answer }
-  Object.defineProperty(window, '__claudeManagerDialogs', { value: state, configurable: true })
-  const text = (value) => (value === undefined || value === null ? '' : String(value))
-  const report = (type, message, defaultPrompt, result) => {
-    try {
-      window.${DIALOG_BINDING}(JSON.stringify({ type, message: text(message), defaultPrompt: text(defaultPrompt), answer: result }))
-    } catch {}
-  }
-  const take = () => {
-    const next = state.answer || { accept: true, promptText: null }
-    state.answer = null
-    return next
-  }
-  window.alert = function (message) {
-    if (!state.on) return native.alert.apply(this, arguments)
-    report('alert', message, null, 'OK')
-  }
-  window.confirm = function (message) {
-    if (!state.on) return native.confirm.apply(this, arguments)
-    const next = take()
-    report('confirm', message, null, next.accept ? 'OK' : 'Cancel')
-    return next.accept
-  }
-  window.prompt = function (message, defaultPrompt) {
-    if (!state.on) return native.prompt.apply(this, arguments)
-    const next = take()
-    const value = next.accept ? (next.promptText ?? text(defaultPrompt)) : null
-    report('prompt', message, defaultPrompt, value === null ? 'Cancel' : JSON.stringify(value))
-    return value
-  }
-})()`
-}
-
-const DIALOG_SHIM_OFF = 'window.__claudeManagerDialogs && (window.__claudeManagerDialogs.on = false)'
 
 const TAKEN_OVER =
   'The user is using the browser themselves right now (they took it over in Claude Manager) and has not handed it back. Ask them to hand it back with "Zurückgeben", or wait.'
@@ -309,15 +108,6 @@ type Events = {
   focus: [browserId: string]
   /** The user pressed the mouse in the page (not Claude): its part of the tab becomes the active one. */
   userClick: [browserId: string]
-}
-
-/** One of Claude's actions, as `perform` runs it. */
-export interface ActionStep {
-  kind: string
-  /** The log line, until the action names its target. */
-  label: string
-  /** The action also works while the page shows a dialog (which blocks the page's scripts). */
-  whileDialog?: boolean
 }
 
 export class BrowserControl extends TypedEmitter<Events> {
@@ -789,105 +579,19 @@ export class BrowserControl extends TypedEmitter<Events> {
       return
     }
     if (browser.contents !== contents) return
+    if (method.startsWith('Network.')) {
+      const warning = networkEvent(browser, method, params, session)
+      if (warning) this.pageWarning(browser, 'network', warning)
+      return
+    }
     switch (method) {
       case 'Target.detachedFromTarget':
         browser.frames.detached(params.sessionId as string)
         return
-      case 'Network.requestWillBeSent': {
-        const request = params.request as { method: string; url: string; headers?: Record<string, string>; postData?: string; hasPostData?: boolean }
-        if (request.url.startsWith('data:')) return
-        const key = requestKey(session, params.requestId as string)
-        const redirect = params.redirectResponse as { status: number; statusText?: string; headers?: Record<string, string> } | undefined
-        const earlier = browser.network.get(key)
-        if (redirect && earlier) {
-          // The same request goes on at another address: the earlier one ends with the redirect.
-          earlier.status = redirect.status
-          earlier.statusText = redirect.statusText ?? ''
-          earlier.responseHeaders = redirect.headers ?? null
-          earlier.durationMs = Math.round((Number(params.timestamp) - earlier.timestamp) * 1000)
-          browser.network.delete(key)
-          browser.network.set(`${key}#${earlier.id}`, earlier)
-        }
-        browser.network.set(key, {
-          id: browser.nextRequest++,
-          requestId: params.requestId as string,
-          session,
-          method: request.method,
-          url: request.url,
-          type: String(params.type ?? 'Other'),
-          status: null,
-          statusText: '',
-          failure: null,
-          mimeType: null,
-          requestHeaders: request.headers ?? {},
-          responseHeaders: null,
-          postData: request.postData ?? null,
-          hasPostData: request.hasPostData === true,
-          startedAt: typeof params.wallTime === 'number' ? Math.round(params.wallTime * 1000) : Date.now(),
-          durationMs: null,
-          encodedBytes: null,
-          fromCache: false,
-          timestamp: Number(params.timestamp) || 0,
-        })
-        while (browser.network.size > NETWORK_LIMIT) browser.network.delete(browser.network.keys().next().value!)
-        return
-      }
-      case 'Network.requestServedFromCache': {
-        const entry = findRequest(browser.network, session, params.requestId as string)
-        if (entry) entry.fromCache = true
-        return
-      }
-      case 'Network.responseReceived': {
-        const entry = findRequest(browser.network, session, params.requestId as string)
-        if (!entry) return
-        const response = params.response as {
-          status: number
-          statusText?: string
-          mimeType?: string
-          headers?: Record<string, string>
-          fromDiskCache?: boolean
-          fromServiceWorker?: boolean
-        }
-        entry.status = response.status
-        entry.statusText = response.statusText ?? ''
-        entry.mimeType = response.mimeType ?? null
-        entry.responseHeaders = response.headers ?? null
-        if (response.fromDiskCache) entry.fromCache = true
-        if (response.status >= 400 && worthLogging(entry)) {
-          this.pageWarning(browser, 'network', `HTTP ${response.status}: ${entry.method} ${shortUrl(entry.url)}`)
-        }
-        return
-      }
-      case 'Network.loadingFinished': {
-        const entry = findRequest(browser.network, session, params.requestId as string)
-        if (!entry) return
-        entry.encodedBytes = typeof params.encodedDataLength === 'number' ? params.encodedDataLength : null
-        entry.durationMs = Math.max(0, Math.round((Number(params.timestamp) - entry.timestamp) * 1000))
-        return
-      }
-      case 'Network.loadingFailed': {
-        const entry = findRequest(browser.network, session, params.requestId as string)
-        if (!entry || params.canceled) return
-        entry.failure = String(params.errorText ?? 'failed')
-        entry.durationMs = Math.max(0, Math.round((Number(params.timestamp) - entry.timestamp) * 1000))
-        if (worthLogging(entry)) this.pageWarning(browser, 'network', `${entry.failure}: ${entry.method} ${shortUrl(entry.url)}`)
-        return
-      }
       case 'Runtime.bindingCalled': {
         if (params.name !== DIALOG_BINDING || session !== undefined) return
-        let caught: CaughtDialog
-        try {
-          const raw = JSON.parse(String(params.payload)) as Record<string, unknown>
-          caught = {
-            at: new Date().toISOString(),
-            type: String(raw.type),
-            message: String(raw.message ?? '').slice(0, 2000),
-            defaultPrompt: String(raw.defaultPrompt ?? '').slice(0, 2000),
-            answer: String(raw.answer ?? '').slice(0, 2000),
-          }
-        } catch {
-          return
-        }
+        const caught = caughtDialog(params.payload)
+        if (!caught) return
         // Claude's answer was for this one.
         if (caught.type !== 'alert') browser.dialogAnswer = null
         browser.caught.push(caught)
@@ -901,7 +605,7 @@ export class BrowserControl extends TypedEmitter<Events> {
         const dialog = { type: String(params.type), message: String(params.message ?? ''), defaultPrompt: String(params.defaultPrompt ?? '') }
         browser.dialog = dialog
         browser.dialogSignal.resolve(dialog)
-        browser.dialogSignal = signal()
+        browser.dialogSignal = dialogSignal()
         this.pageWarning(browser, 'page-dialog', `Dialog: ${dialog.message.slice(0, 200)}`)
         return
       }
@@ -999,7 +703,7 @@ export class BrowserControl extends TypedEmitter<Events> {
         lastSnapshot: null,
         emulation: null,
         dialog: null,
-        dialogSignal: signal(),
+        dialogSignal: dialogSignal(),
         caught: [],
         dialogAnswer: null,
         dialogScript: null,
@@ -1085,168 +789,5 @@ export class BrowserControl extends TypedEmitter<Events> {
   private updateActivity(browser: Browser, activity: BrowserActivity, change: Partial<BrowserActivity>): void {
     Object.assign(activity, change)
     this.emit('activity', browser.id, { ...activity })
-  }
-}
-
-/** A dialog that blocks the page, for Claude. */
-export function describeDialog(dialog: PageDialog): string {
-  const prompt = dialog.type === 'prompt' ? ` (default answer ${JSON.stringify(dialog.defaultPrompt)})` : ''
-  const article = /^[aeiou]/i.test(dialog.type) ? 'an' : 'a'
-  return `The page shows ${article} ${dialog.type} dialog: ${JSON.stringify(dialog.message)}${prompt}. It blocks the page until it is answered.`
-}
-
-/** Only failures of pages and of the requests scripts make are worth a line; not every missing image. */
-function worthLogging(entry: NetworkEntry): boolean {
-  return entry.type === 'Document' || entry.type === 'XHR' || entry.type === 'Fetch'
-}
-
-function shortUrl(url: string): string {
-  return url.length > 120 ? `${url.slice(0, 119)}…` : url
-}
-
-/** How long the window may take to give the page the size Claude chose. */
-const VIEWPORT_WAIT_MS = 3000
-
-/**
- * A phone to the page (touch, a phone's user agent, the viewport meta tag), or the browser again.
- * `locale`: the language Claude chose (browser_emulate), which goes with the user agent.
- */
-async function setPhoneMode(page: PageDriver, on: boolean, locale: string | null): Promise<void> {
-  if (on) {
-    await page.cdp('Emulation.setDeviceMetricsOverride', { width: 0, height: 0, deviceScaleFactor: 0, mobile: true })
-    await page.cdp('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })
-  } else {
-    await page.cdp('Emulation.clearDeviceMetricsOverride')
-    await page.cdp('Emulation.setTouchEmulationEnabled', { enabled: false })
-  }
-  await setUserAgent(page, on, locale)
-}
-
-/**
- * The user agent (a phone's or the browser's own) and the language the page is asked for, in the
- * page or in a frame in a process of its own (`session`).
- */
-async function setUserAgent(page: PageDriver, mobile: boolean, locale: string | null, session?: string): Promise<void> {
-  const language = locale ? { acceptLanguage: locale } : {}
-  if (mobile) await page.cdpIn(session, 'Emulation.setUserAgentOverride', { ...mobileUserAgent(page.contents.getUserAgent()), ...language })
-  else if (locale) await page.cdpIn(session, 'Emulation.setUserAgentOverride', { userAgent: page.contents.getUserAgent(), ...language })
-  // An empty agent ends the override.
-  else await page.cdpIn(session, 'Emulation.setUserAgentOverride', { userAgent: '' })
-}
-
-/** The session's key of a request: request ids are only unique within one DevTools session. */
-function requestKey(session: string | undefined, requestId: string): string {
-  return `${session ?? ''}|${requestId}`
-}
-
-/**
- * The entry of a request an event of `session` is about. The document of a frame in a process of
- * its own starts in the session around the frame and is loaded in the frame's own (its id is unique):
- * then its entry follows it there, where its body is.
- */
-export function findRequest(network: Map<string, NetworkEntry>, session: string | undefined, requestId: string): NetworkEntry | undefined {
-  const entry = network.get(requestKey(session, requestId))
-  if (entry || session === undefined) return entry
-  for (const other of network.values()) {
-    if (other.requestId !== requestId || other.type !== 'Document') continue
-    other.session = session
-    return other
-  }
-  return undefined
-}
-
-/**
- * Chromium attaches a session to every frame in a process of its own, below the page or a frame
- * (`session`). The frame waits until setUpFrame let it run: its scripts start with the emulation.
- */
-async function autoAttachFrames(page: PageDriver, session: string | undefined): Promise<void> {
-  const params = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }
-  try {
-    await page.cdpIn(session, 'Target.setAutoAttach', { ...params, filter: [{ type: 'iframe' }] })
-  } catch {
-    // An older protocol without filters: then everything it would attach, the handler only takes frames.
-    await page.cdpIn(session, 'Target.setAutoAttach', params).catch(() => undefined)
-  }
-}
-
-/** Chrome's network presets for DevTools (bytes per second, latency in ms). */
-const NETWORK_PRESETS: Record<BrowserNetworkPreset, { offline: boolean; latency: number; downloadThroughput: number; uploadThroughput: number }> = {
-  offline: { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 },
-  'slow-3g': { offline: false, latency: 2000, downloadThroughput: 50_000, uploadThroughput: 50_000 },
-  'fast-3g': { offline: false, latency: 562.5, downloadThroughput: 180_000, uploadThroughput: 84_375 },
-  'fast-4g': { offline: false, latency: 165, downloadThroughput: 1_012_500, uploadThroughput: 168_750 },
-}
-const NO_NETWORK_LIMIT = { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }
-
-/** Whether an emulation has the page pretend anything at all. */
-export function isEmulating(emulation: BrowserEmulation): boolean {
-  return (
-    emulation.colorScheme !== null ||
-    emulation.reducedMotion ||
-    emulation.network !== null ||
-    emulation.cpuSlowdown !== null ||
-    emulation.locale !== null ||
-    emulation.timezone !== null
-  )
-}
-
-/**
- * What the page pretends (null: nothing), in the page and in its frames in processes of their own
- * (`frameSessions`), which feel the network and the CPU apart from the page.
- */
-async function applyEmulation(page: PageDriver, emulation: BrowserEmulation | null, mobile: boolean, frameSessions: string[]): Promise<void> {
-  await page.cdp('Emulation.setEmulatedMedia', { features: mediaFeatures(emulation) })
-  await page.cdp('Emulation.setTimezoneOverride', { timezoneId: emulation?.timezone ?? '' }).catch((error: Error) => {
-    if (emulation?.timezone) throw new ToolError(`The time zone ${JSON.stringify(emulation.timezone)} is unknown: ${error.message}`)
-  })
-  // Another language replaces the last one only after it is gone.
-  await page.cdp('Emulation.setLocaleOverride', { locale: '' }).catch(() => undefined)
-  if (emulation?.locale) {
-    await page.cdp('Emulation.setLocaleOverride', { locale: emulation.locale }).catch((error: Error) => {
-      throw new ToolError(`The locale ${JSON.stringify(emulation.locale)} is unknown: ${error.message}`)
-    })
-  }
-  await setUserAgent(page, mobile, emulation?.locale ?? null)
-  await page.cdp('Network.emulateNetworkConditions', emulation?.network ? NETWORK_PRESETS[emulation.network] : NO_NETWORK_LIMIT)
-  await page.cdp('Emulation.setCPUThrottlingRate', { rate: emulation?.cpuSlowdown ?? 1 })
-  for (const session of frameSessions) await applyFrameEmulation(page, session, emulation, mobile)
-}
-
-/**
- * The emulation in a frame in a process of its own: the process has its own media, clock, language
- * and network. Each part on its own: a process has one time zone and language, which a frame in
- * the page's process (or another frame of its site) may have set already.
- */
-async function applyFrameEmulation(page: PageDriver, session: string, emulation: BrowserEmulation | null, mobile: boolean): Promise<void> {
-  const send = (method: string, params: Record<string, unknown>) => page.cdpIn(session, method, params).catch(() => undefined)
-  await send('Emulation.setEmulatedMedia', { features: mediaFeatures(emulation) })
-  await send('Emulation.setTimezoneOverride', { timezoneId: emulation?.timezone ?? '' })
-  await send('Emulation.setLocaleOverride', { locale: '' })
-  if (emulation?.locale) await send('Emulation.setLocaleOverride', { locale: emulation.locale })
-  await setUserAgent(page, mobile, emulation?.locale ?? null, session).catch(() => undefined)
-  await send('Network.emulateNetworkConditions', emulation?.network ? NETWORK_PRESETS[emulation.network] : NO_NETWORK_LIMIT)
-  await send('Emulation.setCPUThrottlingRate', { rate: emulation?.cpuSlowdown ?? 1 })
-}
-
-/** The media features of an emulation; empty values end an override. */
-function mediaFeatures(emulation: BrowserEmulation | null): { name: string; value: string }[] {
-  return [
-    { name: 'prefers-color-scheme', value: emulation?.colorScheme ?? '' },
-    { name: 'prefers-reduced-motion', value: emulation?.reducedMotion ? 'reduce' : '' },
-  ]
-}
-
-/** Waits until the page has the size `wanted`; for null, until it lost the size it had (`before`). */
-async function untilViewport(page: PageDriver, wanted: ViewportSize | null, before: BrowserViewport | null): Promise<void> {
-  const deadline = Date.now() + VIEWPORT_WAIT_MS
-  const near = (a: number, b: number) => Math.abs(a - b) <= 1
-  for (;;) {
-    const size = await page.viewportSize()
-    if (wanted ? near(size.width, wanted.width) && near(size.height, wanted.height) : !before || !near(size.width, before.width) || !near(size.height, before.height)) return
-    if (Date.now() > deadline) {
-      if (!wanted) return
-      throw new ToolError(`The page did not get the size ${wanted.width}×${wanted.height} (it has ${size.width}×${size.height}). Is the Claude Manager window open?`)
-    }
-    await delay(50)
   }
 }

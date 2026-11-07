@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { findRequest, isEmulating, type NetworkEntry } from './browser-control'
+import { findRequest, type NetworkEntry } from './network-log'
+import { isEmulating } from './page-emulation'
 
 function entry(change: Partial<NetworkEntry>): NetworkEntry {
   return {

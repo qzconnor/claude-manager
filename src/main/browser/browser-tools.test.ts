@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { bodyText, describeEmulation, formatBytes, formatMs, formatPerformance, headerLines, parseEmulation, type PerformanceReport } from './browser-tools'
+import { describeEmulation, parseEmulation } from './browser-tools/emulation-args'
+import { bodyText, formatBytes, headerLines } from './browser-tools/network-format'
+import { formatMs, formatPerformance, type PerformanceReport } from './browser-tools/performance'
 
 describe('parseEmulation', () => {
   it('takes only what is given', () => {

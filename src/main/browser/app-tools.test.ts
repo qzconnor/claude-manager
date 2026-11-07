@@ -2,22 +2,12 @@ import { EventEmitter } from 'node:events'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDefaultSettings } from '@shared/defaults'
 import type { Account, AccountUsage, ClaudeSettings, TerminalCreateOptions, TerminalInfo, TranscriptMessage, UsageWindow } from '@shared/types'
-import {
-  appInstructions,
-  appToolNames,
-  AppTools,
-  type AppToolsDeps,
-  enabledAppGroups,
-  formatLimits,
-  formatTranscript,
-  insideFolder,
-  localTime,
-  parseAppToolArgs,
-  relative,
-  shellName,
-  terminalText,
-  windowName,
-} from './app-tools'
+import { appInstructions, appToolNames, AppTools, enabledAppGroups, parseAppToolArgs } from './app-tools'
+import { formatLimits, windowName } from './app-tools/limits'
+import { formatTranscript, insideFolder } from './app-tools/sessions'
+import { shellName } from './app-tools/shells'
+import { terminalText } from './app-tools/terminal-text'
+import { type AppToolsDeps, localTime, relative } from './app-tools/tool'
 
 describe('terminalText', () => {
   it('drops colors, titles and modes', () => {
