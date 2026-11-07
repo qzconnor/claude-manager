@@ -198,6 +198,7 @@ const TREE = [
         keywords: 'MCP Werkzeuge Tools App',
         fields: [
           { id: 'claude.appContext', label: 'Claude kennt die App', keywords: 'Systemprompt Prompt Kontext Tokens sparen' },
+          { id: 'claude.hookState', label: 'Zustand über Hooks melden', keywords: 'Hooks Benachrichtigungen Status Werkzeug Subagents Infokarte' },
           { id: 'claude.limitsTool', label: 'Eigene Limits lesen', keywords: 'Usage Nutzung Rate Limit Account' },
           { id: 'claude.sessionsTool', label: 'Sessions durchsuchen', keywords: 'Verlauf Transcript Chatverlauf frühere' },
           { id: 'claude.shellTools', label: 'Shell-Tabs steuern', keywords: 'Terminal Befehle Dev-Server Ausgabe PowerShell' },

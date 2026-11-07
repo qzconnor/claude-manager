@@ -21,6 +21,7 @@ import type {
   TerminalInfo,
 } from '@shared/types'
 import { colorFgBg, colorSchemeReport, ColorSchemeUpdates } from '../lib/color-scheme'
+import { applyHookCall, newHookState, type HookCall, type HookState, type HookTurnEnd } from '../lib/hook-events'
 import { fallbackSessionFolder } from '../lib/session-folder'
 import {
   findTranscript,
@@ -59,6 +60,13 @@ const TURN_END_POLL_MS = 300
 const TURN_END_SETTLE_MS = 4500
 /** Without a clear end in the transcript the turn counts as done after this long. */
 const TURN_END_TIMEOUT_MS = 8000
+/**
+ * With hooks the end of a turn comes as an event, around the time the title turns idle. Without one
+ * after this long (the user pressed Esc, which ends no turn, or a hook failed) the transcript tells.
+ */
+const HOOK_END_GRACE_MS = 1500
+/** Changes the hooks report while Claude works (one tool after the other) go out together. */
+const HOOK_CHANGES_MS = 100
 /** Arguments with which Claude Code picks the session itself. */
 const SESSION_CHOICE_ARG_RE = /^(-c|--continue|-r|--resume|--session-id|--from-pr|--teleport)(=|$)/
 
@@ -129,12 +137,19 @@ interface TerminalRecord {
   colorScheme: ColorSchemeUpdates
   /** A view of the tab has had its output, and so answered the queries in it. */
   viewed: boolean
+  /** What the session's hooks told so far; null while none came (no hooks, see SessionHooks). */
+  hooks: HookState | null
 }
 
 /** Options other parts of the app give every session they start, e.g. the browser's MCP server. */
 export interface SessionArgsProvider {
   /** `extra`: the user's own arguments for the session, which come after these. */
   args(terminalId: string, extra: readonly string[]): string[]
+  /**
+   * Options that come after the user's own (before a `--` of theirs), for one that has to win over the
+   * same option of theirs: of an option given twice, Claude Code takes the last. `cwd`: the session's folder.
+   */
+  lastArgs?(terminalId: string, extra: readonly string[], cwd: string): string[]
   /** The session's process is gone: what `args` set up for it can go too. */
   release(terminalId: string): void
 }
@@ -159,6 +174,7 @@ export class TerminalService extends TypedEmitter<Events> {
   /** Whether the terminal theme is dark, as the window reports it; unknown until it does. */
   private dark: boolean | null = null
   private readonly sessionArgs: SessionArgsProvider[] = []
+  private changedTimer: NodeJS.Timeout | null = null
 
   constructor(
     private readonly accounts: AccountService,
@@ -252,7 +268,9 @@ export class TerminalService extends TypedEmitter<Events> {
       // Before the extra args: an option there that takes several values would swallow it.
       const prompt = options.prompt?.trim()
       if (prompt && mode === 'session') args.push(prompt)
-      args.push(...extra)
+      const last = providers.flatMap((provider) => provider.lastArgs?.(id, extra, cwd) ?? [])
+      const end = extra.indexOf('--')
+      args.push(...(end === -1 ? [...extra, ...last] : [...extra.slice(0, end), ...last, ...extra.slice(end)]))
     }
 
     const env = this.cli.baseEnv()
@@ -313,6 +331,10 @@ export class TerminalService extends TypedEmitter<Events> {
       createdAt: new Date().toISOString(),
       commandLine: command.display,
       worktree: null,
+      hooks: false,
+      activity: null,
+      subagents: 0,
+      compacting: false,
     }
     let markExited!: () => void
     const record = newRecord(info, defaultTitle, proc, new Promise((resolve) => (markExited = resolve)))
@@ -325,6 +347,9 @@ export class TerminalService extends TypedEmitter<Events> {
       record.info.status = 'exited'
       record.info.exitCode = exitCode
       record.info.busy = false
+      record.info.activity = null
+      record.info.subagents = 0
+      record.info.compacting = false
       for (const provider of providers) provider.release(id)
       markExited()
       this.emit('exit', id, exitCode)
@@ -369,6 +394,10 @@ export class TerminalService extends TypedEmitter<Events> {
       createdAt: new Date().toISOString(),
       commandLine: '',
       worktree: null,
+      hooks: false,
+      activity: null,
+      subagents: 0,
+      compacting: false,
     }
     this.add(newRecord(info, defaultTitle, null, Promise.resolve()), options)
     this.emitChanged()
@@ -506,6 +535,7 @@ export class TerminalService extends TypedEmitter<Events> {
 
   disposeAll(): void {
     clearInterval(this.trackTimer)
+    if (this.changedTimer) clearTimeout(this.changedTimer)
     for (const id of [...this.terminals.keys()]) this.close(id)
   }
 
@@ -632,16 +662,101 @@ export class TerminalService extends TypedEmitter<Events> {
       else record.busySince = Date.now()
       // A permission or question was answered (also through the API): it no longer waits.
       if (info.attention === 'input') info.attention = null
+    } else if (record.hooks?.ended) {
+      // The hooks told already how the turn ended, or that it waits for the user.
+      record.turnEnding = false
     } else {
       record.turnEnding = true
-      void this.reportTurnEnd(record, run)
+      void (record.hooks ? this.awaitHookEnd(record, run) : this.reportTurnEnd(record, run))
     }
     this.emitChanged()
   }
 
-  /** Tells once whether Claude Code is done, waits for the user or stopped at a limit. */
-  private async reportTurnEnd(record: TerminalRecord, run: number): Promise<void> {
+  /**
+   * An event from the session's hooks (see SessionHooks): its session, what runs, and the end of its
+   * turn or a wait for the user, right away. Once one came, the transcript is only read for an end
+   * the hooks don't tell (Esc) and for a limit.
+   */
+  applyHook(id: string, call: HookCall): void {
+    const record = this.terminals.get(id)
+    if (!record || record.info.mode !== 'session' || record.info.status !== 'running') return
+    const { info } = record
+    const { state, end } = applyHookCall(record.hooks ?? newHookState(), call, new Date().toISOString())
+    record.hooks = state
+    // The turn starts with the prompt; a short one may end before the title ever shows it.
+    if (call.event.kind === 'prompt' && !info.busy) record.busySince = Date.now()
+    let changed = !info.hooks
+    info.hooks = true
+    if (state.sessionId && state.sessionId !== info.sessionId) {
+      info.sessionId = state.sessionId
+      changed = true
+      // A new session (`/clear`): its title, worktree and limit.
+      this.trackSoon()
+    }
+    let soon = false
+    if (JSON.stringify(state.activity) !== JSON.stringify(info.activity)) {
+      info.activity = state.activity
+      soon = true
+    }
+    if (state.subagents.length !== info.subagents || state.compacting !== info.compacting) {
+      info.subagents = state.subagents.length
+      info.compacting = state.compacting
+      soon = true
+    }
+    if (end) this.endTurnByHook(record, end)
+    if (changed) this.emitChanged()
+    else if (soon) this.emitChangedSoon()
+  }
+
+  /** Tells the end of the turn (or the wait for the user) a hook reported; a lookup still running stops. */
+  private endTurnByHook(record: TerminalRecord, end: HookTurnEnd): void {
+    const run = ++record.turnEndRun
+    record.turnEnding = false
+    const since = record.busySince
+    const busyMs = since ? Date.now() - since : 0
+    if (end.kind !== 'limit') {
+      this.emit('turnEnded', record.info.id, { ...end, busyMs })
+      return
+    }
+    // When the limit resets is only in the transcript, which Claude Code writes a little later.
+    void this.reportLimit(record, run, end.detail, busyMs)
+  }
+
+  /** Waits until the transcript has the limit (for its reset time and the tab's notice), then tells it. */
+  private async reportLimit(record: TerminalRecord, run: number, message: string | null, busyMs: number): Promise<void> {
+    const start = Date.now()
+    const current = () => run === record.turnEndRun && record.info.status === 'running' && this.terminals.has(record.info.id)
+    while (current() && !record.info.limit && Date.now() - start < TURN_END_TIMEOUT_MS) {
+      await delay(TURN_END_POLL_MS)
+      try {
+        if (await this.trackSession(record)) this.emitChanged()
+      } catch {
+        // The transcript is being rewritten: look again.
+      }
+    }
+    if (!current()) return
+    this.emit('turnEnded', record.info.id, { kind: 'limit', tool: null, detail: record.info.limit?.message ?? message, busyMs })
+  }
+
+  /**
+   * The title turned idle, but no hook told the end yet: it may come a moment later. Without it, the
+   * turn was stopped (Esc ends no turn) or a hook failed, and the transcript tells which.
+   */
+  private async awaitHookEnd(record: TerminalRecord, run: number): Promise<void> {
     const idleAt = Date.now()
+    await delay(HOOK_END_GRACE_MS)
+    if (run !== record.turnEndRun) return
+    // Esc stops a running tool without telling (no PostToolUseFailure): nothing runs any more.
+    if (record.hooks?.activity) {
+      record.hooks = { ...record.hooks, activity: null }
+      record.info.activity = null
+      this.emitChanged()
+    }
+    await this.reportTurnEnd(record, run, idleAt)
+  }
+
+  /** Tells once whether Claude Code is done, waits for the user or stopped at a limit. */
+  private async reportTurnEnd(record: TerminalRecord, run: number, idleAt = Date.now()): Promise<void> {
     const since = record.busySince
     const current = () =>
       run === record.turnEndRun && !record.info.busy && record.info.status === 'running' && this.terminals.has(record.info.id)
@@ -763,7 +878,16 @@ export class TerminalService extends TypedEmitter<Events> {
   }
 
   private emitChanged(): void {
+    if (this.changedTimer) {
+      clearTimeout(this.changedTimer)
+      this.changedTimer = null
+    }
     this.emit('changed', this.list())
+  }
+
+  /** For changes that come many at a time, e.g. the tool that runs. */
+  private emitChangedSoon(): void {
+    this.changedTimer ??= setTimeout(() => this.emitChanged(), HOOK_CHANGES_MS)
   }
 }
 
@@ -814,6 +938,7 @@ function newRecord(info: TerminalInfo, defaultTitle: string, process: Pty.IPty |
     turnEndRun: 0,
     colorScheme: new ColorSchemeUpdates(),
     viewed: false,
+    hooks: null,
   }
 }
 

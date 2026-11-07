@@ -2,20 +2,25 @@
 import {
   BellDotIcon,
   BellOffIcon,
+  BotIcon,
   CircleStopIcon,
   FolderGit2Icon,
   FolderIcon,
   FolderOpenIcon,
   HardDriveIcon,
   PencilIcon,
+  ShrinkIcon,
   TagIcon,
   TriangleAlertIcon,
+  WrenchIcon,
 } from '@lucide/vue'
 import { computed } from 'vue'
 import type { Account, TerminalInfo } from '@shared/types'
 import AccountDot from '@/components/common/AccountDot.vue'
 import AccountIdentityLine from '@/components/common/AccountIdentityLine.vue'
 import { Button } from '@/components/ui/button'
+import { useClock } from '@/composables/useClock'
+import { activityDuration, activityLabel } from '@/lib/activity'
 import { attentionLook } from '@/lib/attention'
 import { accountKindLabel, formatReset } from '@/lib/format'
 import { fileManagerLabel } from '@/lib/platform'
@@ -43,6 +48,14 @@ const attention = computed(() =>
   props.terminal.attention && props.terminal.attention !== 'limit' ? attentionLook[props.terminal.attention] : null,
 )
 const folder = computed(() => props.terminal.cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? props.terminal.cwd)
+
+// What runs, as the session's hooks tell it. A tool only counts while Claude works: after a declined
+// permission it stays behind.
+const now = useClock(1000)
+const activity = computed(() => {
+  const running = props.terminal.busy ? props.terminal.activity : null
+  return running ? { ...activityLabel(running), duration: activityDuration(running.since, now.value) } : null
+})
 </script>
 
 <template>
@@ -120,6 +133,26 @@ const folder = computed(() => props.terminal.cwd.split(/[\\/]/).filter(Boolean).
       <div v-if="sessionAccount" class="flex gap-2 text-muted-foreground">
         <HardDriveIcon class="mt-px size-3.5 shrink-0" />
         <p class="min-w-0 flex-1">Session gespeichert bei „{{ sessionAccount.name }}“</p>
+      </div>
+
+      <div v-if="activity" class="flex items-center gap-2">
+        <WrenchIcon class="size-3.5 shrink-0 text-muted-foreground" />
+        <div class="min-w-0 flex-1">
+          <p class="truncate leading-4 font-medium">
+            {{ activity.label }}<span v-if="activity.duration" class="font-normal text-muted-foreground"> · {{ activity.duration }}</span>
+          </p>
+          <p v-if="activity.detail" class="line-clamp-2 break-all text-muted-foreground">{{ activity.detail }}</p>
+        </div>
+      </div>
+
+      <div v-if="terminal.subagents > 0" class="flex gap-2 text-muted-foreground">
+        <BotIcon class="mt-px size-3.5 shrink-0" />
+        <p class="min-w-0 flex-1">{{ terminal.subagents === 1 ? '1 Subagent läuft' : `${terminal.subagents} Subagents laufen` }}</p>
+      </div>
+
+      <div v-if="terminal.compacting" class="flex gap-2 text-muted-foreground">
+        <ShrinkIcon class="mt-px size-3.5 shrink-0" />
+        <p class="min-w-0 flex-1">Fasst den Verlauf zusammen …</p>
       </div>
 
       <div v-if="terminal.limit" class="flex gap-2 text-warning">

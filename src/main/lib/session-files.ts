@@ -253,7 +253,7 @@ export function turnOutcome(text: string, since: number): TurnOutcome {
 }
 
 /** What a tool call waiting for the user is about: the question, the plan's heading, the command or file. */
-function waitingDetail(tool: string, input: unknown): string {
+export function waitingDetail(tool: string, input: unknown): string {
   const i = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
   if (tool === 'AskUserQuestion' && Array.isArray(i.questions)) {
     const question = (i.questions[0] as { question?: unknown } | undefined)?.question

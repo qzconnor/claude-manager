@@ -31,6 +31,10 @@ const appContext = useSetting(
   (s) => s.claude.appContext,
   (appContext) => ({ claude: { appContext } }),
 )
+const hookState = useSetting(
+  (s) => s.claude.hookState,
+  (hookState) => ({ claude: { hookState } }),
+)
 const limitsTool = useSetting(
   (s) => s.claude.limitsTool,
   (limitsTool) => ({ claude: { limitsTool } }),
@@ -131,6 +135,14 @@ async function clearBrowserData() {
         description="Claude weiß, dass es in Claude Manager läuft, und versteht, was du mit „dem Tab“, „dem Browser daneben“ oder einer Einstellung meinst. Dafür hängt die App Claude Codes Systemprompt eine kurze Beschreibung an, etwa 400 Tokens pro Anfrage, meist aus dem Prompt-Cache."
       >
         <Switch id="app-context" v-model="appContext" />
+      </SettingField>
+      <SettingField
+        anchor="claude.hookState"
+        for="hook-state"
+        label="Zustand über Hooks melden"
+        description="Claude Code meldet der App über Hooks, wann eine Antwort fertig ist, wann Claude auf dich wartet und was gerade läuft. Benachrichtigungen kommen dadurch ohne Verzögerung, die Infokarte des Tabs zeigt Werkzeug und Subagents. Deine eigenen Hooks laufen weiter, keine Tokens. Aus: Die App liest den Zustand wie bisher aus dem Verlauf."
+      >
+        <Switch id="hook-state" v-model="hookState" />
       </SettingField>
       <SettingField
         anchor="claude.limitsTool"
