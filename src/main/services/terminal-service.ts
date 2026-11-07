@@ -20,6 +20,7 @@ import type {
   TerminalCreateOptions,
   TerminalInfo,
 } from '@shared/types'
+import { withdrawBootEntries, withdrawBootEntriesSync, type EndedLaunch } from '../lib/boot-canary'
 import { colorFgBg, colorSchemeReport, ColorSchemeUpdates } from '../lib/color-scheme'
 import { applyHookCall, newHookState, type HookCall, type HookState, type HookTurnEnd } from '../lib/hook-events'
 import { fallbackSessionFolder } from '../lib/session-folder'
@@ -115,7 +116,7 @@ interface TerminalRecord {
   /** Shown while the session has no title (and for shells and logins). */
   defaultTitle: string
   process: Pty.IPty | null
-  /** Resolves when the process has exited. */
+  /** Resolves when the process has exited and the app has cleaned up after it (see `withdrawBootEntry`). */
   exited: Promise<void>
   transcript: TrackedTranscript | null
   chunks: string[]
@@ -351,7 +352,8 @@ export class TerminalService extends TypedEmitter<Events> {
       record.info.subagents = 0
       record.info.compacting = false
       for (const provider of providers) provider.release(id)
-      markExited()
+      // A session started right after (account switch) must not find the entry any more.
+      void (record.killed && mode === 'session' ? this.withdrawBootEntry(info) : Promise.resolve()).then(markExited)
       this.emit('exit', id, exitCode)
       if (!record.killed && closesOnExit(this.settings.get().general.closeOnExit, exitCode)) this.close(id)
       else this.emitChanged()
@@ -536,7 +538,45 @@ export class TerminalService extends TypedEmitter<Events> {
   disposeAll(): void {
     clearInterval(this.trackTimer)
     if (this.changedTimer) clearTimeout(this.changedTimer)
+    const sessions = [...this.terminals.values()].filter((t) => t.process && t.info.mode === 'session').map((t) => t.info)
     for (const id of [...this.terminals.keys()]) this.close(id)
+    // The app quits before the processes have ended: their entries go now (see `withdrawBootEntry`).
+    const byConfig = new Map<string, EndedLaunch[]>()
+    for (const info of sessions) {
+      const file = this.configFile(info)
+      if (file) byConfig.set(file, [...(byConfig.get(file) ?? []), endedLaunch(info)])
+    }
+    for (const [file, launches] of byConfig) {
+      try {
+        withdrawBootEntriesSync(file, launches)
+      } catch (error) {
+        console.warn('[terminal] fullscreen start entries could not be removed', error)
+      }
+    }
+  }
+
+  /**
+   * The app ended the session hard, so Claude Code had no chance to take out its entry for a
+   * fullscreen start (see boot-canary). Ended in its first seconds, the next session would count it
+   * as a failed start and fall back to the classic renderer.
+   */
+  private async withdrawBootEntry(info: TerminalInfo): Promise<void> {
+    const file = this.configFile(info)
+    if (!file) return
+    try {
+      await withdrawBootEntries(file, [endedLaunch(info)])
+    } catch (error) {
+      console.warn('[terminal] fullscreen start entry could not be removed', error)
+    }
+  }
+
+  /** The global config of the session's account; null when the account is gone. */
+  private configFile(info: TerminalInfo): string | null {
+    try {
+      return this.accounts.paths(info.accountId).globalConfigFile
+    } catch {
+      return null
+    }
   }
 
   private trackSoon(): void {
@@ -892,6 +932,10 @@ export class TerminalService extends TypedEmitter<Events> {
 }
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+function endedLaunch(info: TerminalInfo): EndedLaunch {
+  return { pid: info.pid, startedAt: Date.parse(info.createdAt) }
+}
 
 /** A limit also ends at its reset time, even if the transcript doesn't change. */
 function currentLimit(limit: SessionLimit | null): SessionLimit | null {
