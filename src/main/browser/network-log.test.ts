@@ -26,6 +26,14 @@ describe('networkEvent with WebSockets', () => {
     expect(error).toBe('WebSocket: Invalid frame (ws://localhost:8080/live)')
   })
 
+  it('notes a canceled handshake on the socket but logs no line for it', () => {
+    const l = log()
+    networkEvent(l, 'Network.webSocketCreated', { requestId: 'W4', url: 'wss://x/_ws' }, undefined)
+    const line = networkEvent(l, 'Network.webSocketFrameError', { requestId: 'W4', errorMessage: 'WebSocket opening handshake was canceled' }, undefined)
+    expect(line).toBeNull()
+    expect([...l.network.values()][0].messages?.map((m) => m.data)).toEqual(['WebSocket opening handshake was canceled'])
+  })
+
   it('keeps the newest messages and counts all of them', () => {
     const l = log()
     networkEvent(l, 'Network.webSocketCreated', { requestId: 'W2', url: 'ws://x' }, undefined)
