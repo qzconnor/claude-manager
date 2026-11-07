@@ -196,6 +196,18 @@ export const schemas: Record<string, Schema> = {
     sessionId: { ...nullable(str), description: 'Claude-Code-Session, die gerade im Tab läuft' },
     limit: { ...nullable(ref('SessionLimit')), description: 'Gesetzt, solange die Session an einem Nutzungslimit steht' },
     busy: { type: 'boolean', description: 'Claude Code arbeitet gerade an einer Antwort (laut Fenstertitel)' },
+    hooks: {
+      type: 'boolean',
+      description:
+        'Claude Code meldet seinen Zustand über Hooks an die App (Einstellung „Zustand über Hooks melden“): Ende einer Antwort ' +
+        'und Rückfragen sofort, dazu activity, subagents und compacting. Sonst liest die App ihn aus Fenstertitel und Transcript',
+    },
+    activity: {
+      ...nullable(ref('TerminalActivity')),
+      description: 'Werkzeug, das Claude gerade ausführt (nur mit hooks). Gilt nur, solange busy gesetzt ist',
+    },
+    subagents: { type: 'integer', minimum: 0, description: 'Laufende Subagents der Session (nur mit hooks)' },
+    compacting: { type: 'boolean', description: 'Claude Code fasst gerade den Verlauf zusammen (nur mit hooks)' },
     attention: {
       ...nullable({ type: 'string', enum: ['done', 'input', 'limit'] }),
       description:
@@ -222,6 +234,11 @@ export const schemas: Record<string, Schema> = {
       ...nullable(ref('SessionWorktree')),
       description: 'Git-Worktree, in dem die Session arbeitet (claude --worktree); cwd bleibt der Startordner',
     },
+  }),
+  TerminalActivity: object({
+    tool: { type: 'string', description: 'z. B. Bash, Edit oder mcp__claude-manager__browser_click' },
+    detail: { ...nullable(str), description: 'Befehl, Datei, Suche … des Werkzeugs' },
+    since: dateTime,
   }),
   TerminalCreate: object(
     {

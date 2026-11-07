@@ -431,6 +431,27 @@ export interface TerminalInfo {
    * folder it was started in. Null for shells, browsers and sessions without one.
    */
   worktree: SessionWorktree | null
+  /**
+   * Claude Code tells the app its state through hooks (setting `claude.hookState`): the end of a turn
+   * and waits for the user right away, and what runs. Otherwise the app reads it from the window title
+   * and the transcript, and `activity`, `subagents` and `compacting` stay empty.
+   */
+  hooks: boolean
+  /** The tool Claude runs in the session's own turn. Only counts while `busy`: a declined permission leaves it. */
+  activity: TerminalActivity | null
+  /** Subagents that run for the session. */
+  subagents: number
+  /** Claude Code compacts the conversation (`/compact` or by itself). */
+  compacting: boolean
+}
+
+/** A tool Claude runs in a session, as Claude Code's hooks tell it (see `TerminalInfo.hooks`). */
+export interface TerminalActivity {
+  /** e.g. `Bash`, `Edit`, `mcp__claude-manager__browser_click` */
+  tool: string
+  /** What it runs on: the command, the file, the search … */
+  detail: string | null
+  since: string
 }
 
 /** A session that hit a limit went on with another account by itself (setting `claude.autoSwitch`). */
@@ -758,6 +779,11 @@ export interface ClaudeSettings {
    * Claude Code's system prompt (`--append-system-prompt-file`). Off saves its tokens.
    */
   appContext: boolean
+  /**
+   * Sessions the app starts tell it their state through Claude Code's hooks (`--settings`, HTTP hooks
+   * to the app): the end of a turn and waits for the user right away, the tool that runs, subagents.
+   */
+  hookState: boolean
   /** Sessions the app starts can read the limits of the account they run on (tool `limits`). */
   limitsTool: boolean
   /** Sessions the app starts can search and read the transcripts of earlier sessions (`sessions_search`, `session_read`). */

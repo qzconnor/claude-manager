@@ -27,6 +27,8 @@ import { NotificationService } from './services/notification-service'
 import { LoginProfiles } from './services/login-profiles'
 import { AutoSwitch } from './services/auto-switch'
 import { SessionHandoff } from './services/session-handoff'
+import { SessionHooks } from './services/session-hooks'
+import { SessionServer } from './services/session-server'
 import { SessionService } from './services/session-service'
 import { SettingsService } from './services/settings-service'
 import { TerminalRestore } from './services/terminal-restore'
@@ -81,12 +83,17 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   // Claude sessions learn that they run in the app, without the user seeing it (setting `appContext`).
   terminals.addSessionArgs(new AppContextPrompt(userDataDir, cli, settings))
   const browser = new BrowserControl(terminals)
-  // Claude sessions the app starts get the browser's MCP server: before the tabs are restored.
-  const browserMcp = new BrowserMcpServer(userDataDir, settings, new BrowserTools(browser), app.getVersion())
-  await browserMcp
-    .start()
-    .then(() => terminals.addSessionArgs(browserMcp))
-    .catch((error) => console.error('[browser-mcp] server could not start', error))
+  // Claude sessions the app starts reach the app over its server: the browser's MCP server and their
+  // hooks, before the tabs are restored. Without the server they start without both.
+  const sessionServer = new SessionServer()
+  await sessionServer.start().catch((error) => console.error('[session-server] server could not start', error))
+  const browserMcp = new BrowserMcpServer(sessionServer, userDataDir, settings, new BrowserTools(browser), app.getVersion())
+  browserMcp.init()
+  terminals.addSessionArgs(browserMcp)
+  // Sessions tell their state through Claude Code's hooks (setting `hookState`).
+  const sessionHooks = new SessionHooks(sessionServer, userDataDir, settings, (id, call) => terminals.applyHook(id, call))
+  sessionHooks.init()
+  terminals.addSessionArgs(sessionHooks)
   const sessions = new SessionService(accounts, indexer, terminals)
   sessions.init()
   const handoff = new SessionHandoff(accounts, sessions, terminals, settings)
@@ -330,6 +337,8 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     restore.dispose()
     terminals.disposeAll()
     browserMcp.dispose()
+    sessionHooks.dispose()
+    sessionServer.dispose()
     usage.dispose()
     git.dispose()
     sessions.dispose()

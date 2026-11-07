@@ -75,6 +75,13 @@ Jedes Terminal meldet außerdem `sessionId` (die Session, die gerade darin läuf
 
 `attention` zeigt, was im Tab passiert ist, seit er zuletzt in der App angezeigt wurde: `done` (Antwort fertig), `input` (Claude wartet auf eine Erlaubnis, eine Antwort oder die Freigabe eines Plans) oder `limit`, sonst `null`. `muted` ist gesetzt, wenn der Tab keine Benachrichtigungen schickt. Beides folgt den Einstellungen unter *Benachrichtigungen*; `muted` lässt sich beim Öffnen und per `PATCH` setzen.
 
+Mit `hooks: true` meldet Claude Code seinen Zustand über Hooks an die App (Einstellung *Zustand über Hooks melden* unter *Werkzeuge*). Das Ende einer Antwort und Rückfragen kommen dann ohne Verzögerung, und drei Felder sind zusätzlich gefüllt:
+- `activity`: das Werkzeug, das Claude gerade ausführt, mit `tool` (z. B. `Bash`), `detail` (Befehl, Datei …) und `since`. Es gilt nur, solange `busy` gesetzt ist.
+- `subagents`: die Zahl der laufenden Subagents.
+- `compacting`: Claude Code fasst gerade den Verlauf zusammen.
+
+Ohne Hooks liest die App den Zustand aus Fenstertitel und Transcript. `activity` bleibt dann `null`, `subagents` `0` und `compacting` `false`.
+
 Browser-Tabs der App stehen mit in der Liste, mit `mode: "browser"` und der angezeigten Adresse in `url` (bei Terminals `null`). Sie haben keinen Prozess, keinen Account und keinen Ordner: Eingaben, Ausgabe und `kill` bewirken bei ihnen nichts, umbenennen, aktivieren und schließen geht wie bei Terminals. Geöffnet werden sie in der App.
 
 ### Ausgabe lesen
