@@ -206,8 +206,11 @@ export function networkEvent(log: NetworkLog, method: string, params: Record<str
     case 'Network.webSocketFrameError': {
       const entry = findRequest(log.network, session, params.requestId as string)
       if (!entry) return null
-      addMessage(entry, { at: eventTime(entry, params.timestamp), direction: 'error', binary: false, data: String(params.errorMessage ?? 'error') })
-      return `WebSocket: ${String(params.errorMessage ?? 'error')} (${shortUrl(entry.url)})`
+      const message = String(params.errorMessage ?? 'error')
+      addMessage(entry, { at: eventTime(entry, params.timestamp), direction: 'error', binary: false, data: message })
+      // Closed by the page or left by a navigation before it was open: no failure, as with canceled requests.
+      if (/handshake was canceled/i.test(message)) return null
+      return `WebSocket: ${message} (${shortUrl(entry.url)})`
     }
     case 'Network.webSocketClosed': {
       const entry = findRequest(log.network, session, params.requestId as string)
