@@ -3,6 +3,7 @@ import {
   BellDotIcon,
   BellOffIcon,
   CircleStopIcon,
+  FolderGit2Icon,
   FolderIcon,
   FolderOpenIcon,
   HardDriveIcon,
@@ -104,6 +105,16 @@ const folder = computed(() => props.terminal.cwd.split(/[\\/]/).filter(Boolean).
         >
           <FolderOpenIcon class="size-3.5" />
         </Button>
+      </div>
+
+      <div v-if="terminal.worktree" class="flex items-center gap-2">
+        <FolderGit2Icon class="size-3.5 shrink-0 text-muted-foreground" />
+        <div class="min-w-0 flex-1">
+          <p class="truncate leading-4 font-medium">Worktree {{ terminal.worktree.name }}</p>
+          <p class="break-all text-muted-foreground">
+            <template v-if="terminal.worktree.branch">Branch {{ terminal.worktree.branch }} · </template>{{ terminal.worktree.path }}
+          </p>
+        </div>
       </div>
 
       <div v-if="sessionAccount" class="flex gap-2 text-muted-foreground">

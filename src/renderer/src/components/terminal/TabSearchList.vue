@@ -24,6 +24,7 @@ import { sessionKey, useSessionSearch } from '@/composables/useSessionSearch'
 import { useTerminalActions } from '@/composables/useTerminalActions'
 import { formatRelative, shortenPath } from '@/lib/format'
 import { containsTerms, searchText } from '@/lib/search'
+import { sessionFolder } from '@/lib/session-tree'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
 import { useAppStore } from '@/stores/app'
@@ -169,8 +170,8 @@ function tabDetails(row: TabRow): string {
 
 function sessionDetails(session: SessionSummary): string {
   return [
-    shortenPath(session.cwd, app.info?.homeDir),
-    session.gitBranch,
+    shortenPath(sessionFolder(session), app.info?.homeDir),
+    session.worktree ? `Worktree ${session.worktree.name}` : session.gitBranch,
     multipleAccounts.value ? accounts.get(session.accountId)?.name : null,
   ]
     .filter(Boolean)

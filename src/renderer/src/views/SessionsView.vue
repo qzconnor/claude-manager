@@ -177,7 +177,15 @@ function inSize(session: SessionSummary): boolean {
 function matches(session: SessionSummary): boolean {
   if (!inAge(session) || !inSize(session)) return false
   if (terms.value.length === 0 || hits.value.has(sessionKey(session.accountId, session.id))) return true
-  const text = searchText(session.title, session.firstPrompt, session.lastPrompt, session.cwd, session.gitBranch, session.id)
+  const text = searchText(
+    session.title,
+    session.firstPrompt,
+    session.lastPrompt,
+    session.cwd,
+    session.gitBranch,
+    session.worktree?.name,
+    session.id,
+  )
   return containsTerms(text, terms.value)
 }
 
@@ -374,6 +382,34 @@ function select(session: SessionSummary) {
 
 const list = ref<HTMLElement | null>(null)
 
+/** A folder shown from elsewhere stands out for a moment. */
+const highlightedProject = ref<string | null>(null)
+let highlightTimer: ReturnType<typeof setTimeout> | undefined
+
+// A folder in the dashboard: open it with its account and scroll to it, without search or filters.
+watch(
+  () => ui.folderToShow,
+  (target) => {
+    if (!target) return
+    ui.folderToShow = null
+    search.value = ''
+    resetFilters()
+    stopSelecting()
+    if (target.accountId === SYSTEM_ACCOUNT_ID) showStandard.value = true
+    const id = projectId(target.accountId, { cwd: target.path, worktree: null, projectKey: target.projectKey })
+    closedAccounts.value = toggled(closedAccounts.value, target.accountId, false)
+    openedProjects.value = toggled(openedProjects.value, id, true)
+    highlightedProject.value = id
+    clearTimeout(highlightTimer)
+    highlightTimer = setTimeout(() => (highlightedProject.value = null), 2000)
+    void (sessions.loaded ? Promise.resolve() : sessions.load()).then(
+      () => nextTick(() => list.value?.querySelector(`[data-project-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'start' })),
+      () => undefined,
+    )
+  },
+  { immediate: true },
+)
+
 // "Verlauf lesen" in the tab search: select the session and keep the search that found it.
 watch(
   () => ui.sessionToShow,
@@ -543,6 +579,7 @@ onActivated(() => {
             :terms="terms"
             :selecting="selecting"
             :checked="checked"
+            :highlighted="highlightedProject"
             @update:open="setAccountOpen(group.accountId, $event)"
             @open-project="setProjectOpen"
             @select="select"

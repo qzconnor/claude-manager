@@ -9,7 +9,7 @@ import { basename, join } from 'node:path'
 import { parentPort, workerData } from 'node:worker_threads'
 import { readJson, writeJsonAtomic } from '../lib/json-file'
 import { parseTranscript, readConversation, readToolCall, type ParsedSummary, type UsageEntry } from './transcript-parser'
-import type { IndexerRequest, IndexerResponse, IndexedSession, TokenStatsResult } from './indexer-protocol'
+import type { IndexerRequest, IndexerResponse, IndexedSession, TokenStatsResult, TokenTuple } from './indexer-protocol'
 import { SearchIndex } from './search-index'
 
 interface CacheEntry {
@@ -25,7 +25,8 @@ interface CacheFile {
 }
 
 // 3: `<synthetic>` replies no longer count as messages; summaries are parsed again once.
-const CACHE_VERSION = 3
+// 4: summaries know the worktree a session worked in.
+const CACHE_VERSION = 4
 const { cacheFile, searchCacheFile } = workerData as { cacheFile: string; searchCacheFile: string }
 let cache: Record<string, CacheEntry> = {}
 let cacheLoaded: Promise<void> | null = null
@@ -169,39 +170,61 @@ async function tokenStats(projectsDir: string, days: number): Promise<TokenStats
   const sinceDay = `${since.getFullYear()}-${pad(since.getMonth() + 1)}-${pad(since.getDate())}`
 
   const seen = new Set<string>()
-  const byDay = new Map<string, [number, number, number, number, number]>()
-  const byModel = new Map<string, [number, number, number, number, number]>()
-  const sessionIds = new Set<string>()
+  const byDay = new Map<string, TokenTuple>()
+  const byModel = new Map<string, TokenTuple>()
+  /** By session (`projectKey` + id), subagents included; the folder is looked up afterwards. */
+  const bySession = new Map<string, { projectKey: string; sessionId: string; tokens: TokenTuple }>()
 
   for (const file of files) {
     const result = await indexFile(file)
     if (!result) continue
-    let used = false
+    const sessionKey = `${file.projectKey}\n${file.sessionId}`
     for (const [key, day, model, input, output, cacheCreation, cacheRead] of result.entry.usage) {
       if (day < sinceDay || seen.has(key)) continue
       seen.add(key)
-      used = true
-      for (const [map, k] of [
-        [byDay, day],
-        [byModel, model],
-      ] as const) {
-        const acc = map.get(k) ?? [0, 0, 0, 0, 0]
+      let session = bySession.get(sessionKey)
+      if (!session) {
+        session = { projectKey: file.projectKey, sessionId: file.sessionId, tokens: [0, 0, 0, 0, 0] }
+        bySession.set(sessionKey, session)
+      }
+      for (const acc of [getOrAdd(byDay, day), getOrAdd(byModel, model), session.tokens]) {
         acc[0] += input
         acc[1] += output
         acc[2] += cacheCreation
         acc[3] += cacheRead
         acc[4] += 1
-        map.set(k, acc)
       }
     }
-    if (used) sessionIds.add(file.sessionId)
   }
+
+  // The session's own transcript tells the folder, also for the usage of its subagents.
+  const byFolder = new Map<string, { path: string | null; projectKey: string; tokens: TokenTuple; sessions: number }>()
+  for (const { projectKey, sessionId, tokens } of bySession.values()) {
+    const summary = cache[join(projectsDir, projectKey, `${sessionId}.jsonl`)]?.summary
+    const path = summary?.worktree?.originalCwd ?? summary?.cwd ?? null
+    const key = path ?? `#${projectKey}`
+    const folder = byFolder.get(key) ?? { path, projectKey, tokens: [0, 0, 0, 0, 0], sessions: 0 }
+    for (let i = 0; i < tokens.length; i++) folder.tokens[i]! += tokens[i]!
+    folder.sessions += 1
+    byFolder.set(key, folder)
+  }
+
   pruneCache()
   return {
     days: [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)),
     models: [...byModel.entries()].sort(([, a], [, b]) => b[1] + b[0] - (a[1] + a[0])),
-    sessionCount: sessionIds.size,
+    folders: [...byFolder.values()].map((f) => [f.path, f.projectKey, f.tokens, f.sessions]),
+    sessionCount: new Set([...bySession.values()].map((s) => s.sessionId)).size,
   }
+}
+
+function getOrAdd(map: Map<string, TokenTuple>, key: string): TokenTuple {
+  let acc = map.get(key)
+  if (!acc) {
+    acc = [0, 0, 0, 0, 0]
+    map.set(key, acc)
+  }
+  return acc
 }
 
 /** Drops cache entries of files that no longer exist (checked lazily, at most once a minute). */

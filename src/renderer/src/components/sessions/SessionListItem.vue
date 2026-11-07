@@ -3,6 +3,7 @@ import {
   ArrowRightLeftIcon,
   CheckIcon,
   CopyIcon,
+  FolderGit2Icon,
   FolderOpenIcon,
   GitBranchIcon,
   GitForkIcon,
@@ -32,6 +33,7 @@ import { useLauncher } from '@/composables/useLauncher'
 import { useSessionRemoval } from '@/composables/useSessionRemoval'
 import { attempt } from '@/lib/errors'
 import { formatBytes, formatRelative } from '@/lib/format'
+import { sessionFolder } from '@/lib/session-tree'
 import { cn } from '@/lib/utils'
 
 const props = defineProps<{
@@ -71,8 +73,15 @@ function onDoubleClick() {
 }
 
 function openFolder() {
-  if (props.session.cwd) void attempt(() => window.api.app.openPath(props.session.cwd!), 'Ordner konnte nicht geöffnet werden')
+  const folder = sessionFolder(props.session)
+  if (folder) void attempt(() => window.api.app.openPath(folder), 'Ordner konnte nicht geöffnet werden')
 }
+
+const worktreeTitle = computed(() => {
+  const worktree = props.session.worktree
+  if (!worktree) return ''
+  return [`Worktree ${worktree.name}`, worktree.branch && `Branch ${worktree.branch}`, worktree.path].filter(Boolean).join('\n')
+})
 
 async function copyId() {
   await navigator.clipboard.writeText(props.session.id)
@@ -127,7 +136,12 @@ async function copyId() {
           </div>
           <!-- The folder is the node above in the list. -->
           <ItemDescription class="flex min-w-0 items-center gap-2 text-xs">
-            <span v-if="session.gitBranch" class="flex min-w-0 items-center gap-1">
+            <!-- A worktree has a branch of its own: the name says enough, the rest is in the tooltip. -->
+            <span v-if="session.worktree" class="flex min-w-0 items-center gap-1" :title="worktreeTitle">
+              <FolderGit2Icon class="size-3 shrink-0" />
+              <span class="truncate">{{ session.worktree.name }}</span>
+            </span>
+            <span v-else-if="session.gitBranch" class="flex min-w-0 items-center gap-1">
               <GitBranchIcon class="size-3 shrink-0" />
               <span class="truncate">{{ session.gitBranch }}</span>
             </span>
@@ -170,7 +184,7 @@ async function copyId() {
       </ContextMenuGroup>
       <ContextMenuSeparator />
       <ContextMenuGroup>
-        <ContextMenuItem :disabled="!session.cwd" @select="openFolder">
+        <ContextMenuItem :disabled="!sessionFolder(session)" @select="openFolder">
           <FolderOpenIcon />
           Projektordner öffnen
         </ContextMenuItem>

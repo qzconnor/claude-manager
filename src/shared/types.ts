@@ -391,6 +391,11 @@ export interface TerminalInfo {
   createdAt: string
   /** Command line that was started (for display / debugging, secrets are never included). */
   commandLine: string
+  /**
+   * The session works in a git worktree Claude Code made for it (`--worktree`); `cwd` stays the
+   * folder it was started in. Null for shells, browsers and sessions without one.
+   */
+  worktree: SessionWorktree | null
 }
 
 /** A session that hit a limit went on with another account by itself (setting `claude.autoSwitch`). */
@@ -408,12 +413,26 @@ export interface AutoSwitchEvent {
 // Sessions (Claude Code transcripts)
 // ---------------------------------------------------------------------------
 
+/** A git worktree Claude Code made for a session (`claude --worktree`), as its transcript records it. */
+export interface SessionWorktree {
+  name: string
+  /** The worktree's branch, e.g. `worktree-<name>`. */
+  branch: string | null
+  /** The worktree's folder, usually `<repository>/.claude/worktrees/<name>`; gone once it was removed. */
+  path: string
+  /** The folder the session was started in: the checkout the worktree belongs to. */
+  originalCwd: string
+}
+
 export interface SessionSummary {
   id: string
   accountId: string
   /** Encoded project folder name under `<configDir>/projects`. */
   projectKey: string
+  /** Where the session ran; for a session in a worktree, the worktree's folder. */
   cwd: string | null
+  /** The latest worktree the session worked in; it belongs with `worktree.originalCwd`. */
+  worktree: SessionWorktree | null
   title: string
   firstPrompt: string | null
   lastPrompt: string | null
@@ -513,6 +532,20 @@ export interface UsageWindow {
   percent: number
   resetsAt: string | null
   severity: string | null
+  /** Where the window heads at the current pace; null or missing while that can't be told yet. */
+  forecast?: UsageForecast | null
+}
+
+/** Where a usage window heads at the current pace (see `src/shared/usage-forecast.ts`). */
+export interface UsageForecast {
+  /** When the window reaches 100 % at this pace; null when it lasts until the reset. */
+  exhaustsAt: string | null
+  /** The usage expected at the reset at this pace, in percent; can be over 100. */
+  atReset: number
+  /** Percentage points per hour. */
+  ratePerHour: number
+  /** The pace of the last while (`recent`), or the average since the window began (`window`). */
+  basis: 'recent' | 'window'
 }
 
 export interface ExtraUsage {
@@ -567,10 +600,21 @@ export interface ModelTokenStats extends TokenCounts {
   model: string
 }
 
+/** The usage of the sessions that ran in one folder; worktree sessions count for the folder they were started in. */
+export interface FolderTokenStats extends TokenCounts {
+  /** Null when no session of the folder records it. */
+  path: string | null
+  /** Claude Code's project folder name, for folders without a path. */
+  projectKey: string
+  sessionCount: number
+}
+
 export interface AccountTokenStats {
   accountId: string
   days: DailyTokenStats[]
   models: ModelTokenStats[]
+  /** Largest first (by `weightedTokens`). */
+  folders: FolderTokenStats[]
   totals: TokenCounts
   sessionCount: number
   computedAt: string
@@ -818,6 +862,17 @@ export interface GitBranch {
   name: string
   detached: boolean
 }
+
+/** Whether a session in `cwd` can get a worktree of its own (`claude --worktree`). */
+export type WorktreeCheck =
+  | {
+      ok: true
+      /** The repository's top folder; the worktrees lie in its `.claude\worktrees`. */
+      root: string
+      /** Names of the worktrees Claude Code made there before; one of them is entered again. */
+      existing: string[]
+    }
+  | { ok: false; reason: string }
 
 /** An in-app message box. The main process requests these too instead of native dialogs. */
 export interface DialogOptions {

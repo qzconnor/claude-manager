@@ -3,6 +3,7 @@ import {
   BellIcon,
   BellOffIcon,
   Columns2Icon,
+  FolderGit2Icon,
   FolderIcon,
   FolderOpenIcon,
   GaugeIcon,
@@ -125,6 +126,14 @@ function onCloseAutoFocus(event: Event) {
         <CommandItem value="new-session-folder" @select="run(() => launcher.newSessionInFolder())">
           <FolderOpenIcon />
           Neue Session in Ordner…
+        </CommandItem>
+        <CommandItem
+          value="new-session-worktree"
+          filter-text="Neue Session in Worktree git branch parallel"
+          @select="run(() => launcher.newSessionInWorktree(null, terminals.workingTerminal?.cwd || null))"
+        >
+          <FolderGit2Icon />
+          Neue Session in Worktree…
         </CommandItem>
         <CommandItem value="browser" @select="run(() => launcher.browser())">
           <GlobeIcon />

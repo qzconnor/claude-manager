@@ -1,5 +1,6 @@
 import { computed, toValue, type MaybeRefOrGetter } from 'vue'
 import { recentFolders, type FolderUse } from '@/lib/recent-folders'
+import { sessionFolder } from '@/lib/session-tree'
 import { useAccountsStore } from '@/stores/accounts'
 import { useAppStore } from '@/stores/app'
 import { useSessionsStore } from '@/stores/sessions'
@@ -30,7 +31,10 @@ export function useRecentFolders(limit: MaybeRefOrGetter<number>) {
       if (terminal.mode !== 'login' && terminal.mode !== 'browser') uses.push({ path: terminal.cwd, at: terminal.createdAt })
     }
     for (const group of sessions.groups) {
-      for (const session of group.sessions) if (session.cwd) uses.push({ path: session.cwd, at: session.updatedAt })
+      for (const session of group.sessions) {
+        const path = sessionFolder(session)
+        if (path) uses.push({ path, at: session.updatedAt })
+      }
     }
     const exclude = [
       ...accounts.accounts.map((account) => account.defaultCwd),

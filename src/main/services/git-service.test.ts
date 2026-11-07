@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GitBranch } from '@shared/types'
-import { GitService } from './git-service'
+import { claudeWorktrees, GitService } from './git-service'
 
 const HASH = '0123456789abcdef0123456789abcdef01234567'
 
@@ -122,5 +122,49 @@ describe('GitService.branch', () => {
     await writeFile(join(path, '.git', 'HEAD'), 'ref: refs/heads/next\n')
     await new Promise((resolve) => setTimeout(resolve, 400))
     expect(changes).toEqual([])
+  })
+})
+
+describe('worktreeCheck', () => {
+  it('needs a repository', async () => {
+    const plain = join(dir, 'plain')
+    await mkdir(plain)
+    expect(await service.worktreeCheck(plain)).toEqual({ ok: false, reason: 'Der Ordner liegt in keinem Git-Repository.' })
+  })
+
+  it('needs a commit to branch from', async () => {
+    const path = await repo()
+    expect(await service.worktreeCheck(path)).toMatchObject({ ok: false, reason: expect.stringContaining('keinen Commit') })
+  })
+
+  it("names the root and the worktrees Claude Code made there", async () => {
+    const path = await repo()
+    await writeFile(join(path, 'a.txt'), 'a')
+    git(path, 'add', '.')
+    git(path, 'commit', '-qm', 'init')
+    git(path, 'worktree', 'add', '-q', '-b', 'worktree-login', join(path, '.claude', 'worktrees', 'login'))
+    git(path, 'worktree', 'add', '-q', '-b', 'elsewhere', join(dir, 'elsewhere'))
+    const check = await service.worktreeCheck(join(path, '.claude'))
+    expect(check).toMatchObject({ ok: true, existing: ['login'] })
+    const same = (p: string) => p.replaceAll('\\', '/').toLowerCase()
+    expect(check.ok && same(check.root)).toBe(same(path))
+  })
+})
+
+describe('claudeWorktrees', () => {
+  it('picks the worktrees under .claude/worktrees', () => {
+    const porcelain = [
+      'worktree F:/Code/app',
+      'HEAD 0123',
+      'branch refs/heads/main',
+      '',
+      'worktree F:/Code/app/.claude/worktrees/login-fix',
+      'HEAD 4567',
+      'branch refs/heads/worktree-login-fix',
+      'locked',
+      '',
+      'worktree F:/Code/other',
+    ].join('\n')
+    expect(claudeWorktrees(porcelain)).toEqual(['login-fix'])
   })
 })

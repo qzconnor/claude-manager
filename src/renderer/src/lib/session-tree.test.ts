@@ -10,6 +10,7 @@ function session(id: string, patch: Partial<SessionSummary> = {}): SessionSummar
     accountId: 'a',
     projectKey: 'C--Users-me',
     cwd: HOME,
+    worktree: null,
     title: id,
     firstPrompt: null,
     lastPrompt: null,
@@ -66,6 +67,25 @@ describe('groupByProject', () => {
     expect(project).toMatchObject({ name: 'Downloads', parent: '~' })
   })
 
+  it('puts a session in a worktree under the folder it was started in', () => {
+    const worktree = {
+      name: 'login',
+      branch: 'worktree-login',
+      path: `${app}\\.claude\\worktrees\\login`,
+      originalCwd: app,
+    }
+    const projects = groupByProject(
+      'a',
+      [
+        session('in-worktree', { cwd: worktree.path, worktree, updatedAt: '2026-11-03T08:00:00.000Z' }),
+        session('plain', { cwd: app, updatedAt: '2026-11-01T08:00:00.000Z' }),
+      ],
+      'recent',
+      HOME,
+    )
+    expect(projects.map((p) => [p.path, p.sessions.map((s) => s.id)])).toEqual([[app, ['in-worktree', 'plain']]])
+  })
+
   it('groups sessions without a folder by their project key', () => {
     const projects = groupByProject(
       'a',
@@ -100,6 +120,6 @@ describe('groupByProject', () => {
 
 describe('projectId', () => {
   it('differs between accounts', () => {
-    expect(projectId('a', { cwd: app, projectKey: 'k' })).not.toBe(projectId('b', { cwd: app, projectKey: 'k' }))
+    expect(projectId('a', { cwd: app, worktree: null, projectKey: 'k' })).not.toBe(projectId('b', { cwd: app, worktree: null, projectKey: 'k' }))
   })
 })

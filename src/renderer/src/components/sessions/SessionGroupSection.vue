@@ -33,6 +33,8 @@ const props = defineProps<{
   /** Selection mode: the checked sessions by `sessionKey`. */
   selecting?: boolean
   checked?: Set<string>
+  /** A folder shown from elsewhere, by id: it stands out for a moment. */
+  highlighted?: string | null
 }>()
 const emit = defineEmits<{
   'update:open': [open: boolean]
@@ -87,6 +89,7 @@ const account = computed(() => accounts.get(props.accountId))
         :terms="terms"
         :selecting="selecting"
         :checked="checked"
+        :highlighted="highlighted === project.id"
         @update:open="emit('openProject', project, $event)"
         @select="emit('select', $event)"
         @toggle="(session, range) => emit('toggle', session, range)"

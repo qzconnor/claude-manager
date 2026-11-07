@@ -19,6 +19,7 @@ import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { toastError } from '@/lib/errors'
 import { formatDateTime, formatNumber, formatTokens } from '@/lib/format'
 import { useUsageStore } from '@/stores/usage'
+import FolderUsageCard from './FolderUsageCard.vue'
 import StatTile from './StatTile.vue'
 import TokenChart from './TokenChart.vue'
 
@@ -146,5 +147,7 @@ function shortModel(model: string): string {
         </CardContent>
       </Card>
     </div>
+
+    <FolderUsageCard :stats="stats" :loading="loading" :days="days" />
   </section>
 </template>

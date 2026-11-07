@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import type { UsageWindow } from '@shared/types'
 import { Progress } from '@/components/ui/progress'
 import { formatReset } from '@/lib/format'
-import { clampPercent, usageFillClass, usageLevel, usageTextClass, windowIdle } from '@/lib/usage'
+import { clampPercent, forecastHint, usageFillClass, usageLevel, usageTextClass, windowIdle } from '@/lib/usage'
 import { cn } from '@/lib/utils'
 import { useClock } from '@/composables/useClock'
 
@@ -16,6 +16,7 @@ const props = defineProps<{
 const now = useClock(30_000)
 const percent = computed(() => clampPercent(props.window.percent))
 const level = computed(() => usageLevel(percent.value))
+const hint = computed(() => forecastHint(props.window, now.value))
 const reset = computed(() =>
   windowIdle(props.window) ? 'Beginnt mit der nächsten Nachricht' : `Reset ${formatReset(props.window.resetsAt, now.value)}`,
 )
@@ -41,6 +42,16 @@ const reset = computed(() =>
       :model-value="percent"
       :class="cn(compact ? 'h-1' : 'h-2', usageFillClass[level])"
     />
-    <span class="text-xs text-muted-foreground">{{ reset }}</span>
+    <!-- Where the room runs short, the forecast goes to a line of its own. -->
+    <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+      <span>{{ reset }}</span>
+      <span
+        v-if="hint"
+        :title="hint.title"
+        :class="cn('shrink-0 tabular-nums', hint.warn && cn('font-medium', usageTextClass.high))"
+      >
+        {{ hint.text }}
+      </span>
+    </div>
   </div>
 </template>

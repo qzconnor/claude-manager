@@ -58,12 +58,32 @@ export const schemas: Record<string, Schema> = {
       description: 'Wer sich hier anmelden soll, z. B. nach dem Import aus cswap',
     },
   }),
-  UsageWindow: object({
-    key: str,
-    label: str,
-    percent: { type: 'number', minimum: 0, maximum: 100 },
-    resetsAt: nullable(dateTime),
-    severity: nullable(str),
+  UsageWindow: object(
+    {
+      key: str,
+      label: str,
+      percent: { type: 'number', minimum: 0, maximum: 100 },
+      resetsAt: nullable(dateTime),
+      severity: nullable(str),
+      forecast: {
+        ...nullable(ref('UsageForecast')),
+        description: 'Wohin das Fenster beim jetzigen Tempo läuft; fehlt oder null, solange sich das nicht sagen lässt',
+      },
+    },
+    ['key', 'label', 'percent', 'resetsAt', 'severity'],
+  ),
+  UsageForecast: object({
+    exhaustsAt: {
+      ...nullable(dateTime),
+      description: 'Wann das Limit beim jetzigen Tempo erreicht ist; null, wenn es bis zum Reset reicht',
+    },
+    atReset: { type: 'number', description: 'Erwartete Auslastung zum Reset in Prozent, kann über 100 liegen' },
+    ratePerHour: { type: 'number', description: 'Prozentpunkte pro Stunde' },
+    basis: {
+      type: 'string',
+      enum: ['recent', 'window'],
+      description: 'recent = Tempo der letzten Zeit (5-Stunden-Fenster: 1 Stunde, Woche: 1 Tag), window = Schnitt seit Beginn des Fensters',
+    },
   }),
   ExtraUsage: object({
     enabled: bool,
@@ -95,15 +115,38 @@ export const schemas: Record<string, Schema> = {
       allOf: [ref('TokenCounts'), object({ date: { type: 'string', format: 'date' } })],
     }),
     models: arrayOf({ allOf: [ref('TokenCounts'), object({ model: str })] }),
+    folders: {
+      ...arrayOf({
+        allOf: [
+          ref('TokenCounts'),
+          object({
+            path: { ...nullable(str), description: 'Ordner, in dem die Sessions liefen; Worktree-Sessions zählen zu ihrem Repository' },
+            projectKey: str,
+            sessionCount: int,
+          }),
+        ],
+      }),
+      description: 'Nach Ordner, der größte Verbrauch zuerst (Tokens nach API-Preisen gewichtet)',
+    },
     totals: ref('TokenCounts'),
     sessionCount: int,
     computedAt: dateTime,
+  }),
+  SessionWorktree: object({
+    name: str,
+    branch: nullable(str),
+    path: { type: 'string', description: 'Ordner des Worktrees; existiert nicht mehr, wenn er entfernt wurde' },
+    originalCwd: { type: 'string', description: 'Ordner, in dem die Session gestartet wurde' },
   }),
   SessionSummary: object({
     id: { type: 'string', format: 'uuid' },
     accountId: str,
     projectKey: str,
     cwd: nullable(str),
+    worktree: {
+      ...nullable(ref('SessionWorktree')),
+      description: 'Git-Worktree, den Claude Code für die Session angelegt hat (claude --worktree)',
+    },
     title: str,
     firstPrompt: nullable(str),
     lastPrompt: nullable(str),
@@ -175,6 +218,10 @@ export const schemas: Record<string, Schema> = {
     pid: int,
     createdAt: dateTime,
     commandLine: str,
+    worktree: {
+      ...nullable(ref('SessionWorktree')),
+      description: 'Git-Worktree, in dem die Session arbeitet (claude --worktree); cwd bleibt der Startordner',
+    },
   }),
   TerminalCreate: object(
     {

@@ -314,6 +314,7 @@ export function registerIpc(ctx: AppContext): void {
 
   // --- git -----------------------------------------------------------------
   ipcMain.handle(IpcInvoke.gitBranch, (_e, cwd: unknown) => ctx.git.branch(requireString(cwd, 'cwd')))
+  ipcMain.handle(IpcInvoke.gitWorktreeCheck, (_e, cwd: unknown) => ctx.git.worktreeCheck(requireString(cwd, 'cwd')))
   ctx.git.on('changed', (cwd, branch) => broadcast(IpcEvent.gitBranchChanged, cwd, branch))
 
   // --- `cm` command --------------------------------------------------------

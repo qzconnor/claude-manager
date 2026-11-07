@@ -13,8 +13,11 @@ const route = useRoute()
 const app = useAppStore()
 const terminals = useTerminalsStore()
 
-/** Only while the terminals are shown, like the selected tab. */
-const cwd = computed(() => (route.name === 'terminals' ? terminals.workingTerminal?.cwd || null : null))
+/** Only while the terminals are shown, like the selected tab. A session in a worktree works in its folder. */
+const cwd = computed(() => {
+  const terminal = route.name === 'terminals' ? terminals.workingTerminal : null
+  return terminal?.worktree?.path || terminal?.cwd || null
+})
 const branch = ref<GitBranch | null>(null)
 
 // Answers for a tab that is no longer active are dropped.

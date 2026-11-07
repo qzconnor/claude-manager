@@ -221,7 +221,9 @@ async function closeOthers() {
 }
 
 function openFolder() {
-  void attempt(() => window.api.app.openPath(terminal.value.cwd), 'Ordner konnte nicht geöffnet werden')
+  // A session in a worktree works in the worktree's folder.
+  const path = terminal.value.worktree?.path ?? terminal.value.cwd
+  void attempt(() => window.api.app.openPath(path), 'Ordner konnte nicht geöffnet werden')
 }
 </script>
 

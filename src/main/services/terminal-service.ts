@@ -15,6 +15,7 @@ import type {
   PaneNode,
   PaneSplit,
   SessionLimit,
+  SessionWorktree,
   SplitDirection,
   TerminalCreateOptions,
   TerminalInfo,
@@ -24,13 +25,14 @@ import { fallbackSessionFolder } from '../lib/session-folder'
 import {
   findTranscript,
   newTitleScan,
-  readLiveSessionId,
+  readLiveSession,
   readSessionLimit,
   readSessionTitles,
   readTurnOutcome,
   scannedTitle,
   SESSION_ID_RE,
   type TitleScan,
+  worktreeAt,
 } from '../lib/session-files'
 import { claudeActivity, TitleReader } from '../lib/terminal-title'
 import { TypedEmitter } from '../lib/typed-emitter'
@@ -310,6 +312,7 @@ export class TerminalService extends TypedEmitter<Events> {
       pid: proc.pid,
       createdAt: new Date().toISOString(),
       commandLine: command.display,
+      worktree: null,
     }
     let markExited!: () => void
     const record = newRecord(info, defaultTitle, proc, new Promise((resolve) => (markExited = resolve)))
@@ -365,6 +368,7 @@ export class TerminalService extends TypedEmitter<Events> {
       pid: 0,
       createdAt: new Date().toISOString(),
       commandLine: '',
+      worktree: null,
     }
     this.add(newRecord(info, defaultTitle, null, Promise.resolve()), options)
     this.emitChanged()
@@ -538,16 +542,21 @@ export class TerminalService extends TypedEmitter<Events> {
     } catch {
       return false
     }
-    const live = await readLiveSessionId(paths.sessionsDir, info.pid, Date.parse(info.createdAt))
+    const live = await readLiveSession(paths.sessionsDir, info.pid, Date.parse(info.createdAt))
     let changed = false
-    if (live && live !== info.sessionId) {
-      info.sessionId = live
+    if (live && live.sessionId !== info.sessionId) {
+      info.sessionId = live.sessionId
       changed = true
     }
     const transcript = info.sessionId ? await this.readTranscript(record, paths.projectsDir, info.sessionId) : null
     const limit = transcript ? currentLimit(transcript.limit) : null
     if (JSON.stringify(limit) !== JSON.stringify(info.limit)) {
       info.limit = limit
+      changed = true
+    }
+    const worktree = currentWorktree(transcript?.titles.worktree, live?.cwd ?? null, info.cwd, info.worktree)
+    if (JSON.stringify(worktree) !== JSON.stringify(info.worktree)) {
+      info.worktree = worktree
       changed = true
     }
     return followTitle(info, this.autoTitle(record)) || changed
@@ -764,6 +773,22 @@ const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 function currentLimit(limit: SessionLimit | null): SessionLimit | null {
   const resetsAt = limit?.resetsAt ? Date.parse(limit.resetsAt) : null
   return resetsAt !== null && resetsAt <= Date.now() ? null : limit
+}
+
+/**
+ * The worktree a session works in. The transcript knows it with its branch, but only once the first
+ * prompt is written; until then the folder from `sessions/<pid>.json` tells it. Without either (e.g.
+ * just after `/clear` with an older Claude Code) the tab keeps what it had.
+ */
+function currentWorktree(
+  scanned: SessionWorktree | null | undefined,
+  liveCwd: string | null,
+  startCwd: string,
+  previous: SessionWorktree | null,
+): SessionWorktree | null {
+  if (scanned) return scanned
+  if (liveCwd) return worktreeAt(liveCwd, startCwd)
+  return scanned === undefined ? previous : null
 }
 
 function closesOnExit(setting: CloseOnExit, exitCode: number): boolean {

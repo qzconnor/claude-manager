@@ -22,9 +22,18 @@ export interface SessionProject {
   sizeBytes: number
 }
 
+/**
+ * The folder a session belongs to: where it ran, for a session in a worktree (`claude --worktree`)
+ * the folder it was started in. Null when the session doesn't record it.
+ */
+export function sessionFolder(session: Pick<SessionSummary, 'cwd' | 'worktree'>): string | null {
+  return session.worktree?.originalCwd.trim() || session.cwd?.trim() || null
+}
+
 /** Folders compare by `folderKey`, so `F:\Code` and `f:\code\` are one; without a folder, by Claude's project key. */
-export function projectId(accountId: string, session: Pick<SessionSummary, 'cwd' | 'projectKey'>): string {
-  const folder = session.cwd?.trim() ? folderKey(session.cwd) : `#${session.projectKey}`
+export function projectId(accountId: string, session: Pick<SessionSummary, 'cwd' | 'worktree' | 'projectKey'>): string {
+  const path = sessionFolder(session)
+  const folder = path ? folderKey(path) : `#${session.projectKey}`
   return `${accountId}\n${folder}`
 }
 
@@ -32,7 +41,8 @@ const byName = new Intl.Collator('de', { sensitivity: 'base', numeric: true })
 
 const newestFirst = (a: { updatedAt: string }, b: { updatedAt: string }) => b.updatedAt.localeCompare(a.updatedAt)
 
-function describe(path: string | null, projectKey: string, home?: string | null): { name: string; parent: string } {
+/** How the list names a folder: its last part, and where it lies (shortened with `~`). */
+export function describeFolder(path: string | null, projectKey: string, home?: string | null): { name: string; parent: string } {
   if (!path) return { name: 'Unbekannter Ordner', parent: projectKey }
   const short = shortenPath(path, home)
   if (short === '~') return { name: '~', parent: path }
@@ -62,12 +72,12 @@ export function groupByProject(
     list.sort(newestFirst)
     const newest = list[0]!
     // The newest session spells the folder as it is now, e.g. after renaming its case.
-    const path = list.find((s) => s.cwd?.trim())?.cwd?.trim() ?? null
+    const path = list.map(sessionFolder).find((p) => p !== null) ?? null
     return {
       id,
       accountId,
       path,
-      ...describe(path, newest.projectKey, home),
+      ...describeFolder(path, newest.projectKey, home),
       sessions: sort === 'size' ? [...list].sort((a, b) => b.sizeBytes - a.sizeBytes || newestFirst(a, b)) : list,
       updatedAt: newest.updatedAt,
       sizeBytes: list.reduce((sum, s) => sum + s.sizeBytes, 0),

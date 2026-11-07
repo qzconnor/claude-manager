@@ -20,10 +20,18 @@ export interface IndexedSession extends ParsedSummary {
   fileUpdatedAt: string
 }
 
-/** Aggregates as tuples: [input, output, cacheCreation, cacheRead, messages] */
+/** [input, output, cacheCreation, cacheRead, messages] */
+export type TokenTuple = [number, number, number, number, number]
+
+/** Aggregates as tuples (see `TokenTuple`). */
 export interface TokenStatsResult {
-  days: [string, [number, number, number, number, number]][]
-  models: [string, [number, number, number, number, number]][]
+  days: [string, TokenTuple][]
+  models: [string, TokenTuple][]
+  /**
+   * By the folder the sessions ran in (`null` when unknown), with Claude's project folder name and the
+   * number of sessions. A worktree session counts for the folder it was started in.
+   */
+  folders: [string | null, string, TokenTuple, number][]
   sessionCount: number
 }
 

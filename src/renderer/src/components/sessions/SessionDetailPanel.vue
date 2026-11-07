@@ -4,6 +4,7 @@ import {
   ChevronDownIcon,
   CopyIcon,
   CpuIcon,
+  FolderGit2Icon,
   FolderIcon,
   FolderOpenIcon,
   GitBranchIcon,
@@ -13,7 +14,7 @@ import {
   Trash2Icon,
   TriangleAlertIcon,
 } from '@lucide/vue'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { toast } from 'vue-sonner'
 import type { SessionDetail, SessionSummary } from '@shared/types'
 import AccountBadge from '@/components/common/AccountBadge.vue'
@@ -37,6 +38,7 @@ import { useLauncher } from '@/composables/useLauncher'
 import { useSessionRemoval } from '@/composables/useSessionRemoval'
 import { attempt } from '@/lib/errors'
 import { formatBytes, formatDateTime, shortenPath } from '@/lib/format'
+import { sessionFolder } from '@/lib/session-tree'
 import { useAppStore } from '@/stores/app'
 import TranscriptView from './TranscriptView.vue'
 
@@ -53,8 +55,11 @@ const accountSwitch = useAccountSwitch()
 const removal = useSessionRemoval()
 const choicesOpen = ref(false)
 
+/** The project's folder: for a session in a worktree, the folder it was started in. */
+const folder = computed(() => sessionFolder(props.summary))
+
 function openFolder() {
-  if (props.summary.cwd) void attempt(() => window.api.app.openPath(props.summary.cwd!), 'Ordner konnte nicht geöffnet werden')
+  if (folder.value) void attempt(() => window.api.app.openPath(folder.value!), 'Ordner konnte nicht geöffnet werden')
 }
 
 async function copyId() {
@@ -71,9 +76,17 @@ async function copyId() {
           <h2 class="selectable font-heading text-base leading-snug font-semibold">{{ summary.title }}</h2>
           <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <AccountBadge :account-id="summary.accountId" />
-            <span v-if="summary.cwd" class="flex min-w-0 items-center gap-1" :title="summary.cwd">
+            <span v-if="folder" class="flex min-w-0 items-center gap-1" :title="folder">
               <FolderIcon class="size-3.5 shrink-0" />
-              <span class="selectable truncate font-mono">{{ shortenPath(summary.cwd, app.info?.homeDir) }}</span>
+              <span class="selectable truncate font-mono">{{ shortenPath(folder, app.info?.homeDir) }}</span>
+            </span>
+            <span
+              v-if="summary.worktree"
+              class="flex min-w-0 items-center gap-1"
+              :title="`Worktree in ${summary.worktree.path}`"
+            >
+              <FolderGit2Icon class="size-3.5 shrink-0" />
+              <span class="selectable truncate">Worktree {{ summary.worktree.name }}</span>
             </span>
             <span v-if="summary.gitBranch" class="flex items-center gap-1">
               <GitBranchIcon class="size-3.5" />
@@ -106,7 +119,7 @@ async function copyId() {
             </Tooltip>
             <Tooltip>
               <TooltipTrigger as-child>
-                <Button variant="outline" size="icon-sm" aria-label="Projektordner öffnen" :disabled="!summary.cwd" @click="openFolder">
+                <Button variant="outline" size="icon-sm" aria-label="Projektordner öffnen" :disabled="!folder" @click="openFolder">
                   <FolderOpenIcon />
                 </Button>
               </TooltipTrigger>

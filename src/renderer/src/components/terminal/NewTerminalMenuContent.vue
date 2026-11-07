@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  FolderGit2Icon,
   FolderIcon,
   FolderOpenIcon,
   GlobeIcon,
@@ -103,6 +104,10 @@ function onFolderKey(event: KeyboardEvent, path: string) {
               <DropdownMenuShortcut v-if="account.id === launcher.defaultAccountId()">Standard</DropdownMenuShortcut>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
+            <DropdownMenuItem @select="launcher.newSessionInWorktree(null, folder.path)">
+              <FolderGit2Icon />
+              In neuem Worktree…
+            </DropdownMenuItem>
             <DropdownMenuItem @select="launcher.shell(launcher.defaultAccountId(), folder.path)">
               <SquareTerminalIcon />
               {{ shellLabel }} hier öffnen

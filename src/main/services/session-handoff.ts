@@ -95,7 +95,10 @@ export class SessionHandoff extends TypedEmitter<Events> {
     const [group] = await this.sessions.list(accountId)
     const session = group?.sessions.find((s) => s.id === sessionId)
     if (!session) throw new Error('Session nicht gefunden.')
-    const options = await this.prepare(accountId, sessionId, session.cwd, this.accounts.get(targetId))
+    // A worktree session goes on from the folder it was started in: Claude Code enters the worktree
+    // again, or carries on without it once it was removed.
+    const cwd = session.worktree?.originalCwd ?? session.cwd
+    const options = await this.prepare(accountId, sessionId, cwd, this.accounts.get(targetId))
     return this.terminals.open(options)
   }
 

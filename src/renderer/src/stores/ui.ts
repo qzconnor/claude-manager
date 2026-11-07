@@ -26,6 +26,10 @@ export const useUiStore = defineStore('ui', () => {
   const focusTerminalRequest = ref(0)
   /** A session the sessions page should select, with the search that found it. */
   const sessionToShow = ref<(SessionRef & { query: string }) | null>(null)
+  /** A folder of an account the sessions page should open and scroll to. */
+  const folderToShow = ref<{ accountId: string; path: string | null; projectKey: string } | null>(null)
+  /** Asks for a worktree name before a session starts in one (`WorktreeDialog`); `cwd` null asks for the folder too. */
+  const worktreeRequest = ref<{ accountId: string; cwd: string | null } | null>(null)
   /**
    * Left and right edge (viewport px) of the selected tab in the title bar, as far as it is visible.
    * The page below opens its top border there, so the tab merges into it.
@@ -60,6 +64,8 @@ export const useUiStore = defineStore('ui', () => {
     settingsSearchRequest,
     focusTerminalRequest,
     sessionToShow,
+    folderToShow,
+    worktreeRequest,
     selectedTabEdges,
     draggingTab,
     tabDock,

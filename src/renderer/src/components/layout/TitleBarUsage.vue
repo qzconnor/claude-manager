@@ -15,7 +15,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { useClock } from '@/composables/useClock'
 import { attempt } from '@/lib/errors'
 import { formatRelative, identityLabel, planLabel } from '@/lib/format'
-import { clampPercent, usageFillClass, usageLevel } from '@/lib/usage'
+import { clampPercent, forecastHint, usageFillClass, usageLevel, usageTextClass } from '@/lib/usage'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
 import { useTerminalsStore } from '@/stores/terminals'
@@ -38,15 +38,26 @@ const account = computed(() => {
 })
 const usage = computed(() => (account.value ? usageStore.byAccount.get(account.value.id) : undefined))
 const summary = computed(() => {
-  const items: { key: string; short: string; percent: number }[] = []
+  const items: { key: string; short: string; percent: number; limitAt: string | null }[] = []
   const u = usage.value
-  if (u?.fiveHour) items.push({ key: 'five-hour', short: '5 Std.', percent: clampPercent(u.fiveHour.percent) })
-  if (u?.sevenDay) items.push({ key: 'seven-day', short: 'Woche', percent: clampPercent(u.sevenDay.percent) })
+  for (const [key, short, window] of [
+    ['five-hour', '5 Std.', u?.fiveHour],
+    ['seven-day', 'Woche', u?.sevenDay],
+  ] as const) {
+    if (!window) continue
+    // At this pace the limit comes before the reset: when, right in the title bar.
+    const limitAt = forecastHint(window, now.value)?.at ?? null
+    items.push({ key, short, percent: clampPercent(window.percent), limitAt })
+  }
   return items
 })
 const plan = computed(() => planLabel(account.value?.identity.subscriptionType))
 const who = computed(() => (account.value ? identityLabel(account.value.identity) : null))
-const label = computed(() => summary.value.map((item) => `${item.short} ${item.percent} %`).join(', '))
+const label = computed(() =>
+  summary.value
+    .map((item) => `${item.short} ${item.percent} %${item.limitAt ? `, Limit voraussichtlich ${item.limitAt}` : ''}`)
+    .join(', '),
+)
 const extra = computed(() => (usage.value?.extra?.enabled ? usage.value.extra : null))
 const currency = computed(
   () => new Intl.NumberFormat('de', { style: 'currency', currency: extra.value?.currency || 'USD', maximumFractionDigits: 2 }),
@@ -85,6 +96,7 @@ function openDashboard() {
               <UsageRing :percent="item.percent" :size="14" class="size-3.5" />
               <span>{{ item.short }}</span>
               <span class="font-medium text-foreground tabular-nums">{{ item.percent }}%</span>
+              <span v-if="item.limitAt" :class="cn('font-medium tabular-nums', usageTextClass.high)">→ {{ item.limitAt }}</span>
             </span>
           </Button>
         </PopoverTrigger>

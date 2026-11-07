@@ -1,3 +1,5 @@
+import { folderKey, TRAILING_SEPARATORS } from '@shared/folders'
+
 /** A folder a tab or a session ran in, and when. */
 export interface FolderUse {
   path: string
@@ -15,17 +17,7 @@ export interface RecentFolder {
   lastUsed: string
 }
 
-/** Trailing separators, except the one of a root like `C:\` or `/`. */
-const TRAILING_SEPARATORS = /(?<=[^\\/:])[\\/]+$/
-
-/** Drive letters and UNC paths: Windows compares them without regard to case and slash. */
-const WINDOWS_PATH = /^(?:[a-z]:|\\\\|\/\/)/i
-
-/** What a folder is compared by, so `F:\Code\` and `f:/code` count as one. */
-export function folderKey(path: string): string {
-  const trimmed = path.trim().replace(TRAILING_SEPARATORS, '')
-  return WINDOWS_PATH.test(trimmed) ? trimmed.replaceAll('/', '\\').toLowerCase() : trimmed
-}
+export { folderKey }
 
 /** Name and parent of a folder; a drive or the root is its own name. */
 export function splitFolder(path: string): { name: string; parent: string } {

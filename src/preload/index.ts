@@ -130,6 +130,7 @@ const api: ManagerApi = {
   },
   git: {
     branch: (cwd) => invoke(IpcInvoke.gitBranch, cwd),
+    worktreeCheck: (cwd) => invoke(IpcInvoke.gitWorktreeCheck, cwd),
     onBranchChanged: (cb) => subscribe(IpcEvent.gitBranchChanged, cb),
   },
   command: {

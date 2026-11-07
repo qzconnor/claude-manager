@@ -1,6 +1,8 @@
 import { join } from 'node:path'
 import { net } from 'electron'
+import { mergeFolderStats } from '@shared/token-stats'
 import type { AccountTokenStats, AccountUsage, DailyTokenStats, TokenCounts, UsageStatus, UsageWindow } from '@shared/types'
+import { addSample, forecastWindow, windowStart, type UsageSample } from '@shared/usage-forecast'
 import { readJson, writeJsonAtomic } from '../lib/json-file'
 import { TypedEmitter } from '../lib/typed-emitter'
 import { readGlobalConfig, type AccountCredentials, type AccountService } from './account-service'
@@ -9,7 +11,7 @@ import { fingerprintOf } from './login-profiles'
 import { renewOAuthLogin, type RenewResult } from './oauth-renewal'
 import type { SettingsService } from './settings-service'
 import { parseUsagePayload } from './usage-parser'
-import type { TokenStatsResult } from '../workers/indexer-protocol'
+import type { TokenStatsResult, TokenTuple } from '../workers/indexer-protocol'
 
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 const OAUTH_BETA = 'oauth-2025-04-20'
@@ -40,6 +42,8 @@ interface Renewal {
 interface CacheFile {
   version: 2
   records: Record<string, { usage: AccountUsage; loginKey: string | null }>
+  /** Readings of the windows for the forecast, by `sampleKey`. */
+  samples?: Record<string, UsageSample[]>
 }
 
 type Events = { changed: [usage: AccountUsage[]] }
@@ -52,6 +56,8 @@ export class UsageService extends TypedEmitter<Events> {
   private readonly loginChangedAt = new Map<string, number>()
   private readonly inflight = new Map<string, Promise<void>>()
   private readonly renewals = new Map<string, Renewal>()
+  /** Readings of each window of each account, oldest first: the pace for the forecast. */
+  private samples = new Map<string, UsageSample[]>()
   private timer: NodeJS.Timeout | null = null
   private localTimer: NodeJS.Timeout | null = null
 
@@ -74,6 +80,9 @@ export class UsageService extends TypedEmitter<Events> {
         if (record?.usage && typeof record.usage === 'object') {
           this.live.set(id, { usage: record.usage, nextAllowedAt: 0, loginKey: record.loginKey ?? null, tokenKey: null })
         }
+      }
+      for (const [key, list] of Object.entries(persisted.samples ?? {})) {
+        if (Array.isArray(list)) this.samples.set(key, list.filter(isSample))
       }
     }
     this.recompute()
@@ -113,7 +122,7 @@ export class UsageService extends TypedEmitter<Events> {
       projectsDir: this.accounts.paths(accountId).projectsDir,
       days: span,
     })
-    const toCounts = (t: [number, number, number, number, number]): TokenCounts => ({
+    const toCounts = (t: TokenTuple): TokenCounts => ({
       input: t[0],
       output: t[1],
       cacheCreation: t[2],
@@ -145,6 +154,9 @@ export class UsageService extends TypedEmitter<Events> {
       accountId,
       days: dayList,
       models: result.models.map(([model, t]) => ({ model, ...toCounts(t) })),
+      folders: mergeFolderStats(
+        result.folders.map(([path, projectKey, t, sessionCount]) => ({ path, projectKey, sessionCount, ...toCounts(t) })),
+      ),
       totals,
       sessionCount: result.sessionCount,
       computedAt: new Date().toISOString(),
@@ -318,14 +330,41 @@ export class UsageService extends TypedEmitter<Events> {
 
   private persist(): void {
     const records = Object.fromEntries([...this.live].map(([id, r]) => [id, { usage: r.usage, loginKey: r.loginKey }]))
-    void writeJsonAtomic(this.cacheFile, { version: 2, records } satisfies CacheFile).catch(() => undefined)
+    const known = new Set(this.accounts.list().map((a) => sampleKey(a.id, '')))
+    const samples = Object.fromEntries([...this.samples].filter(([key]) => known.has(key.slice(0, key.indexOf('\n') + 1))))
+    void writeJsonAtomic(this.cacheFile, { version: 2, records, samples } satisfies CacheFile).catch(() => undefined)
   }
 
   /** Forgets what was fetched for the previous login of the account's files. */
   private dropLogin(accountId: string): void {
     this.live.delete(accountId)
     this.loginChangedAt.set(accountId, Date.now())
+    for (const key of [...this.samples.keys()]) if (key.startsWith(sampleKey(accountId, ''))) this.samples.delete(key)
     this.persist()
+  }
+
+  /**
+   * Notes the windows' values as readings (once per time they were fetched) and adds the forecast
+   * from them. Windows without data of their own (no time) are left as they are.
+   */
+  private withForecasts(accountId: string, usage: AccountUsage): AccountUsage {
+    const fetchedAt = usage.fetchedAt ? Date.parse(usage.fetchedAt) : NaN
+    if (Number.isNaN(fetchedAt)) return usage
+    const forecast = (window: UsageWindow | null): UsageWindow | null => {
+      if (!window) return null
+      const start = windowStart(window)
+      if (start === null) return window
+      const key = sampleKey(accountId, window.key)
+      const samples = addSample(this.samples.get(key) ?? [], [fetchedAt, window.percent], start)
+      this.samples.set(key, samples)
+      return { ...window, forecast: forecastWindow(window, samples) }
+    }
+    return {
+      ...usage,
+      fiveHour: forecast(usage.fiveHour),
+      sevenDay: forecast(usage.sevenDay),
+      scoped: usage.scoped.map((w) => forecast(w) ?? w),
+    }
   }
 
   /** Another login took over the account's files (e.g. switched with cswap): its limits are fetched right away. */
@@ -399,7 +438,7 @@ export class UsageService extends TypedEmitter<Events> {
       result = { ...result, status: 'expired', message: expiredMessage(this.renewals.get(accountId)?.result) }
     }
     result.nextRefreshAt = live ? (this.live.get(accountId)?.usage.nextRefreshAt ?? null) : null
-    return withoutPastWindows(result, Date.now())
+    return this.withForecasts(accountId, withoutPastWindows(result, Date.now()))
   }
 
   private recompute(): void {
@@ -414,6 +453,14 @@ export class UsageService extends TypedEmitter<Events> {
     this.snapshot = next
     if (changed) this.emit('changed', this.getAll())
   }
+}
+
+function sampleKey(accountId: string, windowKey: string): string {
+  return `${accountId}\n${windowKey}`
+}
+
+function isSample(value: unknown): value is UsageSample {
+  return Array.isArray(value) && value.length === 2 && value.every((n) => typeof n === 'number' && Number.isFinite(n))
 }
 
 function expiredMessage(renewal: Renewal['result'] | undefined): string {

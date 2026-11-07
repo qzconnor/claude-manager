@@ -49,7 +49,13 @@ export function formatReset(iso: string | null | undefined, now = Date.now()): s
   if (Number.isNaN(ms)) return 'unbekannt'
   const diff = ms - now
   if (diff <= 0) return 'jetzt'
-  const minutes = Math.round(diff / 60000)
+  const when = diff < 86400000 ? time.format(ms) : weekdayTime.format(ms)
+  return `in ${formatDuration(diff)} · ${when}`
+}
+
+/** A span like "2 Std. 13 Min." or "3 T. 4 Std." (minutes only below a day). */
+export function formatDuration(ms: number): string {
+  const minutes = Math.round(Math.max(0, ms) / 60000)
   const days = Math.floor(minutes / 1440)
   const hours = Math.floor((minutes % 1440) / 60)
   const mins = minutes % 60
@@ -57,8 +63,7 @@ export function formatReset(iso: string | null | undefined, now = Date.now()): s
   if (days) parts.push(`${days} T.`)
   if (hours) parts.push(`${hours} Std.`)
   if (!days && mins) parts.push(`${mins} Min.`)
-  const when = diff < 86400000 ? time.format(ms) : weekdayTime.format(ms)
-  return `in ${parts.join(' ') || '< 1 Min.'} · ${when}`
+  return parts.join(' ') || '< 1 Min.'
 }
 
 export function formatTokens(value: number): string {
