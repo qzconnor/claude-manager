@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { realpathSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -146,7 +147,8 @@ describe('worktreeCheck', () => {
     git(path, 'worktree', 'add', '-q', '-b', 'elsewhere', join(dir, 'elsewhere'))
     const check = await service.worktreeCheck(join(path, '.claude'))
     expect(check).toMatchObject({ ok: true, existing: ['login'] })
-    const same = (p: string) => p.replaceAll('\\', '/').toLowerCase()
+    // Git names the real path: on CI runners the temp folder comes as a short name (`RUNNER~1`).
+    const same = (p: string) => realpathSync.native(p).replaceAll('\\', '/').toLowerCase()
     expect(check.ok && same(check.root)).toBe(same(path))
   })
 })
