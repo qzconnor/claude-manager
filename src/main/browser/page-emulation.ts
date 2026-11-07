@@ -1,10 +1,14 @@
 import type { BrowserEmulation, BrowserNetworkPreset, BrowserViewport } from '@shared/types'
+import { browserPermissions, type PermissionOverrides } from '../window/browser-permissions'
 import { mobileUserAgent } from '../window/browser-policy'
 import { delay, type PageDriver } from './page-driver'
 import type { ViewportSize } from './action-context'
 import { ToolError } from './tool-args'
 
-/** What Claude has the page pretend: a phone, another size, dark mode, a slow network or CPU, a language or time zone. */
+/**
+ * What Claude has the page pretend: a phone, another size, dark mode, a slow network or CPU, a
+ * language or time zone, a place, permissions.
+ */
 
 /** How long the window may take to give the page the size Claude chose. */
 const VIEWPORT_WAIT_MS = 3000
@@ -53,8 +57,16 @@ export function isEmulating(emulation: BrowserEmulation): boolean {
     emulation.network !== null ||
     emulation.cpuSlowdown !== null ||
     emulation.locale !== null ||
-    emulation.timezone !== null
+    emulation.timezone !== null ||
+    emulation.geolocation !== null ||
+    Object.keys(emulation.permissions).length > 0
   )
+}
+
+/** The permissions the page gets: those Claude set, and the location's with a place of Claude's. */
+export function effectivePermissions(emulation: BrowserEmulation | null): PermissionOverrides {
+  if (!emulation) return {}
+  return { ...(emulation.geolocation ? { geolocation: 'granted' as const } : {}), ...emulation.permissions }
 }
 
 /**
@@ -76,7 +88,16 @@ export async function applyEmulation(page: PageDriver, emulation: BrowserEmulati
   await setUserAgent(page, mobile, emulation?.locale ?? null)
   await page.cdp('Network.emulateNetworkConditions', emulation?.network ? NETWORK_PRESETS[emulation.network] : NO_NETWORK_LIMIT)
   await page.cdp('Emulation.setCPUThrottlingRate', { rate: emulation?.cpuSlowdown ?? 1 })
+  await setGeolocation(page, emulation, undefined)
+  browserPermissions.set(page.contents, effectivePermissions(emulation))
   for (const session of frameSessions) await applyFrameEmulation(page, session, emulation, mobile)
+}
+
+/** The place the page believes it is at, or the computer's again. */
+async function setGeolocation(page: PageDriver, emulation: BrowserEmulation | null, session: string | undefined): Promise<void> {
+  const place = emulation?.geolocation
+  if (place) await page.cdpIn(session, 'Emulation.setGeolocationOverride', { latitude: place.latitude, longitude: place.longitude, accuracy: place.accuracy })
+  else await page.cdpIn(session, 'Emulation.clearGeolocationOverride')
 }
 
 /**
@@ -93,6 +114,7 @@ export async function applyFrameEmulation(page: PageDriver, session: string, emu
   await setUserAgent(page, mobile, emulation?.locale ?? null, session).catch(() => undefined)
   await send('Network.emulateNetworkConditions', emulation?.network ? NETWORK_PRESETS[emulation.network] : NO_NETWORK_LIMIT)
   await send('Emulation.setCPUThrottlingRate', { rate: emulation?.cpuSlowdown ?? 1 })
+  await setGeolocation(page, emulation, session).catch(() => undefined)
 }
 
 /** The media features of an emulation; empty values end an override. */

@@ -93,6 +93,7 @@ export const IpcInvoke = {
   browserClearData: 'browser:clear-data',
   browserResetViewport: 'browser:reset-viewport',
   browserResetEmulation: 'browser:reset-emulation',
+  browserResetRoutes: 'browser:reset-routes',
   browserClaudeInChrome: 'browser:claude-in-chrome',
   browserDownloads: 'browser:downloads',
   browserDownloadAction: 'browser:download-action',
@@ -321,6 +322,8 @@ export interface ManagerApi {
     resetViewport(id: string): Promise<void>
     /** The page stops pretending what Claude had it pretend (dark mode, slow network …). */
     resetEmulation(id: string): Promise<void>
+    /** Ends Claude's routes for the page's requests (browser_route). */
+    resetRoutes(id: string): Promise<void>
     /** Which accounts start their sessions with Claude in Chrome, which Claude might take instead. */
     claudeInChrome(): Promise<ClaudeInChromeStatus>
     /** The browser's downloads, oldest first. */

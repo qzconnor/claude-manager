@@ -14,6 +14,7 @@ import { IpcEvent } from '@shared/ipc'
 import { matchBrowserShortcut, matchShortcut, type Shortcut } from '@shared/shortcuts'
 import { browserDownloads } from './browser-downloads'
 import { browserLogins } from './browser-logins'
+import { browserPermissions } from './browser-permissions'
 import {
   ALLOWED_PERMISSIONS,
   browserUserAgent,
@@ -32,14 +33,23 @@ import { resourceIcon } from './tray'
 
 let sessionReady = false
 
-/** The browser profile: a plain Chrome to the sites, no permissions beyond the clipboard. */
+/**
+ * The browser profile: a plain Chrome to the sites, no permissions beyond the clipboard; unless
+ * Claude gives a page more for a while (browser_emulate).
+ */
 function setupBrowserSession(): void {
   if (sessionReady) return
   sessionReady = true
   const ses = session.fromPartition(BROWSER_PARTITION)
   ses.setUserAgent(browserUserAgent(ses.getUserAgent()))
-  ses.setPermissionRequestHandler((_contents, permission, callback) => callback(ALLOWED_PERMISSIONS.has(permission)))
-  ses.setPermissionCheckHandler((_contents, permission) => ALLOWED_PERMISSIONS.has(permission))
+  ses.setPermissionRequestHandler((contents, permission, callback, details) => {
+    const mediaTypes = 'mediaTypes' in details ? (details.mediaTypes ?? []) : []
+    callback(browserPermissions.decide(contents, permission, mediaTypes) ?? ALLOWED_PERMISSIONS.has(permission))
+  })
+  ses.setPermissionCheckHandler((contents, permission, _origin, details) => {
+    const mediaTypes = details.mediaType && details.mediaType !== 'unknown' ? [details.mediaType] : []
+    return browserPermissions.decide(contents, permission, mediaTypes) ?? ALLOWED_PERMISSIONS.has(permission)
+  })
   // Files go to the downloads folder right away; Electron would ask where, in a window of its own.
   ses.on('will-download', (_event, item, contents) => browserDownloads.add(item, contents))
 }

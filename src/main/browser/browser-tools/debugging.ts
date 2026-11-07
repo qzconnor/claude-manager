@@ -1,9 +1,13 @@
-import { emulationLabels } from '@shared/browser'
+import { emulationLabels, NO_EMULATION } from '@shared/browser'
 import type { BrowserEmulation } from '@shared/types'
+import { MESSAGE_LIMIT, type NetworkEntry } from '../network-log'
+import { effectivePermissions } from '../page-emulation'
+import { formatConsoleEntry } from '../page-errors'
 import { cut, optionalBoolean, optionalNumber, stringList, ToolError } from '../tool-args'
-import { describeEmulation, parseEmulation } from './emulation-args'
+import { describeEmulation, mergePermissions, parseEmulation, PERMISSIONS } from './emulation-args'
 import { bodyText, formatBytes, headerLines, MAX_BODY_CHARS, responseBody } from './network-format'
 import { measurePerformance } from './performance'
+import { str } from './test-code'
 import { NAVIGATION_WAIT_MS, pageState, shortAddress, tool, type ToolDefinition } from './tool'
 
 /** Tools for debugging: console, network, emulation, page size, performance, site data. */
@@ -13,12 +17,12 @@ const MIN_VIEWPORT = 200
 const MAX_VIEWPORT = 4000
 
 const MAX_LIST_ENTRIES = 100
+/** Messages of a WebSocket browser_network_request shows by default. */
+const DEFAULT_MESSAGES = 30
 
 /** What browser_clear_site_data clears. */
 const SITE_DATA = ['cookies', 'storage', 'cache'] as const
 type SiteData = (typeof SITE_DATA)[number]
-
-const NO_EMULATION: BrowserEmulation = { colorScheme: null, reducedMotion: false, network: null, cpuSlowdown: null, locale: null, timezone: null }
 
 export const debuggingTools: ToolDefinition<never>[] = [
   tool({
@@ -56,6 +60,14 @@ export const debuggingTools: ToolDefinition<never>[] = [
       }
       const now = await ctx.page.viewportSize()
       ctx.note(`${now.width} × ${now.height}${size?.mobile ? ' · mobil' : ''}`)
+      ctx.record(
+        size
+          ? [
+              ...(size.mobile ? ['// Claude had the page as a phone here: use a mobile device in test.use() (e.g. devices[\'Pixel 7\']).'] : []),
+              `await page.setViewportSize({ width: ${size.width}, height: ${size.height} })`,
+            ]
+          : ['// Claude gave the page the size of its window again here.'],
+      )
       const what = size
         ? `The page is ${now.width}×${now.height} now${size.mobile ? ', as a mobile device' : ''}${phoneChanged ? ' (loaded again)' : ''}.`
         : `The page has the size of the window again: ${now.width}×${now.height}${phoneChanged ? ' (loaded again, no mobile device any more)' : ''}.`
@@ -65,7 +77,8 @@ export const debuggingTools: ToolDefinition<never>[] = [
   tool({
     name: 'browser_console_messages',
     title: 'Console messages',
-    description: 'The messages of the page in its console, newest last.',
+    description:
+      'The messages of the page in its console, newest last. Errors the page did not catch (exceptions, rejected promises) come with file, line and their chain of calls.',
     properties: { onlyErrors: { type: 'boolean', description: 'Only errors.' } },
     readOnly: true,
     kind: 'console',
@@ -76,15 +89,14 @@ export const debuggingTools: ToolDefinition<never>[] = [
       const entries = ctx.consoleEntries().filter((e) => !onlyErrors || e.level === 'error')
       ctx.note(`${entries.length} Meldungen`)
       if (entries.length === 0) return { text: onlyErrors ? 'No errors in the console.' : 'The console is empty.' }
-      const lines = entries.slice(-MAX_LIST_ENTRIES).map((e) => `[${e.level}] ${e.text}${e.source ? ` (${e.source})` : ''}`)
-      return { text: lines.join('\n') }
+      return { text: entries.slice(-MAX_LIST_ENTRIES).map(formatConsoleEntry).join('\n') }
     },
   }),
   tool({
     name: 'browser_network_requests',
     title: 'Network requests',
     description:
-      'The requests of the page since the browser was first driven (#id, method, address, status, type, time). browser_network_request shows the headers and bodies of one.',
+      'The requests of the page since the browser was first driven (#id, method, address, status, type, time), WebSockets and event streams with their number of messages. browser_network_request shows the headers and bodies of one, or the messages of a WebSocket.',
     properties: { onlyFailed: { type: 'boolean', description: 'Only failed requests and HTTP errors.' } },
     readOnly: true,
     kind: 'network',
@@ -95,23 +107,18 @@ export const debuggingTools: ToolDefinition<never>[] = [
       const entries = ctx.networkEntries().filter((e) => !onlyFailed || e.failure || (e.status ?? 0) >= 400)
       ctx.note(`${entries.length} Anfragen`)
       if (entries.length === 0) return { text: onlyFailed ? 'No failed requests.' : 'No requests yet.' }
-      const lines = entries
-        .slice(-MAX_LIST_ENTRIES)
-        .map(
-          (e) =>
-            `#${e.id} ${e.method} ${e.url} → ${e.failure ?? e.status ?? 'pending'} [${e.type}]${e.durationMs !== null ? ` ${e.durationMs} ms` : ''}${e.fromCache ? ' (cache)' : ''}${e.session ? ' (frame)' : ''}`,
-        )
-      return { text: lines.join('\n') }
+      return { text: entries.slice(-MAX_LIST_ENTRIES).map(requestLine).join('\n') }
     },
   }),
   tool({
     name: 'browser_network_request',
     title: 'Network request details',
     description:
-      'One request from browser_network_requests (by its #id): what the page sent (headers, body) and what came back (status, headers, body). Cookies and authorization headers are left out.',
+      'One request from browser_network_requests (by its #id): what the page sent (headers, body) and what came back (status, headers, body); for a WebSocket or event stream its messages. Cookies and authorization headers are left out.',
     properties: {
       id: { type: 'number', description: 'The #id from browser_network_requests.' },
       body: { type: 'boolean', description: `Include the response body (text, up to ${MAX_BODY_CHARS} characters). Default: true.` },
+      messages: { type: 'number', description: `For a WebSocket or event stream: the last this many messages (default ${DEFAULT_MESSAGES}, up to ${MESSAGE_LIMIT}).` },
     },
     required: ['id'],
     readOnly: true,
@@ -120,7 +127,11 @@ export const debuggingTools: ToolDefinition<never>[] = [
     parse: (args) => {
       const id = optionalNumber(args, 'id', 1, 1_000_000_000)
       if (id === undefined) throw new ToolError('id is required: the #id from browser_network_requests.')
-      return { id: Math.floor(id), body: optionalBoolean(args, 'body') ?? true }
+      return {
+        id: Math.floor(id),
+        body: optionalBoolean(args, 'body') ?? true,
+        messages: Math.floor(optionalNumber(args, 'messages', 1, MESSAGE_LIMIT) ?? DEFAULT_MESSAGES),
+      }
     },
     label: ({ id }) => `Liest Anfrage #${id}`,
     run: async (ctx, p) => {
@@ -129,7 +140,7 @@ export const debuggingTools: ToolDefinition<never>[] = [
       ctx.label(`Liest ${entry.method} ${shortAddress(entry.url)}`)
       const lines = [
         `#${entry.id} ${entry.method} ${entry.url}`,
-        `Type: ${entry.type}${entry.session ? ' (in a frame of another site)' : ''}`,
+        `Type: ${entry.type}${entry.session ? ' (in a frame of another site)' : ''}${entry.routed ? `; ${entry.routed} (browser_route)` : ''}`,
         `Started: ${new Date(entry.startedAt).toISOString()}${entry.durationMs !== null ? `, took ${entry.durationMs} ms` : ''}`,
         entry.failure
           ? `Failed: ${entry.failure}`
@@ -149,7 +160,9 @@ export const debuggingTools: ToolDefinition<never>[] = [
       }
       if (sent !== null) lines.push('', 'Request body:', bodyText(sent, entry.requestHeaders['content-type'] ?? entry.requestHeaders['Content-Type'] ?? null))
       if (entry.responseHeaders) lines.push('', 'Response headers:', ...headerLines(entry.responseHeaders))
-      if (p.body && entry.status !== null && !entry.failure) {
+      if (entry.messages) {
+        lines.push('', ...socketMessages(entry, p.messages))
+      } else if (p.body && entry.status !== null && !entry.failure) {
         lines.push('', 'Response body:', await responseBody(ctx, entry))
       }
       ctx.note(entry.failure ?? String(entry.status ?? 'pending'))
@@ -160,7 +173,7 @@ export const debuggingTools: ToolDefinition<never>[] = [
     name: 'browser_emulate',
     title: 'Emulate',
     description:
-      'Has the page pretend another environment, to test how it behaves: dark or light mode, reduced motion, a slow or no network, a slow CPU, another language or time zone. Only what you give changes; it stays until reset or the session ends. Pages read the language and some media settings when they load: reload them afterwards (browser_history).',
+      'Has the page pretend another environment, to test how it behaves: dark or light mode, reduced motion, a slow or no network, a slow CPU, another language or time zone, another place (geolocation), permissions given or refused. Only what you give changes; it stays until reset or the session ends. Pages read the language and some media settings when they load: reload them afterwards (browser_history).',
     properties: {
       colorScheme: { type: 'string', enum: ['dark', 'light', 'system'], description: 'prefers-color-scheme; system: as the computer has it.' },
       reducedMotion: { type: 'boolean', description: 'prefers-reduced-motion: reduce.' },
@@ -172,6 +185,18 @@ export const debuggingTools: ToolDefinition<never>[] = [
       cpuSlowdown: { type: 'number', description: 'Run the page this many times slower, 1–20 (e.g. 4 for a mid-range phone); 1: full speed.' },
       locale: { type: 'string', description: 'Language and formats, e.g. "de-DE" or "en-US"; "" for the browser\'s own.' },
       timezone: { type: 'string', description: 'IANA time zone, e.g. "America/New_York" or "Asia/Tokyo"; "" for the computer\'s.' },
+      geolocation: {
+        type: 'string',
+        description:
+          'Where navigator.geolocation says the page is: "latitude,longitude" or "latitude,longitude,accuracy in meters", e.g. "48.8566,2.3522"; it grants the location permission. "" ends it.',
+      },
+      permissions: {
+        type: 'object',
+        properties: Object.fromEntries(PERMISSIONS.map((name) => [name, { type: 'string', enum: ['granted', 'denied', 'default'] }])),
+        additionalProperties: false,
+        description:
+          "Permissions the page gets (granted) or is refused (denied); default: as the browser has it (it refuses them). camera and microphone are the computer's real devices; notifications show as real notifications.",
+      },
       reset: { type: 'boolean', description: 'End all emulation.' },
     },
     kind: 'emulate',
@@ -179,12 +204,13 @@ export const debuggingTools: ToolDefinition<never>[] = [
     label: (p) => (p.reset ? 'Beendet die Emulation' : 'Emuliert eine andere Umgebung'),
     run: async (ctx, p) => {
       const before = ctx.emulation() ?? NO_EMULATION
-      const next: BrowserEmulation = p.reset ? NO_EMULATION : { ...before, ...p.change }
+      const next: BrowserEmulation = p.reset ? NO_EMULATION : { ...before, ...p.change, permissions: mergePermissions(before.permissions, p.permissions) }
       const labels = emulationLabels(next)
       ctx.highlight(labels.length ? `Emuliert ${labels.join(', ')}` : 'Beendet die Emulation')
       await ctx.setEmulation(next)
       ctx.label(labels.length ? `Emuliert ${labels.join(', ')}` : 'Beendet die Emulation')
       if (labels.length) ctx.note(labels.join(' · '))
+      ctx.record(emulationCode(before, next))
       const now = describeEmulation(next)
       const reloadHint = p.change.locale !== undefined && p.change.locale !== before.locale ? ' Reload the page so it starts in the new language.' : ''
       return { text: now ? `The page now pretends: ${now}.${reloadHint}` : 'The page pretends nothing any more.' }
@@ -270,6 +296,60 @@ export const debuggingTools: ToolDefinition<never>[] = [
     },
   }),
 ]
+
+/** What browser_emulate changed, as Playwright code where Playwright can do it while the test runs. */
+export function emulationCode(before: BrowserEmulation, next: BrowserEmulation): string[] {
+  const lines: string[] = []
+  const media: string[] = []
+  if (next.colorScheme !== before.colorScheme) media.push(`colorScheme: ${next.colorScheme ? str(next.colorScheme) : 'null'}`)
+  if (next.reducedMotion !== before.reducedMotion) media.push(`reducedMotion: ${next.reducedMotion ? "'reduce'" : 'null'}`)
+  if (media.length) lines.push(`await page.emulateMedia({ ${media.join(', ')} })`)
+  if (next.geolocation && JSON.stringify(next.geolocation) !== JSON.stringify(before.geolocation)) {
+    const { latitude, longitude, accuracy } = next.geolocation
+    lines.push(`await page.context().setGeolocation({ latitude: ${latitude}, longitude: ${longitude}, accuracy: ${accuracy} })`)
+  }
+  const granted = Object.entries(effectivePermissions(next))
+    .filter(([, setting]) => setting === 'granted')
+    .map(([name]) => name)
+  const grantedBefore = Object.entries(effectivePermissions(before))
+    .filter(([, setting]) => setting === 'granted')
+    .map(([name]) => name)
+  if (granted.join() !== grantedBefore.join()) {
+    lines.push(granted.length ? `await page.context().grantPermissions([${granted.map(str).join(', ')}])` : 'await page.context().clearPermissions()')
+  }
+  const fixed: string[] = []
+  if (next.locale !== before.locale && next.locale) fixed.push(`locale: ${str(next.locale)}`)
+  if (next.timezone !== before.timezone && next.timezone) fixed.push(`timezoneId: ${str(next.timezone)}`)
+  if (fixed.length) lines.push(`// Claude switched the page to ${fixed.join(', ')} here: set it in test.use({ ${fixed.join(', ')} }).`)
+  if (next.network !== before.network || next.cpuSlowdown !== before.cpuSlowdown) {
+    lines.push('// Claude throttled the network or the CPU here; Playwright does that through a CDP session (Network.emulateNetworkConditions, Emulation.setCPUThrottlingRate).')
+  }
+  return lines
+}
+
+/** A request in the list of browser_network_requests. */
+export function requestLine(e: NetworkEntry): string {
+  const outcome = e.failure ?? e.status ?? 'pending'
+  const time = e.durationMs !== null ? ` ${e.durationMs} ms` : ''
+  const socket = e.messages ? ` ${e.messageCount} message(s)${e.type === 'WebSocket' ? (e.closed ? ', closed' : ', open') : ''}` : ''
+  const marks = [e.fromCache && 'cache', e.session && 'frame', e.routed].filter(Boolean)
+  return `#${e.id} ${e.method} ${e.url} → ${outcome} [${e.type}]${socket}${time}${marks.length ? ` (${marks.join(', ')})` : ''}`
+}
+
+/** The last messages of a WebSocket or event stream: → sent, ← received, ✕ error, with the time since it opened. */
+export function socketMessages(entry: NetworkEntry, count: number): string[] {
+  const messages = entry.messages ?? []
+  if (messages.length === 0) return ['Messages: none yet.']
+  const shown = messages.slice(-count)
+  const skipped = entry.messageCount - shown.length
+  const arrow = { sent: '→', received: '←', error: '✕' } as const
+  const lines = shown.map((m) => {
+    const at = `+${((m.at - entry.startedAt) / 1000).toFixed(3)} s`
+    const data = m.binary ? `(binary, ${m.data})` : cut(m.data, 1000)
+    return `${arrow[m.direction]} ${at} ${data}`
+  })
+  return [`Messages (${entry.messageCount}${skipped > 0 ? `, the last ${shown.length}` : ''}; → sent, ← received):`, ...lines]
+}
 
 function sizeLabel(size: { width: number; height: number; mobile: boolean }): string {
   return `${size.width} × ${size.height}${size.mobile ? ' (mobil)' : ''}`

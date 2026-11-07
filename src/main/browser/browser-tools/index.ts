@@ -3,9 +3,14 @@ import type { BrowserControl } from '../browser-control'
 import type { McpContent, McpTool, McpToolResult } from '../mcp-protocol'
 import { type Args, cut, ToolError } from '../tool-args'
 import { debuggingTools } from './debugging'
+import { inspectionTools } from './inspection'
 import { interactionTools } from './interaction'
 import { navigationTools } from './navigation'
 import { readingTools } from './reading'
+import { routingTools } from './routing'
+import { storageTools } from './storage'
+import { dialogCode } from './test-code'
+import { testingTools } from './testing'
 import type { ToolDefinition } from './tool'
 
 /**
@@ -19,8 +24,10 @@ export const BROWSER_INSTRUCTIONS = `Claude Manager shows a browser next to this
 - Start with browser_navigate or browser_snapshot: an outline of the page in which elements you can act on carry a ref like [ref=e12]. Pass the ref (and a short description as element) to act on it. Refs change with the page: use those of the latest snapshot.
 - After an action on the same page you get only what changed since your last snapshot, as a diff (+ came, - went, unmarked lines show where); everything else and its refs stay valid. After a navigation, or when most of the page changed, you get the whole outline. browser_snapshot always gives the whole page.
 - Frames of other sites (payment forms, captchas, embeds) appear inside their iframe line; refs in them look like f1e5 and work like the others.
-- Prefer snapshots for reading; take a screenshot when the look matters.
-- To debug: browser_console_messages, browser_network_requests and browser_network_request (headers and bodies of one request). browser_emulate tries dark mode, slow or no network, a slow CPU, other languages and time zones; browser_performance measures load and Web Vitals; browser_clear_site_data starts a site fresh.
+- Prefer snapshots for reading; take a screenshot when the look matters (widths: one call for several page widths). On long pages the snapshot is cut: browser_find finds elements by text or role anywhere and gives their refs. browser_click with x and y clicks a spot (canvas, maps, games).
+- To debug: browser_console_messages (uncaught errors with their call stack), browser_network_requests and browser_network_request (headers and bodies of one request, WebSocket messages). browser_inspect explains one element: box model, computed styles, and why it is hidden, covered or out of view. browser_check_accessibility finds missing labels and alt texts, low contrast, wrong roles. browser_emulate tries dark mode, slow or no network, a slow CPU, other languages and time zones, a place (geolocation) and permissions; browser_performance measures load and Web Vitals; browser_clear_site_data starts a site fresh.
+- browser_route answers requests itself (status, JSON), lets them fail or slows them down, to test error and loading states. browser_storage reads and sets cookies (httpOnly too), local and session storage.
+- browser_generate_test turns what you did into a Playwright test with role and label locators.
 - Dialogs the page opens while you act (alert, confirm, prompt) are answered at once: with OK, and a prompt with its default. The result of the action tells you about them. To answer the next one differently, call browser_handle_dialog before the action that opens it.
 - browser_resize gives the page another size, to test layouts (phone, tablet, large screens); it stays until you reset it or the session ends.
 - browser_tabs lists the app's browser tabs, opens another one or switches to one; your actions go to the current one.
@@ -28,7 +35,16 @@ export const BROWSER_INSTRUCTIONS = `Claude Manager shows a browser next to this
 - The user can take the browser over at any time. Your call then waits until they hand it back and tells you that the page may have changed.
 - The browser has its own profile (cookies, logins) apart from the user's other browsers. Don't enter passwords or payment details unless the user asked you to.`
 
-const TOOLS: ToolDefinition<never>[] = [...navigationTools, ...readingTools, ...interactionTools, ...debuggingTools]
+const TOOLS: ToolDefinition<never>[] = [
+  ...navigationTools,
+  ...readingTools,
+  ...interactionTools,
+  ...inspectionTools,
+  ...debuggingTools,
+  ...routingTools,
+  ...storageTools,
+  ...testingTools,
+]
 
 /** The tools for the MCP server, and their calls for one session. */
 export class BrowserTools {
@@ -61,17 +77,24 @@ export class BrowserTools {
       if (dialogs.length > 0) {
         const lines = dialogs.map((d) => `- ${d.type} ${JSON.stringify(cut(d.message, 300))}, answered: ${d.answer}`)
         reply.text = `The page opened dialogs, answered at once:\n${lines.join('\n')}\n\n${reply.text}`
+        // Playwright dismisses dialogs unless told otherwise: the test answers them as the browser did.
+        ctx.record(
+          dialogs.map((d) => dialogCode(d.answer)),
+          'before',
+        )
       }
       // Errors of the page during the action belong to its result.
       const errors = ctx.consoleEntries().filter((e) => e.level === 'error' && e.at >= since)
       if (errors.length > 0 && definition.kind !== 'console') {
-        const lines = errors.slice(-5).map((e) => `- ${cut(e.text.split('\n')[0], 300)}`)
-        reply.text = `New console errors:\n${lines.join('\n')}\n\n${reply.text}`
+        const lines = errors.slice(-5).map((e) => `- ${cut(e.text.split('\n')[0], 300)}${e.stack ? `\n  ${e.stack.split('\n')[0]}` : ''}`)
+        reply.text = `New console errors (browser_console_messages has their stacks):\n${lines.join('\n')}\n\n${reply.text}`
       }
       return reply
     })
     const content: McpContent[] = [{ type: 'text', text: reply.text }]
-    if (reply.image) content.push({ type: 'image', data: reply.image.toJPEG(85).toString('base64'), mimeType: 'image/jpeg' })
+    for (const image of [reply.image, ...(reply.images ?? [])]) {
+      if (image) content.push({ type: 'image', data: image.toJPEG(85).toString('base64'), mimeType: 'image/jpeg' })
+    }
     return { content }
   }
 }

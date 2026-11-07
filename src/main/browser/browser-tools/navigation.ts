@@ -2,6 +2,7 @@ import { addressToUrl, BLANK_PAGE, isBrowsableUrl } from '@shared/browser'
 import type { McpToolResult } from '../mcp-protocol'
 import type { BrowserTab } from '../action-context'
 import { cut, oneOf, optionalNumber, requiredString, ToolError } from '../tool-args'
+import { str } from './test-code'
 import { loadPage, NAVIGATION_WAIT_MS, pageState, shortAddress, tool, type ToolDefinition } from './tool'
 
 /** Tools that go to pages: open an address, back and forward, the session's browser tabs. */
@@ -23,6 +24,7 @@ export const navigationTools: ToolDefinition<never>[] = [
     run: async (ctx, { url }) => {
       ctx.highlight(`Öffnet ${shortAddress(url)}`)
       const failure = await loadPage(ctx, () => ctx.page.contents.loadURL(url))
+      ctx.record([`await page.goto(${str(url)})`])
       return { text: `${failure ?? `Opened ${url}.`}\n\n${await pageState(ctx)}` }
     },
   }),
@@ -44,6 +46,7 @@ export const navigationTools: ToolDefinition<never>[] = [
       else if (action === 'forward') history.goForward()
       else ctx.page.contents.reload()
       await ctx.page.settle(NAVIGATION_WAIT_MS)
+      ctx.record([`await page.${({ back: 'goBack', forward: 'goForward', reload: 'reload' } as const)[action]}()`])
       return { text: await pageState(ctx) }
     },
   }),

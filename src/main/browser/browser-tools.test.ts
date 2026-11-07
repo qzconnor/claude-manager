@@ -1,11 +1,32 @@
 import { describe, expect, it } from 'vitest'
-import { describeEmulation, parseEmulation } from './browser-tools/emulation-args'
+import { NO_EMULATION } from '@shared/browser'
+import { describeEmulation, mergePermissions, parseEmulation } from './browser-tools/emulation-args'
 import { bodyText, formatBytes, headerLines } from './browser-tools/network-format'
 import { formatMs, formatPerformance, type PerformanceReport } from './browser-tools/performance'
 
 describe('parseEmulation', () => {
   it('takes only what is given', () => {
-    expect(parseEmulation({ colorScheme: 'dark', network: 'slow-3g' })).toEqual({ reset: false, change: { colorScheme: 'dark', network: 'slow-3g' } })
+    expect(parseEmulation({ colorScheme: 'dark', network: 'slow-3g' })).toEqual({
+      reset: false,
+      change: { colorScheme: 'dark', network: 'slow-3g' },
+      permissions: {},
+    })
+  })
+
+  it('takes a place as latitude, longitude and accuracy, and "" for none', () => {
+    expect(parseEmulation({ geolocation: '48.8566, 2.3522' }).change.geolocation).toEqual({ latitude: 48.8566, longitude: 2.3522, accuracy: 50 })
+    expect(parseEmulation({ geolocation: '-33.86,151.21,10' }).change.geolocation).toEqual({ latitude: -33.86, longitude: 151.21, accuracy: 10 })
+    expect(parseEmulation({ geolocation: '' }).change.geolocation).toBeNull()
+    expect(() => parseEmulation({ geolocation: '95,10' })).toThrow(/latitude,longitude/)
+    expect(() => parseEmulation({ geolocation: 'Berlin' })).toThrow(/latitude,longitude/)
+  })
+
+  it('takes permissions one by one; default gives one back to the browser', () => {
+    const parsed = parseEmulation({ permissions: { notifications: 'granted', camera: 'default' } })
+    expect(parsed.permissions).toEqual({ notifications: 'granted', camera: 'default' })
+    expect(mergePermissions({ camera: 'granted', microphone: 'denied' }, parsed.permissions)).toEqual({ notifications: 'granted', microphone: 'denied' })
+    expect(() => parseEmulation({ permissions: { usb: 'granted' } })).toThrow(/permissions takes/)
+    expect(() => parseEmulation({ permissions: { camera: 'yes' } })).toThrow(/granted, denied, default/)
   })
 
   it('turns "system", "online", a slowdown of 1 and empty strings into the way back', () => {
@@ -27,7 +48,7 @@ describe('parseEmulation', () => {
 
   it('wants something to do', () => {
     expect(() => parseEmulation({})).toThrow(/at least one/)
-    expect(parseEmulation({ reset: true, colorScheme: 'dark' })).toEqual({ reset: true, change: {} })
+    expect(parseEmulation({ reset: true, colorScheme: 'dark' })).toEqual({ reset: true, change: {}, permissions: {} })
   })
 
   it('checks the range of the slowdown', () => {
@@ -39,9 +60,20 @@ describe('parseEmulation', () => {
 describe('describeEmulation', () => {
   it('names everything the page pretends', () => {
     expect(
-      describeEmulation({ colorScheme: 'dark', reducedMotion: true, network: 'offline', cpuSlowdown: 4, locale: 'ja-JP', timezone: 'Asia/Tokyo' }),
-    ).toBe('dark color scheme, reduced motion, no network (offline), CPU 4× slower, locale ja-JP, time zone Asia/Tokyo')
-    expect(describeEmulation({ colorScheme: null, reducedMotion: false, network: null, cpuSlowdown: null, locale: null, timezone: null })).toBe('')
+      describeEmulation({
+        colorScheme: 'dark',
+        reducedMotion: true,
+        network: 'offline',
+        cpuSlowdown: 4,
+        locale: 'ja-JP',
+        timezone: 'Asia/Tokyo',
+        geolocation: { latitude: 35.68, longitude: 139.69, accuracy: 50 },
+        permissions: { notifications: 'denied' },
+      }),
+    ).toBe(
+      'dark color scheme, reduced motion, no network (offline), CPU 4× slower, locale ja-JP, time zone Asia/Tokyo, location 35.68,139.69 (±50 m, permission granted), notifications permission denied',
+    )
+    expect(describeEmulation(NO_EMULATION)).toBe('')
   })
 })
 
@@ -111,7 +143,7 @@ describe('formatPerformance', () => {
     const text = formatPerformance(report, { JSHeapUsedSize: 8 * 1024 * 1024, Nodes: 1200, LayoutCount: 9, LayoutDuration: 0.02 }, {
       reloaded: true,
       coldCache: false,
-      emulation: { colorScheme: null, reducedMotion: false, network: 'slow-3g', cpuSlowdown: 4, locale: null, timezone: null },
+      emulation: { ...NO_EMULATION, network: 'slow-3g', cpuSlowdown: 4 },
     })
     expect(text).toContain('Performance of http://localhost:5173/ (loaded again; emulating slow-3g network, CPU 4× slower):')
     expect(text).toContain('- Largest contentful paint: 3.10 s (needs improvement) — img#hero http://localhost:5173/hero.jpg')

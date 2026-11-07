@@ -1,8 +1,9 @@
 import type { NativeImage } from 'electron'
-import type { BrowserEmulation, BrowserLoginRequest } from '@shared/types'
+import type { BrowserEmulation, BrowserLoginRequest, BrowserRoute } from '@shared/types'
 import type { PageDriver } from './page-driver'
 import type { NetworkEntry } from './network-log'
 import type { CaughtDialog, DialogAnswer, PageDialog } from './page-dialogs'
+import type { Route } from './page-routes'
 
 /** What the browser's tools get from BrowserControl while their action runs, and what they read of the page. */
 
@@ -11,6 +12,8 @@ export interface ConsoleEntry {
   level: string
   text: string
   source: string
+  /** The chain of calls of an error the page didn't catch, one frame per line; null: none known. */
+  stack: string | null
 }
 
 export interface FileChooser {
@@ -72,6 +75,20 @@ export interface ActionContext {
   emulation(): BrowserEmulation | null
   /** Has the page pretend this from now on (null: nothing); it stays until the session ends or the user resets it. */
   setEmulation(emulation: BrowserEmulation | null): Promise<void>
+  /** Claude's routes for the page's requests, oldest first. */
+  routes(): BrowserRoute[]
+  /** A new route; it stays until removed, used up (`timesLeft`) or the session ends. */
+  addRoute(route: Omit<Route, 'id' | 'hits'>): Promise<BrowserRoute>
+  /** Removes routes (all with null); returns how many went. */
+  removeRoutes(ids: number[] | null): Promise<number>
+  /** The size Claude gave the page; null: it fills its part of the tab. */
+  viewport(): ViewportSize | null
+  /**
+   * Adds lines of a Playwright test for what the action did (browser_generate_test); they count once
+   * the action is done. before: ahead of the action's other lines; beforeLast: ahead of the step before
+   * (a dialog's answer, which Playwright needs before the action that opens it).
+   */
+  record(lines: string[], where?: 'step' | 'before' | 'beforeLast'): void
   /** A dialog that blocks the page until it is answered (one the page opened while Claude didn't act). */
   dialog(): PageDialog | null
   /** Resolves when the page opens such a dialog. */
@@ -101,6 +118,14 @@ export interface ViewportSize {
   width: number
   height: number
   mobile: boolean
+}
+
+/** What an action did, as lines of a Playwright test (browser_generate_test). */
+export interface RecordedStep {
+  browserId: string
+  /** The page's address when the action started. */
+  url: string
+  code: string[]
 }
 
 /** One of Claude's actions, as `perform` runs it. */

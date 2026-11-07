@@ -5,10 +5,13 @@ import type { BrowserActivity, BrowserControlState, BrowserDownload, BrowserEmul
 import { TypedEmitter } from '../lib/typed-emitter'
 import { browserDownloads } from '../window/browser-downloads'
 import { browserLogins } from '../window/browser-logins'
+import { browserPermissions } from '../window/browser-permissions'
 import type { TerminalService } from '../services/terminal-service'
-import type { ActionContext, ActionStep, BrowserTab, ConsoleEntry, FileChooser, PageEvent } from './action-context'
+import type { ActionContext, ActionStep, BrowserTab, ConsoleEntry, FileChooser, PageEvent, RecordedStep } from './action-context'
 import { autoAttachFrames, PageFrames } from './frames'
-import { networkEvent, type NetworkEntry, shortUrl } from './network-log'
+import { endSockets, markRouted, networkEvent, type NetworkEntry, shortUrl } from './network-log'
+import { exceptionEntry, mergeError } from './page-errors'
+import { answerRequest, enableRoutes, findRoute, MAX_ROUTES, type PausedRequest, preflightMethod, type Route, routedText, routeState } from './page-routes'
 import { delay, isClaudesMouse, PageDriver, withTimeout } from './page-driver'
 import {
   caughtDialog,
@@ -38,12 +41,21 @@ const LOG_LIMIT = 300
 const CONSOLE_LIMIT = 300
 
 const PAGE_EVENT_LIMIT = 50
+/** Steps of a session's recording (browser_generate_test); older ones go. */
+const RECORDING_LIMIT = 500
 
 interface Control {
   sessionId: string
   busy: boolean
   takenOver: boolean
   lastActionAt: number
+}
+
+/** The lines of a Playwright test one action recorded (see `ActionContext.record`). */
+interface Recorded {
+  before: string[]
+  code: string[]
+  beforeLast: string[]
 }
 
 interface Browser {
@@ -59,6 +71,11 @@ interface Browser {
   /** By session and request id of the protocol. */
   network: Map<string, NetworkEntry>
   nextRequest: number
+  /** What Claude's routes did with requests the network log doesn't know yet. */
+  routed: Map<string, string>
+  /** Claude's routes for the page's requests (browser_route), oldest first; they end with the session. */
+  routes: Route[]
+  nextRoute: number
   /** The page's frames of other sites and their DevTools sessions. */
   frames: PageFrames
   /** The last snapshot Claude got of the page, to send only what changed after the next action. */
@@ -117,6 +134,8 @@ export class BrowserControl extends TypedEmitter<Events> {
   /** The session that opened a browser (it may close it again), by the browser. */
   private readonly openedBy = new Map<string, string>()
   private readonly listening = new WeakSet<WebContents>()
+  /** What each session did in its browsers, as steps of a Playwright test (browser_generate_test). */
+  private readonly recordings = new Map<string, RecordedStep[]>()
 
   constructor(private readonly terminals: TerminalService) {
     super()
@@ -126,6 +145,7 @@ export class BrowserControl extends TypedEmitter<Events> {
       const open = new Set(list.map((t) => t.id))
       for (const id of [...this.browsers.keys()]) if (!open.has(id)) this.forget(id)
       for (const [browser, session] of [...this.openedBy]) if (!open.has(browser) || !open.has(session)) this.openedBy.delete(browser)
+      for (const session of [...this.recordings.keys()]) if (!open.has(session)) this.recordings.delete(session)
       for (const [session, browser] of [...this.sessionBrowsers]) {
         if (!open.has(session)) this.sessionBrowsers.delete(session)
         else if (!open.has(browser)) {
@@ -142,6 +162,7 @@ export class BrowserControl extends TypedEmitter<Events> {
           browser.lastSnapshot = null
           void this.dropViewport(browser)
           void this.dropEmulation(browser)
+          void this.dropRoutes(browser)
           this.emitControl(browser)
         }
       }
@@ -252,8 +273,44 @@ export class BrowserControl extends TypedEmitter<Events> {
     if (!browser.emulation) return
     browser.emulation = null
     const contents = browser.contents
-    if (!contents || contents.isDestroyed() || !contents.debugger.isAttached()) return
+    if (!contents || contents.isDestroyed()) return
+    browserPermissions.set(contents, {})
+    if (!contents.debugger.isAttached()) return
     await applyEmulation(new PageDriver(contents), null, browser.viewport?.mobile ?? false, browser.frames.frameSessions()).catch(() => undefined)
+  }
+
+  /** The user's way back from Claude's routes for the page's requests. */
+  async resetRoutes(browserId: string): Promise<void> {
+    const browser = this.browsers.get(browserId)
+    if (!browser?.routes.length) return
+    await this.dropRoutes(browser)
+    this.addActivity(browser, { kind: 'control', label: 'Du hast die Routen beendet', status: 'done' })
+    this.emitControl(browser)
+  }
+
+  /** The page's requests go to the network again, all of them. */
+  private async dropRoutes(browser: Browser): Promise<void> {
+    if (browser.routes.length === 0) return
+    browser.routes = []
+    await this.applyRoutes(browser)
+  }
+
+  /** Has the protocol hold the requests of the browser's routes, in the page and its frames in processes of their own. */
+  private async applyRoutes(browser: Browser): Promise<void> {
+    const contents = browser.contents
+    if (!contents || contents.isDestroyed() || !contents.debugger.isAttached()) return
+    const page = new PageDriver(contents)
+    await enableRoutes(page, undefined, browser.routes)
+    for (const session of browser.frames.frameSessions()) await enableRoutes(page, session, browser.routes).catch(() => undefined)
+  }
+
+  /** What a session did in its browsers so far, as steps of a Playwright test. */
+  recording(sessionId: string): RecordedStep[] {
+    return (this.recordings.get(sessionId) ?? []).map((step) => ({ ...step, code: [...step.code] }))
+  }
+
+  clearRecording(sessionId: string): void {
+    this.recordings.delete(sessionId)
   }
 
   /**
@@ -288,6 +345,8 @@ export class BrowserControl extends TypedEmitter<Events> {
     let image: string | null = null
     /** What the action waits on besides its work; it ends with it. */
     const cleanups: Array<() => void> = []
+    /** The lines of a Playwright test the action recorded; they count once it is done. */
+    const recorded: Recorded = { before: [], code: [], beforeLast: [] }
     try {
       const contents = await this.contentsOf(browser)
       // A page that was hidden gets its size from the window first.
@@ -298,12 +357,14 @@ export class BrowserControl extends TypedEmitter<Events> {
         throw new ToolError(`${describeDialog(browser.dialog)} Answer it with browser_handle_dialog first.`)
       }
       if (!browser.dialog) await this.catchDialogs(browser, page)
-      const ctx = this.context(browser, page, activity, cleanups, {
+      const startUrl = contents.getURL()
+      const ctx = this.context(browser, page, activity, cleanups, recorded, {
         note: (text) => (detail = text),
         image: (data) => (image = data),
       })
       const result = await work(ctx)
       this.updateActivity(browser, activity, { status: 'done', detail, image, durationMs: Date.now() - started })
+      this.commitRecording(sessionId, browser.id, startUrl, recorded)
       return result
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -319,6 +380,18 @@ export class BrowserControl extends TypedEmitter<Events> {
       this.scheduleIdle(browser)
       this.releaseDialogs(browser)
     }
+  }
+
+  /** Adds what an action recorded to its session's recording. */
+  private commitRecording(sessionId: string, browserId: string, url: string, recorded: Recorded): void {
+    const steps = this.recordings.get(sessionId) ?? []
+    const last = steps.at(-1)
+    if (recorded.beforeLast.length && last) last.code.unshift(...recorded.beforeLast)
+    else recorded.before.unshift(...recorded.beforeLast)
+    const code = [...recorded.before, ...recorded.code]
+    if (code.length) steps.push({ browserId, url, code })
+    if (steps.length > RECORDING_LIMIT) steps.splice(0, steps.length - RECORDING_LIMIT)
+    if (steps.length) this.recordings.set(sessionId, steps)
   }
 
   /** The page answers its dialogs itself from now on, until `releaseDialogs`. */
@@ -356,6 +429,7 @@ export class BrowserControl extends TypedEmitter<Events> {
     page: PageDriver,
     activity: BrowserActivity,
     cleanups: Array<() => void>,
+    recorded: Recorded,
     sink: { note(text: string): void; image(data: string): void },
   ): ActionContext {
     return {
@@ -394,6 +468,30 @@ export class BrowserControl extends TypedEmitter<Events> {
         browser.emulation = emulation && isEmulating(emulation) ? { ...emulation } : null
         await applyEmulation(page, browser.emulation, browser.viewport?.mobile ?? false, browser.frames.frameSessions())
         this.emitControl(browser)
+      },
+      routes: () => browser.routes.map(routeState),
+      addRoute: async (spec) => {
+        if (browser.routes.length >= MAX_ROUTES) throw new ToolError(`There are ${MAX_ROUTES} routes already; remove some first.`)
+        const route: Route = { ...spec, id: browser.nextRoute++, hits: 0 }
+        browser.routes.push(route)
+        await this.applyRoutes(browser)
+        this.emitControl(browser)
+        return routeState(route)
+      },
+      removeRoutes: async (ids) => {
+        const before = browser.routes.length
+        browser.routes = ids === null ? [] : browser.routes.filter((route) => !ids.includes(route.id))
+        const removed = before - browser.routes.length
+        if (removed) {
+          await this.applyRoutes(browser)
+          this.emitControl(browser)
+        }
+        return removed
+      },
+      viewport: () => (browser.viewport ? { width: browser.viewport.width, height: browser.viewport.height, mobile: browser.viewport.mobile } : null),
+      record: (lines, where = 'step') => {
+        const list = where === 'before' ? recorded.before : where === 'beforeLast' ? recorded.beforeLast : recorded.code
+        list.push(...lines)
       },
       dialog: () => browser.dialog,
       untilDialog: () => browser.dialogSignal.promise,
@@ -548,17 +646,23 @@ export class BrowserControl extends TypedEmitter<Events> {
     // A new connection starts without the phone mode and the emulation Claude chose.
     if (browser.viewport?.mobile) await setPhoneMode(page, true, browser.emulation?.locale ?? null).catch(() => undefined)
     if (browser.emulation) await applyEmulation(page, browser.emulation, browser.viewport?.mobile ?? false, []).catch(() => undefined)
+    if (browser.routes.length) await enableRoutes(page, undefined, browser.routes).catch(() => undefined)
     browser.dialogScript = null
     browser.protocol = true
   }
 
-  /** A frame in a process of its own got its session: requests, frames in it and Claude's emulation; then it may run. */
+  /**
+   * A frame in a process of its own got its session: requests, errors, frames in it, Claude's
+   * emulation and routes; then it may run.
+   */
   private async setUpFrame(browser: Browser, contents: WebContents, session: string): Promise<void> {
     const page = new PageDriver(contents)
     try {
       await page.cdpIn(session, 'Network.enable').catch(() => undefined)
+      await page.cdpIn(session, 'Runtime.enable').catch(() => undefined)
       await autoAttachFrames(page, session)
       if (browser.emulation) await applyFrameEmulation(page, session, browser.emulation, browser.viewport?.mobile ?? false)
+      if (browser.routes.length) await enableRoutes(page, session, browser.routes).catch(() => undefined)
     } finally {
       // It waits for this (autoAttachFrames), whatever went wrong.
       await page.cdpIn(session, 'Runtime.runIfWaitingForDebugger').catch(() => undefined)
@@ -578,6 +682,11 @@ export class BrowserControl extends TypedEmitter<Events> {
       }
       return
     }
+    // A held request must go on, also one of a page the browser left.
+    if (method === 'Fetch.requestPaused') {
+      void this.onPaused(browser, contents, params as unknown as PausedRequest & { networkId?: string }, session)
+      return
+    }
     if (browser.contents !== contents) return
     if (method.startsWith('Network.')) {
       const warning = networkEvent(browser, method, params, session)
@@ -587,6 +696,9 @@ export class BrowserControl extends TypedEmitter<Events> {
     switch (method) {
       case 'Target.detachedFromTarget':
         browser.frames.detached(params.sessionId as string)
+        return
+      case 'Runtime.exceptionThrown':
+        this.addConsole(browser, exceptionEntry(params, session !== undefined))
         return
       case 'Runtime.bindingCalled': {
         if (params.name !== DIALOG_BINDING || session !== undefined) return
@@ -616,20 +728,47 @@ export class BrowserControl extends TypedEmitter<Events> {
         if (session !== undefined) return
         browser.chooser = { backendNodeId: Number(params.backendNodeId), multiple: params.mode === 'selectMultiple' }
         return
+      case 'Page.frameNavigated':
+        // A new document in the tab: the WebSockets of the one before went with it, without an event.
+        if (session === undefined && !(params.frame as { parentId?: string } | undefined)?.parentId) endSockets(browser)
+        return
     }
   }
 
   private onConsole(browser: Browser, contents: WebContents, event: { level?: string; message?: string; sourceId?: string; lineNumber?: number }): void {
     if (browser.contents !== contents) return
-    const entry: ConsoleEntry = {
+    this.addConsole(browser, {
       at: new Date().toISOString(),
       level: String(event.level ?? 'info'),
       text: String(event.message ?? '').slice(0, 2000),
       source: event.sourceId ? `${event.sourceId}:${event.lineNumber ?? 0}` : '',
-    }
-    browser.consoleEntries.push(entry)
+      stack: null,
+    })
+  }
+
+  /** A message of the console or an error the page didn't catch; both report such an error, it is one entry. */
+  private addConsole(browser: Browser, entry: ConsoleEntry): void {
+    if (!mergeError(browser.consoleEntries, entry)) return
     if (browser.consoleEntries.length > CONSOLE_LIMIT) browser.consoleEntries.shift()
     if (entry.level === 'error') this.pageWarning(browser, 'console', `Konsole: ${entry.text.split('\n')[0].slice(0, 200)}`)
+  }
+
+  /** A request the protocol holds for Claude's routes: answered by the newest route that takes it, else let go. */
+  private async onPaused(browser: Browser, contents: WebContents, paused: PausedRequest & { networkId?: string }, session: string | undefined): Promise<void> {
+    const page = new PageDriver(contents)
+    const preflight = preflightMethod(paused.request)
+    const route = browser.contents === contents ? (findRoute(browser.routes, paused.request.url, paused.request.method, preflight) ?? null) : null
+    if (route && !preflight) {
+      route.hits++
+      if (route.timesLeft !== null && --route.timesLeft <= 0) {
+        browser.routes = browser.routes.filter((r) => r !== route)
+        void this.applyRoutes(browser).catch(() => undefined)
+      }
+      markRouted(browser, session, paused.networkId ?? paused.requestId, routedText(route))
+      this.pageNote(browser, 'route', `Route ${route.id}: ${paused.request.method} ${shortUrl(paused.request.url)}`, 'done')
+      this.emitControl(browser)
+    }
+    await answerRequest(page, session, paused, route)
   }
 
   /** A download of a browser's page started or ended: in its log while Claude drives it, and for Claude. */
@@ -665,9 +804,14 @@ export class BrowserControl extends TypedEmitter<Events> {
 
   /** An error the page reported by itself, in the log while Claude drives it; repeats are left out. */
   private pageWarning(browser: Browser, kind: string, label: string): void {
+    this.pageNote(browser, kind, label, 'warning')
+  }
+
+  /** Something the page did by itself, in the log while Claude drives it; repeats are left out. */
+  private pageNote(browser: Browser, kind: string, label: string, status: 'warning' | 'done'): void {
     if (!browser.control) return
     if (browser.log.slice(-20).some((a) => a.kind === kind && a.label === label)) return
-    this.addActivity(browser, { kind, label, status: 'warning' })
+    this.addActivity(browser, { kind, label, status })
   }
 
   private waitForRelease(browser: Browser): Promise<boolean> {
@@ -699,6 +843,9 @@ export class BrowserControl extends TypedEmitter<Events> {
         consoleEntries: [],
         network: new Map(),
         nextRequest: 1,
+        routed: new Map(),
+        routes: [],
+        nextRoute: 1,
         frames: new PageFrames(),
         lastSnapshot: null,
         emulation: null,
@@ -754,7 +901,8 @@ export class BrowserControl extends TypedEmitter<Events> {
       active: this.isActive(browser),
       takenOver: control.takenOver,
       viewport: browser.viewport ? { ...browser.viewport } : null,
-      emulation: browser.emulation ? { ...browser.emulation } : null,
+      emulation: browser.emulation ? { ...browser.emulation, permissions: { ...browser.emulation.permissions } } : null,
+      routes: browser.routes.map(routeState),
     }
   }
 

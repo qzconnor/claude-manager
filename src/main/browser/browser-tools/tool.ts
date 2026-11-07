@@ -12,6 +12,8 @@ import type { BrowserTools } from './index'
 export interface Reply {
   text: string
   image?: NativeImage
+  /** More pictures after `image` (e.g. one per page width). */
+  images?: NativeImage[]
 }
 
 export interface ToolDefinition<P> {

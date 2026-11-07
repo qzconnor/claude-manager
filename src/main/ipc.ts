@@ -216,6 +216,7 @@ export function registerIpc(ctx: AppContext): void {
   ipcMain.handle(IpcInvoke.browserClearData, () => clearBrowserData())
   ipcMain.handle(IpcInvoke.browserResetViewport, (_e, id: unknown) => ctx.browser.resetViewport(requireString(id, 'id')))
   ipcMain.handle(IpcInvoke.browserResetEmulation, (_e, id: unknown) => ctx.browser.resetEmulation(requireString(id, 'id')))
+  ipcMain.handle(IpcInvoke.browserResetRoutes, (_e, id: unknown) => ctx.browser.resetRoutes(requireString(id, 'id')))
   ipcMain.handle(IpcInvoke.browserClaudeInChrome, () => claudeInChromeStatus(ctx.accounts))
   ipcMain.handle(IpcInvoke.browserDownloads, () => browserDownloads.list())
   ipcMain.handle(IpcInvoke.browserDownloadAction, (_e, id: unknown, action: unknown) => {

@@ -6,7 +6,23 @@ import { isFrameRef } from '../frames'
 import { delay, type ElementBox, type MouseButton } from '../page-driver'
 import type { ActionContext } from '../action-context'
 import { type Args, cut, oneOf, optionalBoolean, optionalNumber, optionalString, requiredString, stringList, ToolError } from '../tool-args'
-import { center, CLICK_AFTER_MOVE_MS, element, pageState, quote, ref, refOf, SHOW_MS, target, targetName, tool, type ToolDefinition, untilBlocked } from './tool'
+import { clickOptions, dialogCode, locate, str } from './test-code'
+import {
+  center,
+  CLICK_AFTER_MOVE_MS,
+  element,
+  pageState,
+  quote,
+  ref,
+  refOf,
+  type Reply,
+  SHOW_MS,
+  target,
+  targetName,
+  tool,
+  type ToolDefinition,
+  untilBlocked,
+} from './tool'
 
 /** Tools that act in the page like the user: click, type, keys, scroll, drag, forms, files, dialogs. */
 
@@ -31,34 +47,49 @@ export const interactionTools: ToolDefinition<never>[] = [
   tool({
     name: 'browser_click',
     title: 'Click',
-    description: 'Clicks an element of the page with the mouse.',
+    description:
+      'Clicks an element of the page with the mouse; or a spot of the viewport (x and y instead of ref) for what has no elements to click: a canvas, a map, a game.',
     properties: {
-      ref,
+      ref: { ...ref, description: `${ref.description} Or give x and y instead.` },
       element,
+      x: { type: 'number', description: "Instead of ref: CSS pixels from the left of the viewport (a screenshot tells the viewport's size)." },
+      y: { type: 'number', description: 'Instead of ref: CSS pixels from the top of the viewport.' },
       doubleClick: { type: 'boolean', description: 'Double-click instead.' },
       button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'Default: left.' },
       modifiers: { type: 'array', items: { type: 'string', enum: ['Alt', 'Control', 'Meta', 'Shift'] }, description: 'Keys held while clicking.' },
     },
-    required: ['ref'],
     kind: 'click',
-    parse: (args) => ({
-      ref: refOf(args),
-      element: optionalString(args, 'element', 200),
-      doubleClick: optionalBoolean(args, 'doubleClick') ?? false,
-      button: oneOf(args, 'button', ['left', 'right', 'middle'] as const, 'left') as MouseButton,
-      modifiers: modifierBits(args),
-    }),
-    label: (p) => `${p.doubleClick ? 'Doppelklickt' : 'Klickt'} auf ${p.element ? quote(p.element) : p.ref}`,
+    parse: (args) => {
+      const spot = args.ref === undefined || args.ref === null
+      const x = spot ? optionalNumber(args, 'x', 0, 100_000) : undefined
+      const y = spot ? optionalNumber(args, 'y', 0, 100_000) : undefined
+      if (spot && (x === undefined || y === undefined)) throw new ToolError('Give the ref of an element, or x and y of a spot in the viewport.')
+      return {
+        ref: spot ? null : refOf(args),
+        at: spot ? { x: x!, y: y! } : null,
+        element: optionalString(args, 'element', 200),
+        doubleClick: optionalBoolean(args, 'doubleClick') ?? false,
+        button: oneOf(args, 'button', ['left', 'right', 'middle'] as const, 'left') as MouseButton,
+        modifiers: modifierBits(args),
+        modifierNames: (args.modifiers as string[] | undefined) ?? [],
+      }
+    },
+    label: (p) => `${p.doubleClick ? 'Doppelklickt' : 'Klickt'} ${p.at ? `bei ${Math.round(p.at.x)}, ${Math.round(p.at.y)}` : `auf ${p.element ? quote(p.element) : p.ref}`}`,
     run: async (ctx, p) => {
       const verb = p.doubleClick ? 'Doppelklickt' : p.button === 'right' ? 'Rechtsklickt' : 'Klickt'
-      const box = await target(ctx, p.ref, p.element, (name) => `${verb} auf ${name}`, 'click')
+      const clickOnce = (x: number, y: number) =>
+        ctx.interceptFileChooser(() =>
+          untilBlocked(ctx, async () => {
+            await ctx.page.click(x, y, { button: p.button, clickCount: p.doubleClick ? 2 : 1, modifiers: p.modifiers })
+            await ctx.page.settle(ACTION_SETTLE_MS)
+          }),
+        )
+      if (p.at) return clickAt(ctx, p.at, verb, p, clickOnce)
+      const locator = await locate(ctx, p.ref!)
+      const box = await target(ctx, p.ref!, p.element, (name) => `${verb} auf ${name}`, 'click')
       const { x, y } = center(box)
-      await ctx.interceptFileChooser(() =>
-        untilBlocked(ctx, async () => {
-          await ctx.page.click(x, y, { button: p.button, clickCount: p.doubleClick ? 2 : 1, modifiers: p.modifiers })
-          await ctx.page.settle(ACTION_SETTLE_MS)
-        }),
-      )
+      await clickOnce(x, y)
+      if (locator) ctx.record([`await ${locator}.${p.doubleClick ? 'dblclick' : 'click'}(${clickOptions({ button: p.button, modifiers: p.modifierNames })})`])
       const notes = [`Clicked ${describe(box, p.element)}.`]
       if (box.covered) notes.push(`Note: ${box.covered} lay over the element, the click may have hit it instead.`)
       if (ctx.fileChooser()) notes.push('A file chooser opened: pick files with browser_file_upload (without ref).')
@@ -87,6 +118,7 @@ export const interactionTools: ToolDefinition<never>[] = [
     }),
     label: (p) => `Tippt in ${p.element ? quote(p.element) : p.ref}`,
     run: async (ctx, p) => {
+      const locator = await locate(ctx, p.ref)
       const box = await target(ctx, p.ref, p.element, (name) => `Tippt in ${name}`, 'click')
       // What goes into a password field stays out of the log.
       ctx.label(`Tippt ${box.secret ? '••••' : quote(cut(p.text, 60))} in ${targetName(box, p.element)}`)
@@ -102,6 +134,7 @@ export const interactionTools: ToolDefinition<never>[] = [
         await ctx.page.settle(p.submit ? ACTION_SETTLE_MS : 300)
       })
       ctx.note(box.secret ? 'Passwort eingegeben' : `${p.text.length} Zeichen`)
+      if (locator) ctx.record(typeCode(locator, p.text, box.secret, p.append, p.submit))
       return { text: `Typed into ${describe(box, p.element)}${p.submit ? ' and pressed Enter' : ''}.${notes.length ? `\n${notes.join('\n')}` : ''}\n\n${await pageState(ctx)}` }
     },
   }),
@@ -128,6 +161,7 @@ export const interactionTools: ToolDefinition<never>[] = [
         await ctx.page.press(key)
         await ctx.page.settle(ACTION_SETTLE_MS)
       })
+      ctx.record([`await page.keyboard.press(${str(key)})`])
       return { text: `Pressed ${key}.\n\n${await pageState(ctx)}` }
     },
   }),
@@ -141,10 +175,12 @@ export const interactionTools: ToolDefinition<never>[] = [
     parse: (args) => ({ ref: refOf(args), element: optionalString(args, 'element', 200) }),
     label: (p) => `Zeigt auf ${p.element ? quote(p.element) : p.ref}`,
     run: async (ctx, p) => {
+      const locator = await locate(ctx, p.ref)
       const box = await target(ctx, p.ref, p.element, (name) => `Zeigt auf ${name}`, 'move')
       const { x, y } = center(box)
       await ctx.page.hover(x, y)
       await delay(300)
+      if (locator) ctx.record([`await ${locator}.hover()`])
       return { text: `Hovering over ${describe(box, p.element)}.\n\n${await pageState(ctx)}` }
     },
   }),
@@ -158,9 +194,11 @@ export const interactionTools: ToolDefinition<never>[] = [
     parse: (args) => ({ ref: refOf(args), element: optionalString(args, 'element', 200), values: stringList(args, 'values', 50) }),
     label: (p) => `Wählt ${p.values.map(quote).join(', ')}`,
     run: async (ctx, p) => {
+      const locator = await locate(ctx, p.ref)
       const box = await target(ctx, p.ref, p.element, (name) => `Wählt ${p.values.map((v) => quote(cut(v, 40))).join(', ')} in ${name}`, 'move')
       const chosen = await ctx.page.callAt<string[]>(p.ref, 'selectOptions', p.values)
       await ctx.page.settle(ACTION_SETTLE_MS)
+      if (locator) ctx.record([selectCode(locator, chosen)])
       return { text: `Selected ${chosen.map((c) => JSON.stringify(c)).join(', ')} in ${describe(box, p.element)}.\n\n${await pageState(ctx)}` }
     },
   }),
@@ -182,7 +220,9 @@ export const interactionTools: ToolDefinition<never>[] = [
     label: (p) => (p.ref ? `Scrollt zu ${p.ref}` : scrollLabel(p.direction)),
     run: async (ctx, p) => {
       if (p.ref) {
+        const locator = await locate(ctx, p.ref)
         const box = await target(ctx, p.ref, undefined, (name) => `Scrollt zu ${name}`, null)
+        if (locator) ctx.record([`await ${locator}.scrollIntoViewIfNeeded()`])
         return { text: `Scrolled ${describe(box)} into view.\n\n${await pageState(ctx)}` }
       }
       const metrics = await ctx.page.cdp<{ cssLayoutViewport: { clientWidth: number; clientHeight: number } }>('Page.getLayoutMetrics')
@@ -193,6 +233,7 @@ export const interactionTools: ToolDefinition<never>[] = [
       await delay(ctx.highlight(scrollLabel(p.direction), null, { x: width / 2, y: height / 2 }))
       await ctx.page.wheel(width / 2, height / 2, vertical ? 0 : sign * distance, vertical ? sign * distance : 0)
       await delay(400)
+      ctx.record([`await page.mouse.wheel(${vertical ? 0 : sign * distance}, ${vertical ? sign * distance : 0})`])
       const at = await ctx.page.call<{ x: number; y: number; height: number; viewport: number }>('scrollInfo')
       return { text: `Scrolled ${p.direction}; now ${at.y} of ${Math.max(0, at.height - at.viewport)} px down.\n\n${await pageState(ctx)}` }
     },
@@ -227,6 +268,7 @@ export const interactionTools: ToolDefinition<never>[] = [
       const names = p.paths.map((path) => path.split(/[\\/]/).pop()).join(', ')
       if (p.ref) {
         if (isFrameRef(p.ref)) throw new ToolError('This file input is inside a frame of another site; click it and use browser_file_upload without ref.')
+        const locator = await locate(ctx, p.ref)
         const box = await target(ctx, p.ref, p.element, () => `Lädt ${cut(names, 80)} hoch`, 'move')
         const mark = randomUUID()
         const topDocument = await ctx.page.call<boolean>('markFileInput', p.ref, mark)
@@ -243,6 +285,7 @@ export const interactionTools: ToolDefinition<never>[] = [
           await ctx.page.call('unmarkFileInput', mark).catch(() => undefined)
         }
         await ctx.page.settle(ACTION_SETTLE_MS)
+        if (locator) ctx.record([`await ${locator}.setInputFiles([${p.paths.map(str).join(', ')}])`])
         return { text: `Put ${names} into ${describe(box, p.element)}.\n\n${await pageState(ctx)}` }
       }
       const chooser = ctx.fileChooser()
@@ -252,6 +295,8 @@ export const interactionTools: ToolDefinition<never>[] = [
       await ctx.page.cdp('DOM.setFileInputFiles', { files: p.paths, backendNodeId: chooser.backendNodeId })
       ctx.clearFileChooser()
       await ctx.page.settle(ACTION_SETTLE_MS)
+      // The chooser opened with the click before: Playwright wants its handler ahead of that click.
+      ctx.record([`page.once('filechooser', (chooser) => chooser.setFiles([${p.paths.map(str).join(', ')}]))`], 'beforeLast')
       return { text: `Picked ${names}.\n\n${await pageState(ctx)}` }
     },
   }),
@@ -284,6 +329,8 @@ export const interactionTools: ToolDefinition<never>[] = [
       ctx.note(cut(dialog.message, 120))
       await ctx.page.cdp('Page.handleJavaScriptDialog', { accept: p.accept, ...(p.promptText !== undefined ? { promptText: p.promptText } : {}) })
       await ctx.page.settle(ACTION_SETTLE_MS)
+      // The dialog came with the action before: Playwright wants its handler ahead of it.
+      ctx.record([dialogCode(p.accept ? (p.promptText !== undefined ? JSON.stringify(p.promptText) : 'OK') : 'Cancel')], 'beforeLast')
       return { text: `${p.accept ? 'Accepted' : 'Dismissed'} the ${dialog.type} dialog.\n\n${await pageState(ctx)}` }
     },
   }),
@@ -307,6 +354,8 @@ export const interactionTools: ToolDefinition<never>[] = [
     }),
     label: (p) => `Zieht ${p.startElement ? quote(p.startElement) : p.startRef} auf ${p.endElement ? quote(p.endElement) : p.endRef}`,
     run: async (ctx, p) => {
+      const from = await locate(ctx, p.startRef)
+      const to = await locate(ctx, p.endRef)
       const pair = await ctx.page.locatePair(p.startRef, p.endRef)
       if (!pair.together) {
         throw new ToolError('The element and the target are not in view together. Scroll so that both are visible, or drag in steps.')
@@ -323,6 +372,7 @@ export const interactionTools: ToolDefinition<never>[] = [
         dragged.kind = await ctx.page.drag(start, end, Math.max(MIN_DRAG_MS, glide))
         await ctx.page.settle(ACTION_SETTLE_MS)
       })
+      if (from && to) ctx.record([`await ${from}.dragTo(${to})`])
       const how = dragged.kind === 'drop' ? ' (drag and drop of the page)' : ''
       return { text: `Dragged ${describe(pair.from, p.startElement)} onto ${describe(pair.to, p.endElement)}${how}.\n\n${await pageState(ctx)}` }
     },
@@ -359,9 +409,10 @@ export const interactionTools: ToolDefinition<never>[] = [
     label: ({ fields }) => formLabel(fields.length),
     run: async (ctx, { fields }) => {
       const done: string[] = []
+      const code: string[] = []
       for (const field of fields) {
         try {
-          done.push(await fillField(ctx, field))
+          done.push(await fillField(ctx, field, code))
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           const before = done.length ? `Filled ${done.length} of ${fields.length} fields:\n${done.map((line) => `- ${line}`).join('\n')}\n` : ''
@@ -372,12 +423,58 @@ export const interactionTools: ToolDefinition<never>[] = [
       }
       ctx.label(formLabel(fields.length))
       ctx.note(`${done.length} von ${fields.length} Feldern`)
+      ctx.record(code)
       await ctx.page.settle(300)
       const rest = done.length < fields.length ? `\nStopped after ${done.length} of ${fields.length} fields.` : ''
       return { text: `Filled ${done.length} field(s):\n${done.map((line) => `- ${line}`).join('\n')}${rest}\n\n${await pageState(ctx)}` }
     },
   }),
 ]
+
+/** A click at a spot of the viewport (browser_click with x and y): shown, done, and what was there. */
+async function clickAt(
+  ctx: ActionContext,
+  at: { x: number; y: number },
+  verb: string,
+  p: { doubleClick: boolean; button: MouseButton; modifierNames: string[] },
+  click: (x: number, y: number) => Promise<void>,
+): Promise<Reply> {
+  const viewport = await ctx.page.viewportSize()
+  if (at.x > viewport.width || at.y > viewport.height) {
+    throw new ToolError(`(${at.x}, ${at.y}) is outside the viewport, which is ${viewport.width}×${viewport.height} CSS px.`)
+  }
+  const hit = await ctx.page.call<{ role: string; name: string; short: string } | null>('hitAt', at.x, at.y).catch(() => null)
+  const what = hit ? `${hit.role}${hit.name ? ` "${cut(hit.name, 60)}"` : ''} (${hit.short})` : 'nothing'
+  const label = `${verb} bei ${Math.round(at.x)}, ${Math.round(at.y)}${hit?.name ? ` (${quote(cut(hit.name, 40))})` : ''}`
+  ctx.label(label)
+  await delay(Math.max(SHOW_MS, ctx.highlight(label, null, { ...at, click: true }) + CLICK_AFTER_MOVE_MS))
+  await click(at.x, at.y)
+  const options = clickOptions({ button: p.button })
+  const x = Math.round(at.x * 10) / 10
+  const y = Math.round(at.y * 10) / 10
+  ctx.record([
+    ...(p.modifierNames.length ? [`// Claude held ${p.modifierNames.join('+')} for this click: use page.keyboard.down() and up() around it.`] : []),
+    `await page.mouse.${p.doubleClick ? 'dblclick' : 'click'}(${x}, ${y}${options ? `, ${options}` : ''})`,
+  ])
+  const notes = [`Clicked at (${x}, ${y}) on ${what}.`]
+  if (ctx.fileChooser()) notes.push('A file chooser opened: pick files with browser_file_upload (without ref).')
+  return { text: `${notes.join('\n')}\n\n${await pageState(ctx)}` }
+}
+
+/** Typing as Playwright code: fill (or type at the end), Enter; a password comes from the environment. */
+function typeCode(locator: string, text: string, secret: boolean, append: boolean, submit: boolean): string[] {
+  const value = secret ? `process.env.TEST_PASSWORD ?? ''` : str(text)
+  const lines = secret ? ['// The password is not recorded: set TEST_PASSWORD.'] : []
+  lines.push(`await ${locator}.${append ? 'pressSequentially' : 'fill'}(${value})`)
+  if (submit) lines.push(`await ${locator}.press('Enter')`)
+  return lines
+}
+
+/** Options chosen in a <select>, by their text, as Playwright code. */
+function selectCode(locator: string, chosen: string[]): string {
+  const labels = chosen.map((text) => `{ label: ${str(text)} }`)
+  return `await ${locator}.selectOption(${labels.length === 1 ? labels[0] : `[${labels.join(', ')}]`})`
+}
 
 function describe(box: ElementBox, element?: string): string {
   const name = element?.trim() || box.name
@@ -397,9 +494,16 @@ function truthy(value: string): boolean {
   return /^(true|1|yes|on|checked|ja|x)$/i.test(value.trim())
 }
 
-/** Fills one field of browser_fill_form, shown like the single tools do; returns the line for the result. */
-async function fillField(ctx: ActionContext, field: FormField): Promise<string> {
+/**
+ * Fills one field of browser_fill_form, shown like the single tools do; returns the line for the
+ * result and adds its Playwright code to `code`.
+ */
+async function fillField(ctx: ActionContext, field: FormField, code: string[]): Promise<string> {
   const state = await ctx.page.callAt<{ role: string; checked: boolean | null; select: boolean; range: boolean }>(field.ref, 'fieldState')
+  const locator = await locate(ctx, field.ref)
+  const record = (line: string) => {
+    if (locator) code.push(`await ${locator}.${line}`)
+  }
   switch (field.type) {
     case 'textbox': {
       const box = await target(ctx, field.ref, field.name, (name) => `Tippt in ${name}`, 'click')
@@ -413,12 +517,14 @@ async function fillField(ctx: ActionContext, field: FormField): Promise<string> 
         else await ctx.page.press('Delete')
       })
       if (typing.kind === 'other') throw new ToolError('it is no text field (clicked it, typed nothing)')
+      if (locator) code.push(...typeCode(locator, field.value, box.secret, false, false))
       return `${field.name}: ${box.secret ? 'password typed' : `typed ${JSON.stringify(cut(field.value, 80))}`}`
     }
     case 'checkbox':
     case 'radio': {
       if (state.checked === null) throw new ToolError(`it is no ${field.type}`)
       const wanted = truthy(field.value)
+      record(wanted ? 'check()' : 'uncheck()')
       if (state.checked === wanted) {
         await target(ctx, field.ref, field.name, (name) => `${name} ist schon ${wanted ? 'an' : 'aus'}`, 'move')
         return `${field.name}: already ${wanted ? 'checked' : 'unchecked'}`
@@ -437,12 +543,14 @@ async function fillField(ctx: ActionContext, field: FormField): Promise<string> 
       if (!state.select) throw new ToolError('it is no <select>; click it and then the option with browser_click')
       await target(ctx, field.ref, field.name, (name) => `Wählt ${quote(cut(field.value, 40))} in ${name}`, 'move')
       const chosen = await ctx.page.callAt<string[]>(field.ref, 'selectOptions', [field.value])
+      if (locator) code.push(selectCode(locator, chosen))
       return `${field.name}: selected ${JSON.stringify(chosen[0])}`
     }
     case 'slider': {
       if (!state.range) throw new ToolError('it is no range input; press the arrow keys on it with browser_press_key')
       await target(ctx, field.ref, field.name, (name) => `Stellt ${name} auf ${cut(field.value, 20)}`, 'move')
       const value = await ctx.page.callAt<string>(field.ref, 'setSliderValue', field.value)
+      record(`fill(${str(value)})`)
       return `${field.name}: set to ${value}`
     }
   }
