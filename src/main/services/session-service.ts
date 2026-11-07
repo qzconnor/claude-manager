@@ -180,6 +180,7 @@ export class SessionService extends TypedEmitter<Events> {
       accountId,
       projectKey: s.projectKey,
       cwd: s.cwd,
+      worktree: s.worktree ?? null,
       title: s.title,
       firstPrompt: s.firstPrompt,
       lastPrompt: s.lastPrompt,

@@ -24,6 +24,7 @@ import type {
   DeepPartial,
   DialogRequest,
   GitBranch,
+  WorktreeCheck,
   PaneNode,
   PaneSplit,
   SessionDetail,
@@ -112,6 +113,7 @@ export const IpcInvoke = {
   usageStats: 'usage:stats',
 
   gitBranch: 'git:branch',
+  gitWorktreeCheck: 'git:worktree-check',
 
   commandStatus: 'command:status',
   commandSetRegistered: 'command:set-registered',
@@ -377,6 +379,8 @@ export interface ManagerApi {
      */
     branch(cwd: string): Promise<GitBranch | null>
     onBranchChanged(cb: (cwd: string, branch: GitBranch | null) => void): Unsubscribe
+    /** Whether Claude Code can make a worktree for a session in `cwd`, and which ones it made there. */
+    worktreeCheck(cwd: string): Promise<WorktreeCheck>
   }
   /** The `cm` command line launcher. */
   command: {

@@ -2,11 +2,12 @@
  * Parsing of Claude Code transcript files (`<configDir>/projects/<project>/<session>.jsonl`).
  * Pure functions — used by the indexer worker thread (`toolSummary` also by the main process).
  */
-import type { TranscriptMessage, TranscriptToolCall, TranscriptToolDetail } from '@shared/types'
+import type { SessionWorktree, TranscriptMessage, TranscriptToolCall, TranscriptToolDetail } from '@shared/types'
 
 export interface ParsedSummary {
   id: string
   cwd: string | null
+  worktree: SessionWorktree | null
   title: string
   firstPrompt: string | null
   lastPrompt: string | null
@@ -113,6 +114,21 @@ function num(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
+/** The worktree of a `worktree-state` entry, as Claude Code writes it with `--worktree`. */
+export function toWorktree(value: unknown): SessionWorktree | null {
+  if (!value || typeof value !== 'object') return null
+  const w = value as Record<string, unknown>
+  const path = str(w.worktreePath)
+  const originalCwd = str(w.originalCwd)
+  if (!path || !originalCwd) return null
+  return {
+    name: str(w.worktreeName) ?? path.split(/[\\/]/).filter(Boolean).at(-1) ?? path,
+    branch: str(w.worktreeBranch),
+    path,
+    originalCwd,
+  }
+}
+
 function localDay(iso: string): string | null {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return null
@@ -140,6 +156,7 @@ export function parseTranscript(buf: Buffer, sessionId: string, withSummary: boo
   let createdAt: string | null = null
   let updatedAt: string | null = null
   let continuedIn: string | null = null
+  let worktree: SessionWorktree | null = null
   let userMessages = 0
   const assistantIds = new Set<string>()
   const usageKeys = new Set<string>()
@@ -173,6 +190,10 @@ export function parseTranscript(buf: Buffer, sessionId: string, withSummary: boo
         break
       case 'continued-in':
         continuedIn = str(e.continuedInSessionId) ?? continuedIn
+        break
+      case 'worktree-state':
+        // `null` once the session left the worktree: the latest one it worked in stays.
+        if (withSummary) worktree = toWorktree(e.worktreeSession) ?? worktree
         break
       case 'user': {
         if (!withSummary || e.isMeta || e.isSidechain) break
@@ -224,6 +245,7 @@ export function parseTranscript(buf: Buffer, sessionId: string, withSummary: boo
     summary: {
       id: sessionId,
       cwd,
+      worktree,
       title: shorten(title, 160),
       firstPrompt,
       lastPrompt: fallbackPrompt ? shorten(fallbackPrompt, 300) : null,

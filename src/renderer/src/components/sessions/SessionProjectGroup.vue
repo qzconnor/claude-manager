@@ -3,6 +3,7 @@ import {
   CheckIcon,
   ChevronRightIcon,
   CopyIcon,
+  FolderGit2Icon,
   FolderIcon,
   FolderOpenIcon,
   ListChecksIcon,
@@ -49,6 +50,8 @@ const props = defineProps<{
   terms?: string[]
   selecting?: boolean
   checked?: Set<string>
+  /** Shown from elsewhere (e.g. the dashboard): stands out for a moment. */
+  highlighted?: boolean
 }>()
 const emit = defineEmits<{
   'update:open': [open: boolean]
@@ -94,10 +97,11 @@ async function copyPath() {
     <ContextMenu @update:open="menuOpen = $event">
       <ContextMenuTrigger as-child>
         <div
+          :data-project-id="project.id"
           :class="
             cn(
-              'group/project flex h-8 items-center gap-1 rounded-md pr-1 transition-colors hover:bg-muted/60',
-              menuOpen && 'bg-muted/60',
+              'group/project flex h-8 scroll-mt-2 items-center gap-1 rounded-md pr-1 transition-colors hover:bg-muted/60',
+              (menuOpen || highlighted) && 'bg-muted/60',
             )
           "
         >
@@ -148,6 +152,10 @@ async function copyPath() {
           <ContextMenuItem :disabled="!project.path" @select="launcher.newSession(project.accountId, project.path)">
             <PlusIcon />
             Neue Session hier
+          </ContextMenuItem>
+          <ContextMenuItem :disabled="!project.path" @select="launcher.newSessionInWorktree(project.accountId, project.path)">
+            <FolderGit2Icon />
+            Neue Session in Worktree…
           </ContextMenuItem>
           <ContextMenuItem :disabled="!project.path" @select="launcher.shell(project.accountId, project.path)">
             <SquareTerminalIcon />

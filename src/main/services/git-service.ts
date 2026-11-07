@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process'
-import { watch, type FSWatcher } from 'node:fs'
+import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { GitBranch } from '@shared/types'
+import type { GitBranch, WorktreeCheck } from '@shared/types'
 import { TypedEmitter } from '../lib/typed-emitter'
 
 interface Watched {
@@ -36,6 +36,24 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
 
   dispose(): void {
     this.unwatch()
+  }
+
+  /**
+   * Whether Claude Code can make a worktree for a session in `cwd` (`claude --worktree`): that
+   * takes a repository with at least one commit. Also names the worktrees it made there before.
+   */
+  async worktreeCheck(cwd: string): Promise<WorktreeCheck> {
+    const root = await runGit(cwd, ['rev-parse', '--show-toplevel'])
+    if (!root.ok) {
+      return {
+        ok: false,
+        reason: root.missing ? 'Git ist nicht installiert oder nicht im PATH.' : 'Der Ordner liegt in keinem Git-Repository.',
+      }
+    }
+    const head = await runGit(cwd, ['rev-parse', '--verify', '--quiet', 'HEAD'])
+    if (!head.ok) return { ok: false, reason: 'Das Repository hat noch keinen Commit, von dem ein Worktree abzweigen kann.' }
+    const list = await runGit(cwd, ['worktree', 'list', '--porcelain'])
+    return { ok: true, root: root.out, existing: list.ok ? claudeWorktrees(list.out) : [] }
   }
 
   private async gitDir(cwd: string): Promise<string | null> {
@@ -90,6 +108,27 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
     this.watched?.watcher.close()
     this.watched = null
   }
+}
+
+type GitResult = { ok: true; out: string } | { ok: false; missing: boolean }
+
+function runGit(cwd: string, args: string[]): Promise<GitResult> {
+  return new Promise((resolve) => {
+    execFile('git', args, { cwd, windowsHide: true, timeout: 5000, encoding: 'utf8' }, (error, stdout) => {
+      if (error) resolve({ ok: false, missing: (error as NodeJS.ErrnoException).code === 'ENOENT' && existsSync(cwd) })
+      else resolve({ ok: true, out: stdout.trim() })
+    })
+  })
+}
+
+/** Names of the worktrees in `git worktree list --porcelain` that Claude Code made (`.claude/worktrees/<name>`). */
+export function claudeWorktrees(porcelain: string): string[] {
+  const names: string[] = []
+  for (const line of porcelain.split(/\r?\n/)) {
+    const match = /^worktree .*[\\/]\.claude[\\/]worktrees[\\/]([^\\/]+)[\\/]?$/.exec(line)
+    if (match) names.push(match[1]!)
+  }
+  return names
 }
 
 /** `ref: refs/heads/<name>` names the branch; a bare commit hash means a detached HEAD. */

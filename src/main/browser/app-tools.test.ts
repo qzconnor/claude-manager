@@ -234,6 +234,7 @@ function terminal(id: string, patch: Partial<TerminalInfo> = {}): TerminalInfo {
     pid: 1,
     createdAt: '2026-11-07T12:00:00.000Z',
     commandLine: 'claude',
+    worktree: null,
     ...patch,
   }
 }

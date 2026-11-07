@@ -658,6 +658,17 @@ export function windowName(window: UsageWindow): string {
   return window.label
 }
 
+/** Where the window heads at the current pace, as a tail for its line; empty while that can't be told. */
+function forecastText(window: UsageWindow, now: number): string {
+  const forecast = window.forecast
+  if (!forecast) return ''
+  if (forecast.exhaustsAt && Date.parse(forecast.exhaustsAt) > now) {
+    return `; at the current pace (${forecast.ratePerHour} points/hour) it reaches 100 % ${localTime(forecast.exhaustsAt, now)}, before the reset`
+  }
+  if (forecast.exhaustsAt) return ''
+  return `; at the current pace about ${Math.round(forecast.atReset)} % by the reset`
+}
+
 export interface LimitsInput {
   account: Account | null
   /** The account whose files the session uses, when its limits come from another one. */
@@ -693,7 +704,9 @@ export function formatLimits(input: LimitsInput): string {
     const windows = [usage.fiveHour, usage.sevenDay, ...usage.scoped].filter((w): w is UsageWindow => w !== null)
     if (windows.length) {
       lines.push(`Limits (${SOURCES[usage.source]}${usage.fetchedAt ? `, as of ${localTime(usage.fetchedAt)}` : ''}):`)
-      for (const w of windows) lines.push(`- ${windowName(w)}: ${Math.round(w.percent)} % used${w.resetsAt ? `, resets ${localTime(w.resetsAt, now)}` : ''}`)
+      for (const w of windows) {
+        lines.push(`- ${windowName(w)}: ${Math.round(w.percent)} % used${w.resetsAt ? `, resets ${localTime(w.resetsAt, now)}` : ''}${forecastText(w, now)}`)
+      }
     } else if (usage.status === 'ok') {
       lines.push(usage.message ?? 'There are no limits to show (e.g. an API key, billed by use).')
     }

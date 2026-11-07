@@ -153,6 +153,7 @@ describe('parseTranscript', () => {
     expect(parseTranscript(session, SESSION, true).summary).toEqual({
       id: SESSION,
       cwd: '/home/dev/app',
+      worktree: null,
       title: 'Fix login bug',
       firstPrompt: 'Fix the login bug',
       lastPrompt: 'Now add a test please',
@@ -249,6 +250,29 @@ describe('parseTranscript', () => {
     expect(summary).toMatchObject({ messageCount: 3, model: MODEL })
   })
 
+  it('keeps the latest worktree the session worked in, also after it left it', () => {
+    const state = (name: string) => ({
+      type: 'worktree-state',
+      worktreeSession: {
+        originalCwd: 'F:\\Code\\app',
+        worktreePath: `F:\\Code\\app\\.claude\\worktrees\\${name}`,
+        worktreeName: name,
+        worktreeBranch: `worktree-${name}`,
+        sessionId: SESSION,
+      },
+      sessionId: SESSION,
+    })
+    const left = { type: 'worktree-state', worktreeSession: null, sessionId: SESSION }
+    const { summary } = parseTranscript(jsonl(state('one'), state('two'), left), SESSION, true)
+    expect(summary.worktree).toEqual({
+      name: 'two',
+      branch: 'worktree-two',
+      path: 'F:\\Code\\app\\.claude\\worktrees\\two',
+      originalCwd: 'F:\\Code\\app',
+    })
+    expect(parseTranscript(jsonl(left), SESSION, true).summary.worktree).toBeNull()
+  })
+
   it('only collects token usage without the summary', () => {
     const { summary, usage } = parseTranscript(session, SESSION, false)
     expect(summary).toMatchObject({ cwd: null, gitBranch: null, version: null, model: null, firstPrompt: null, messageCount: 0 })
@@ -260,6 +284,7 @@ describe('parseTranscript', () => {
       summary: {
         id: SESSION,
         cwd: null,
+        worktree: null,
         title: 'Ohne Titel',
         firstPrompt: null,
         lastPrompt: null,

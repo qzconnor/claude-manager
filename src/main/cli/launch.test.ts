@@ -71,6 +71,7 @@ function terminal(overrides: Partial<TerminalInfo>): TerminalInfo {
     pid: 1,
     createdAt: '2026-11-06T12:00:00.000Z',
     commandLine: 'claude',
+    worktree: null,
     ...overrides,
   }
 }

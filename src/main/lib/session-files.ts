@@ -1,8 +1,8 @@
 import { cp, mkdir, open, readdir, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
-import type { SessionLimit } from '@shared/types'
+import type { SessionLimit, SessionWorktree } from '@shared/types'
 import type { ClaudePaths } from './claude-paths'
-import { toolSummary } from '../workers/transcript-parser'
+import { toolSummary, toWorktree } from '../workers/transcript-parser'
 import { readJson } from './json-file'
 
 export const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -19,6 +19,9 @@ export function projectKey(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, '-')
 }
 
+/** What follows a folder's project key in the key of its worktrees: `\.claude\worktrees\`. */
+const WORKTREE_KEY = projectKey('/.claude/worktrees/')
+
 async function isFile(path: string): Promise<boolean> {
   return stat(path).then(
     (s) => s.isFile(),
@@ -33,12 +36,25 @@ async function isDirectory(path: string): Promise<boolean> {
   )
 }
 
-/** The session's transcript, or null when nothing has been written yet. */
+/**
+ * The session's transcript, or null when nothing has been written yet. A session started with
+ * `claude --worktree` writes it to the project folder of its worktree (`<cwd>\.claude\worktrees\<name>`).
+ */
 export async function findTranscript(projectsDir: string, sessionId: string, cwd?: string | null): Promise<string | null> {
   const name = `${sessionId}.jsonl`
   if (cwd) {
-    const folder = join(projectsDir, projectKey(cwd))
-    if (await isDirectory(folder)) return (await isFile(join(folder, name))) ? join(folder, name) : null
+    const key = projectKey(cwd)
+    const folder = join(projectsDir, key)
+    if (await isDirectory(folder)) {
+      if (await isFile(join(folder, name))) return join(folder, name)
+      const worktrees = (await readdir(projectsDir, { withFileTypes: true }).catch(() => [])).filter(
+        (entry) => entry.isDirectory() && entry.name.startsWith(`${key}${WORKTREE_KEY}`),
+      )
+      for (const worktree of worktrees) {
+        if (await isFile(join(projectsDir, worktree.name, name))) return join(projectsDir, worktree.name, name)
+      }
+      return null
+    }
   }
   // Very long paths get a shortened folder name: search all projects.
   const folders = await readdir(projectsDir, { withFileTypes: true }).catch(() => [])
@@ -51,15 +67,32 @@ export async function findTranscript(projectsDir: string, sessionId: string, cwd
 }
 
 /**
- * The session Claude Code currently has open in process `pid`. Claude Code keeps
- * `<config>/sessions/<pid>.json` up to date, also after `/clear` or `/resume`.
+ * The session Claude Code currently has open in process `pid`, with the folder it works in (e.g. its
+ * worktree) when the file names it. Claude Code keeps `<config>/sessions/<pid>.json` up to date, also
+ * after `/clear` or `/resume`, and writes it at once, before the transcript.
  * `since` (ms) skips a file left behind by an earlier process with the same pid.
  */
-export async function readLiveSessionId(sessionsDir: string, pid: number, since: number): Promise<string | null> {
-  const data = await readJson<{ pid?: unknown; sessionId?: unknown; startedAt?: unknown }>(join(sessionsDir, `${pid}.json`))
+export async function readLiveSession(
+  sessionsDir: string,
+  pid: number,
+  since: number,
+): Promise<{ sessionId: string; cwd: string | null } | null> {
+  const data = await readJson<{ pid?: unknown; sessionId?: unknown; startedAt?: unknown; cwd?: unknown }>(
+    join(sessionsDir, `${pid}.json`),
+  )
   if (!data || data.pid !== pid || typeof data.sessionId !== 'string' || !SESSION_ID_RE.test(data.sessionId)) return null
   if (typeof data.startedAt === 'number' && data.startedAt < since - 60_000) return null
-  return data.sessionId
+  return { sessionId: data.sessionId, cwd: typeof data.cwd === 'string' && data.cwd ? data.cwd : null }
+}
+
+/**
+ * The worktree Claude Code made for a session (`claude --worktree`), told by the folder it works in:
+ * `<startCwd>\.claude\worktrees\<name>`. The branch is only known from the transcript.
+ */
+export function worktreeAt(cwd: string, startCwd: string): SessionWorktree | null {
+  const match = /^(.*)[\\/]\.claude[\\/]worktrees[\\/]([^\\/]+)[\\/]?$/.exec(cwd)
+  if (!match || !match[1]) return null
+  return { name: match[2]!, branch: null, path: cwd, originalCwd: startCwd }
 }
 
 function isAlive(pid: number): boolean {
@@ -243,10 +276,12 @@ export interface TitleScan {
   ai: string | null
   /** Written by older Claude Code versions. */
   summary: string | null
+  /** The worktree the session works in (`claude --worktree`); null when it has none or left it. */
+  worktree: SessionWorktree | null
 }
 
 export function newTitleScan(): TitleScan {
-  return { offset: 0, custom: null, ai: null, summary: null }
+  return { offset: 0, custom: null, ai: null, summary: null, worktree: null }
 }
 
 /** The title Claude Code shows for the session, e.g. in `/resume`. */
@@ -306,8 +341,22 @@ export async function readSessionTitles(file: string, scan: TitleScan): Promise<
   }
 }
 
-/** Picks the title entries out of complete lines without parsing every line. */
+const WORKTREE_MARKER = Buffer.from('"type":"worktree-state"')
+
+/** Picks the title entries (and the worktree) out of complete lines without parsing every line. */
 function scanTitleLines(lines: Buffer, scan: TitleScan): void {
+  let hit = lines.indexOf(WORKTREE_MARKER)
+  while (hit !== -1) {
+    const start = lines.lastIndexOf(0x0a, hit) + 1
+    const end = lines.indexOf(0x0a, hit)
+    try {
+      const entry = JSON.parse(lines.toString('utf8', start, end)) as Record<string, unknown>
+      if (entry.type === 'worktree-state') scan.worktree = toWorktree(entry.worktreeSession)
+    } catch {
+      // not a complete entry
+    }
+    hit = lines.indexOf(WORKTREE_MARKER, end)
+  }
   for (const { marker, type, field, key } of TITLE_ENTRIES) {
     let hit = lines.indexOf(marker)
     while (hit !== -1) {

@@ -10,13 +10,14 @@ import {
   liveSessionIds,
   newTitleScan,
   projectKey,
-  readLiveSessionId,
+  readLiveSession,
   readSessionLimit,
   readSessionTitles,
   readTurnOutcome,
   scannedTitle,
   sessionFiles,
   turnOutcome,
+  worktreeAt,
   type TitleScan,
 } from './session-files'
 
@@ -113,6 +114,13 @@ describe('findTranscript', () => {
     expect(await findTranscript(dir, SESSION, cwd)).toBeNull()
   })
 
+  it('finds the transcript of a session in a worktree of the working directory', async () => {
+    await transcript(projectKey(cwd), OTHER_SESSION)
+    await transcript(`${projectKey(cwd)}-other`)
+    const file = await transcript(projectKey(`${cwd}/.claude/worktrees/login-fix`))
+    expect(await findTranscript(dir, SESSION, cwd)).toBe(file)
+  })
+
   it('searches all projects when the folder name is unknown or shortened', async () => {
     const file = await transcript('-very-long-path-shortened-1a2b3c')
     await transcript('other', OTHER_SESSION)
@@ -129,7 +137,7 @@ describe('findTranscript', () => {
   })
 })
 
-describe('readLiveSessionId', () => {
+describe('readLiveSession', () => {
   const PID = 4242
   const SINCE = T0
 
@@ -137,33 +145,58 @@ describe('readLiveSessionId', () => {
     await writeFile(join(dir, `${pid}.json`), typeof data === 'string' ? data : JSON.stringify(data))
   }
 
-  it('reads the session Claude Code has open in the process', async () => {
+  async function liveId(sessionsDir: string, pid: number, since: number): Promise<string | null> {
+    return (await readLiveSession(sessionsDir, pid, since))?.sessionId ?? null
+  }
+
+  it('reads the session Claude Code has open in the process and its folder', async () => {
     await sessionFile({ pid: PID, sessionId: SESSION, cwd: '/home/dev/app', startedAt: SINCE + 2000 })
-    expect(await readLiveSessionId(dir, PID, SINCE)).toBe(SESSION)
+    expect(await readLiveSession(dir, PID, SINCE)).toEqual({ sessionId: SESSION, cwd: '/home/dev/app' })
+    await sessionFile({ pid: PID, sessionId: SESSION, cwd: '' })
+    expect(await readLiveSession(dir, PID, SINCE)).toEqual({ sessionId: SESSION, cwd: null })
   })
 
   it('accepts a file without start time and one started shortly before', async () => {
     await sessionFile({ pid: PID, sessionId: SESSION })
-    expect(await readLiveSessionId(dir, PID, SINCE)).toBe(SESSION)
+    expect(await liveId(dir, PID, SINCE)).toBe(SESSION)
     await sessionFile({ pid: PID, sessionId: SESSION, startedAt: SINCE - 59_000 })
-    expect(await readLiveSessionId(dir, PID, SINCE)).toBe(SESSION)
+    expect(await liveId(dir, PID, SINCE)).toBe(SESSION)
   })
 
   it('ignores a file left behind by an earlier process with the same pid', async () => {
     await sessionFile({ pid: PID, sessionId: SESSION, startedAt: SINCE - 61_000 })
-    expect(await readLiveSessionId(dir, PID, SINCE)).toBeNull()
+    expect(await liveId(dir, PID, SINCE)).toBeNull()
   })
 
   it('ignores files of another pid, invalid session ids and broken files', async () => {
     await sessionFile({ pid: PID + 1, sessionId: SESSION })
-    expect(await readLiveSessionId(dir, PID, SINCE)).toBeNull()
+    expect(await liveId(dir, PID, SINCE)).toBeNull()
     await sessionFile({ pid: PID, sessionId: 'not-a-session' })
-    expect(await readLiveSessionId(dir, PID, SINCE)).toBeNull()
+    expect(await liveId(dir, PID, SINCE)).toBeNull()
     await sessionFile({ pid: String(PID), sessionId: SESSION })
-    expect(await readLiveSessionId(dir, PID, SINCE)).toBeNull()
+    expect(await liveId(dir, PID, SINCE)).toBeNull()
     await sessionFile('{"pid":4242,"sessionId":"3f2b')
-    expect(await readLiveSessionId(dir, PID, SINCE)).toBeNull()
-    expect(await readLiveSessionId(dir, PID + 2, SINCE)).toBeNull()
+    expect(await liveId(dir, PID, SINCE)).toBeNull()
+    expect(await liveId(dir, PID + 2, SINCE)).toBeNull()
+  })
+})
+
+describe('worktreeAt', () => {
+  it('tells the worktree from the folder Claude Code works in', () => {
+    expect(worktreeAt('C:\\dev\\app\\.claude\\worktrees\\login-fix', 'C:\\dev\\app')).toEqual({
+      name: 'login-fix',
+      branch: null,
+      path: 'C:\\dev\\app\\.claude\\worktrees\\login-fix',
+      originalCwd: 'C:\\dev\\app',
+    })
+    expect(worktreeAt('/home/dev/app/.claude/worktrees/demo/', '/home/dev/app/src')?.name).toBe('demo')
+  })
+
+  it('is null for other folders, also inside a worktree', () => {
+    expect(worktreeAt('C:\\dev\\app', 'C:\\dev\\app')).toBeNull()
+    expect(worktreeAt('C:\\dev\\app\\.claude\\worktrees', 'C:\\dev\\app')).toBeNull()
+    expect(worktreeAt('/home/dev/app/.claude/worktrees/demo/src', '/home/dev/app')).toBeNull()
+    expect(worktreeAt('/.claude/worktrees/demo', '/')).toBeNull()
   })
 })
 
@@ -448,14 +481,15 @@ describe('session titles', () => {
   }
 
   it('starts empty', () => {
-    expect(newTitleScan()).toEqual({ offset: 0, custom: null, ai: null, summary: null })
+    expect(newTitleScan()).toEqual({ offset: 0, custom: null, ai: null, summary: null, worktree: null })
     expect(scannedTitle(newTitleScan())).toBeNull()
   })
 
   it('prefers the title set with /rename over the generated one and an old summary', () => {
-    expect(scannedTitle({ offset: 0, custom: 'Mine', ai: 'Generated', summary: 'Old' })).toBe('Mine')
-    expect(scannedTitle({ offset: 0, custom: null, ai: 'Generated', summary: 'Old' })).toBe('Generated')
-    expect(scannedTitle({ offset: 0, custom: null, ai: null, summary: 'Old' })).toBe('Old')
+    const scan = (custom: string | null, ai: string | null, summary: string | null) => ({ offset: 0, custom, ai, summary, worktree: null })
+    expect(scannedTitle(scan('Mine', 'Generated', 'Old'))).toBe('Mine')
+    expect(scannedTitle(scan(null, 'Generated', 'Old'))).toBe('Generated')
+    expect(scannedTitle(scan(null, null, 'Old'))).toBe('Old')
   })
 
   it('reads the latest title of each kind', async () => {
@@ -473,6 +507,7 @@ describe('session titles', () => {
       custom: 'Login 🔒',
       ai: 'Fix login redirect loop',
       summary: 'Old summary',
+      worktree: null,
     })
     expect(scannedTitle(result)).toBe('Login 🔒')
   })
@@ -496,7 +531,26 @@ describe('session titles', () => {
     expect(result).toMatchObject({ offset: Buffer.byteLength(first), ai: 'First' })
     await appendFile(file(), jsonl(customTitle('Renamed')))
     await readSessionTitles(file(), result)
-    expect(result).toEqual({ offset: (await stat(file())).size, custom: 'Renamed', ai: 'First', summary: null })
+    expect(result).toEqual({ offset: (await stat(file())).size, custom: 'Renamed', ai: 'First', summary: null, worktree: null })
+  })
+
+  it('follows the worktree the session works in, until it leaves it', async () => {
+    const worktree = {
+      originalCwd: '/home/dev/app',
+      worktreePath: '/home/dev/app/.claude/worktrees/login',
+      worktreeName: 'login',
+      worktreeBranch: 'worktree-login',
+    }
+    const result = await scan(jsonl(user('Hi', 0), { type: 'worktree-state', worktreeSession: worktree, sessionId: SESSION }))
+    expect(result.worktree).toEqual({
+      name: 'login',
+      branch: 'worktree-login',
+      path: '/home/dev/app/.claude/worktrees/login',
+      originalCwd: '/home/dev/app',
+    })
+    await appendFile(file(), jsonl({ type: 'worktree-state', worktreeSession: null, sessionId: SESSION }))
+    await readSessionTitles(file(), result)
+    expect(result.worktree).toBeNull()
   })
 
   it('reads a line still being written once it is complete', async () => {
@@ -513,7 +567,7 @@ describe('session titles', () => {
     const result = await scan(jsonl(user('A long first prompt', 0), aiTitle('Old title'), customTitle('Old name')))
     const replaced = jsonl(aiTitle('New'))
     await scan(replaced, result)
-    expect(result).toEqual({ offset: Buffer.byteLength(replaced), custom: null, ai: 'New', summary: null })
+    expect(result).toEqual({ offset: Buffer.byteLength(replaced), custom: null, ai: 'New', summary: null, worktree: null })
   })
 
   it('does nothing when nothing was appended', async () => {
@@ -527,7 +581,7 @@ describe('session titles', () => {
     const image = user([{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A'.repeat(1536 * 1024) } }], 0)
     const content = jsonl(aiTitle('Before'), image, customTitle('After'), aiTitle('Last'))
     const result = await scan(content)
-    expect(result).toEqual({ offset: Buffer.byteLength(content), custom: 'After', ai: 'Last', summary: null })
+    expect(result).toEqual({ offset: Buffer.byteLength(content), custom: 'After', ai: 'Last', summary: null, worktree: null })
   })
 
   it('leaves a long line still being written for the next scan', async () => {
