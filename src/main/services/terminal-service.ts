@@ -131,7 +131,8 @@ interface TerminalRecord {
 
 /** Options other parts of the app give every session they start, e.g. the browser's MCP server. */
 export interface SessionArgsProvider {
-  args(terminalId: string): string[]
+  /** `extra`: the user's own arguments for the session, which come after these. */
+  args(terminalId: string, extra: readonly string[]): string[]
   /** The session's process is gone: what `args` set up for it can go too. */
   release(terminalId: string): void
 }
@@ -155,7 +156,7 @@ export class TerminalService extends TypedEmitter<Events> {
   private trackAgain = false
   /** Whether the terminal theme is dark, as the window reports it; unknown until it does. */
   private dark: boolean | null = null
-  private sessionArgs: SessionArgsProvider | null = null
+  private readonly sessionArgs: SessionArgsProvider[] = []
 
   constructor(
     private readonly accounts: AccountService,
@@ -168,8 +169,8 @@ export class TerminalService extends TypedEmitter<Events> {
   }
 
   /** Gives the sessions started from now on more options (see SessionArgsProvider). */
-  setSessionArgs(provider: SessionArgsProvider): void {
-    this.sessionArgs = provider
+  addSessionArgs(provider: SessionArgsProvider): void {
+    this.sessionArgs.push(provider)
   }
 
   list(): TerminalInfo[] {
@@ -223,7 +224,7 @@ export class TerminalService extends TypedEmitter<Events> {
 
     const id = randomUUID()
     const args: string[] = []
-    let provided = false
+    let providers: SessionArgsProvider[] = []
     let sessionId: string | null = null
     if (mode === 'login') {
       args.push('auth', 'login')
@@ -242,9 +243,9 @@ export class TerminalService extends TypedEmitter<Events> {
         sessionId = randomUUID()
         args.push('--session-id', sessionId)
       }
-      if (mode === 'session' && this.sessionArgs) {
-        args.push(...this.sessionArgs.args(id))
-        provided = true
+      if (mode === 'session') {
+        providers = [...this.sessionArgs]
+        for (const provider of providers) args.push(...provider.args(id, extra))
       }
       // Before the extra args: an option there that takes several values would swallow it.
       const prompt = options.prompt?.trim()
@@ -282,7 +283,7 @@ export class TerminalService extends TypedEmitter<Events> {
         useConptyDll: process.platform === 'win32' && settings.terminal.modernConpty,
       })
     } catch (error) {
-      if (provided) this.sessionArgs?.release(id)
+      for (const provider of providers) provider.release(id)
       throw error
     }
 
@@ -321,7 +322,7 @@ export class TerminalService extends TypedEmitter<Events> {
       record.info.status = 'exited'
       record.info.exitCode = exitCode
       record.info.busy = false
-      if (provided) this.sessionArgs?.release(id)
+      for (const provider of providers) provider.release(id)
       markExited()
       this.emit('exit', id, exitCode)
       if (!record.killed && closesOnExit(this.settings.get().general.closeOnExit, exitCode)) this.close(id)

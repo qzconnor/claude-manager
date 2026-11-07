@@ -102,6 +102,7 @@ export function createDefaultSettings(platform = 'win32'): AppSettings {
       browserToolsAllowed: true,
       noClaudeInChrome: false,
       claudeInChromeHintDismissed: false,
+      appContext: true,
       limitsTool: true,
       sessionsTool: true,
       shellTools: false,

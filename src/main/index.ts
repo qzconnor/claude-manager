@@ -18,6 +18,7 @@ import { selectLinuxPasswordStore } from './lib/secrets'
 import { fallbackSessionFolder } from './lib/session-folder'
 import { loadShellEnv } from './lib/shell-env'
 import { AccountService } from './services/account-service'
+import { AppContextPrompt } from './services/app-context'
 import { ClaudeCli } from './services/claude-cli'
 import { CswapImport } from './services/cswap-import'
 import { GitService } from './services/git-service'
@@ -66,6 +67,8 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   const accounts = new AccountService(userDataDir, new LoginProfiles(userDataDir, userAgent))
   await accounts.init()
   const cli = new ClaudeCli(() => settings.get().claude.executablePath)
+  // Known before the first session starts, for the options that depend on it (see AppContextPrompt).
+  void cli.version()
   const indexer = new IndexerClient(userDataDir)
   const dialogs = new WindowDialogs()
   let mainWindow: BrowserWindow | null = null
@@ -75,12 +78,14 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     return win && !win.isDestroyed() ? dialogs.show(win, options) : null
   })
   const terminals = new TerminalService(accounts, cli, settings, trust)
+  // Claude sessions learn that they run in the app, without the user seeing it (setting `appContext`).
+  terminals.addSessionArgs(new AppContextPrompt(userDataDir, cli, settings))
   const browser = new BrowserControl(terminals)
   // Claude sessions the app starts get the browser's MCP server: before the tabs are restored.
   const browserMcp = new BrowserMcpServer(userDataDir, settings, new BrowserTools(browser), app.getVersion())
   await browserMcp
     .start()
-    .then(() => terminals.setSessionArgs(browserMcp))
+    .then(() => terminals.addSessionArgs(browserMcp))
     .catch((error) => console.error('[browser-mcp] server could not start', error))
   const sessions = new SessionService(accounts, indexer, terminals)
   sessions.init()
@@ -104,7 +109,10 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   notifications.watchAutoSwitch(autoSwitch)
 
   settings.on('changed', (next, previous) => {
-    if (next.claude.executablePath !== previous.claude.executablePath) cli.invalidate()
+    if (next.claude.executablePath !== previous.claude.executablePath) {
+      cli.invalidate()
+      void cli.version()
+    }
   })
 
   const ctx: AppContext = {

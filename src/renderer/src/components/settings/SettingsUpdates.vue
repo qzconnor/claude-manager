@@ -10,7 +10,7 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTi
 import { Skeleton } from '@/components/ui/skeleton'
 import { attempt } from '@/lib/errors'
 import { cn } from '@/lib/utils'
-import { compareVersions } from '@/lib/version'
+import { compareVersions } from '@shared/version'
 import { useUpdatesStore } from '@/stores/updates'
 
 const updates = useUpdatesStore()
