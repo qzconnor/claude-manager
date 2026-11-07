@@ -135,6 +135,12 @@ export class ClaudeCli {
     return version
   }
 
+  /** Result of {@link version} for the current executable; `null` while it is unknown. */
+  knownVersion(): string | null {
+    const exe = this.resolve()
+    return exe && this.cachedVersion?.path === exe ? this.cachedVersion.version : null
+  }
+
   /** Checks once per executable whether `claude auth login` can pre-fill the email (`--email`). */
   async checkLoginEmail(): Promise<boolean> {
     const exe = this.resolve()

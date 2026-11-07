@@ -27,6 +27,10 @@ const noClaudeInChrome = useSetting(
   (s) => s.claude.noClaudeInChrome,
   (noClaudeInChrome) => ({ claude: { noClaudeInChrome } }),
 )
+const appContext = useSetting(
+  (s) => s.claude.appContext,
+  (appContext) => ({ claude: { appContext } }),
+)
 const limitsTool = useSetting(
   (s) => s.claude.limitsTool,
   (limitsTool) => ({ claude: { limitsTool } }),
@@ -118,8 +122,16 @@ async function clearBrowserData() {
     <SettingsSection
       anchor="tools.app"
       title="Claude Manager"
-      description="Claude-Sessions aus der App bekommen Werkzeuge für die App selbst, über denselben MCP-Server wie der Browser. Änderungen gelten für Sessions, die danach starten."
+      description="Was Claude-Sessions aus der App über die App wissen und mit ihr tun können. Die Werkzeuge laufen über denselben MCP-Server wie der Browser. Änderungen gelten für Sessions, die danach starten."
     >
+      <SettingField
+        anchor="claude.appContext"
+        for="app-context"
+        label="Claude kennt die App"
+        description="Claude weiß, dass es in Claude Manager läuft, und versteht, was du mit „dem Tab“, „dem Browser daneben“ oder einer Einstellung meinst. Dafür hängt die App Claude Codes Systemprompt eine kurze Beschreibung an, etwa 400 Tokens pro Anfrage, meist aus dem Prompt-Cache."
+      >
+        <Switch id="app-context" v-model="appContext" />
+      </SettingField>
       <SettingField
         anchor="claude.limitsTool"
         for="limits-tool"

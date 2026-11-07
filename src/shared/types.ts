@@ -674,6 +674,11 @@ export interface ClaudeSettings {
   noClaudeInChrome: boolean
   /** The hint in sessions that start with Claude in Chrome was put away for good. */
   claudeInChromeHintDismissed: boolean
+  /**
+   * Sessions the app starts know that they run in it: a short description of the app is appended to
+   * Claude Code's system prompt (`--append-system-prompt-file`). Off saves its tokens.
+   */
+  appContext: boolean
   /** Sessions the app starts can read the limits of the account they run on (tool `limits`). */
   limitsTool: boolean
   /** Sessions the app starts can search and read the transcripts of earlier sessions (`sessions_search`, `session_read`). */
