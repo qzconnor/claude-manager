@@ -1,4 +1,4 @@
-import { BellIcon, BotIcon, InfoIcon, PaletteIcon, PlugIcon, SparklesIcon, SquareTerminalIcon } from '@lucide/vue'
+import { BellIcon, BotIcon, InfoIcon, PaletteIcon, PlugIcon, SparklesIcon, SquareTerminalIcon, WrenchIcon } from '@lucide/vue'
 import type { Component } from 'vue'
 import type { SettingsTab } from '@/router'
 
@@ -7,6 +7,7 @@ export const SETTINGS_TAB_ICONS: Record<SettingsTab, Component> = {
   appearance: PaletteIcon,
   terminal: SquareTerminalIcon,
   claude: BotIcon,
+  tools: WrenchIcon,
   notifications: BellIcon,
   api: PlugIcon,
   updates: SparklesIcon,

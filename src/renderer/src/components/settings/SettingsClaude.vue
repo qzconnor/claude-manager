@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { CircleCheckIcon, CircleXIcon, RefreshCwIcon, Trash2Icon } from '@lucide/vue'
+import { CircleCheckIcon, CircleXIcon, RefreshCwIcon } from '@lucide/vue'
 import { computed, ref } from 'vue'
-import { toast } from 'vue-sonner'
 import type { CloseOnExit } from '@shared/types'
 import AccountSelect from '@/components/common/AccountSelect.vue'
 import DirectoryInput from '@/components/common/DirectoryInput.vue'
@@ -17,16 +16,12 @@ import { attempt } from '@/lib/errors'
 import { shortenPath } from '@/lib/format'
 import { isLinux, isWindows } from '@/lib/platform'
 import { useAppStore } from '@/stores/app'
-import { useBrowsersStore } from '@/stores/browsers'
-import { useUiStore } from '@/stores/ui'
 import NumberControl from './NumberControl.vue'
 import SettingField from './SettingField.vue'
 import SettingsCommand from './SettingsCommand.vue'
 import SettingsSection from './SettingsSection.vue'
 
 const app = useAppStore()
-const ui = useUiStore()
-const browsers = useBrowsersStore()
 
 const executablePath = useSetting(
   (s) => s.claude.executablePath,
@@ -48,18 +43,6 @@ const continuePrompt = useSetting(
 const autoSwitch = useSetting(
   (s) => s.claude.autoSwitch,
   (autoSwitch) => ({ claude: { autoSwitch } }),
-)
-const browserTools = useSetting(
-  (s) => s.claude.browserTools,
-  (browserTools) => ({ claude: { browserTools } }),
-)
-const browserToolsAllowed = useSetting(
-  (s) => s.claude.browserToolsAllowed,
-  (browserToolsAllowed) => ({ claude: { browserToolsAllowed } }),
-)
-const noClaudeInChrome = useSetting(
-  (s) => s.claude.noClaudeInChrome,
-  (noClaudeInChrome) => ({ claude: { noClaudeInChrome } }),
 )
 const usageRefreshMinutes = useSetting(
   (s) => s.claude.usageRefreshMinutes,
@@ -101,32 +84,6 @@ const launchAtLoginHint = computed(() => {
 
 /** Linux needs a file that starts the installation: an AppImage or the executable of a package. */
 const canLaunchAtLogin = computed(() => !app.info || (app.info.packaged && (!isLinux || app.info.linuxPackage !== null)))
-
-const clearingBrowser = ref(false)
-
-/** Logs the browser out everywhere; open pages load again, so they show it (not one Claude is busy in). */
-async function clearBrowserData() {
-  const ok = await ui.confirm({
-    title: 'Browserdaten löschen?',
-    description:
-      'Du wirst auf allen Seiten im Browser der App abgemeldet, auch für Claude-Sessions. Cookies, gespeicherte Daten der Seiten und der Cache werden gelöscht, offene Seiten laden neu.',
-    confirmText: 'Löschen',
-    destructive: true,
-  })
-  if (!ok) return
-  clearingBrowser.value = true
-  try {
-    const done = await attempt(async () => {
-      await window.api.browser.clearData()
-      return true
-    }, 'Browserdaten konnten nicht gelöscht werden')
-    if (!done) return
-    for (const [id, view] of browsers.views) if (!browsers.controls.get(id)?.busy) view.reload()
-    toast.success('Browserdaten gelöscht')
-  } finally {
-    clearingBrowser.value = false
-  }
-}
 
 const CLOSE_ON_EXIT: { value: CloseOnExit; label: string }[] = [
   { value: 'graceful', label: 'Ohne Fehler' },
@@ -226,48 +183,6 @@ async function recheck() {
           class="w-80"
           @change="commitPrompt"
         />
-      </SettingField>
-    </SettingsSection>
-
-    <SettingsSection
-      anchor="claude.browser"
-      title="Browser"
-      description="Claude-Sessions aus Claude Manager bedienen einen Browser neben sich: Seiten öffnen, klicken, tippen, Screenshots. Du siehst jeden Schritt und kannst jederzeit übernehmen. Logins im Browser gelten auch für Claude."
-    >
-      <SettingField
-        anchor="claude.browserTools"
-        for="browser-tools"
-        label="Browser für Claude-Sessions"
-        description="Gibt jeder Session, die die App danach startet, den Browser als MCP-Server. Andere Claude-Code-Instanzen und deine Einstellungen in ~/.claude bleiben unberührt."
-      >
-        <Switch id="browser-tools" v-model="browserTools" />
-      </SettingField>
-      <SettingField
-        anchor="claude.browserToolsAllowed"
-        for="browser-tools-allowed"
-        label="Ohne Nachfrage bedienen"
-        description="Claude fragt nicht vor jedem Schritt im Browser um Erlaubnis. Aus: Claude Code fragt wie bei anderen Werkzeugen."
-      >
-        <Switch id="browser-tools-allowed" v-model="browserToolsAllowed" :disabled="!browserTools" />
-      </SettingField>
-      <SettingField
-        anchor="claude.noClaudeInChrome"
-        for="no-claude-in-chrome"
-        label="Ohne Claude in Chrome"
-        description="Sessions aus der App starten ohne Claude in Chrome (--no-chrome), damit Claude den Browser der App nimmt und nicht deinen Chrome. Claude Codes eigene Einstellung bleibt, wie sie ist."
-      >
-        <Switch id="no-claude-in-chrome" v-model="noClaudeInChrome" :disabled="!browserTools" />
-      </SettingField>
-      <SettingField
-        anchor="claude.clearBrowserData"
-        label="Browserdaten löschen"
-        description="Meldet dich auf allen Seiten im Browser der App ab: Cookies, gespeicherte Daten der Seiten und Cache."
-      >
-        <Button variant="outline" size="sm" :disabled="clearingBrowser" @click="clearBrowserData">
-          <Spinner v-if="clearingBrowser" data-icon="inline-start" />
-          <Trash2Icon v-else data-icon="inline-start" />
-          Löschen…
-        </Button>
       </SettingField>
     </SettingsSection>
 

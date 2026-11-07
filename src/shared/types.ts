@@ -320,6 +320,26 @@ export interface BrowserControlState {
   takenOver: boolean
   /** The size Claude gave the page; null: it fills its part of the tab. */
   viewport: BrowserViewport | null
+  /** What Claude has the page pretend (dark mode, slow network …); null: nothing. */
+  emulation: BrowserEmulation | null
+}
+
+/** A network as Claude can have the page feel it (Chrome's presets). */
+export type BrowserNetworkPreset = 'offline' | 'slow-3g' | 'fast-3g' | 'fast-4g'
+
+/** What Claude has the page pretend (browser_emulate); it ends with the session or the user's reset. */
+export interface BrowserEmulation {
+  /** `prefers-color-scheme`; null: the system's. */
+  colorScheme: 'light' | 'dark' | null
+  /** `prefers-reduced-motion: reduce`. */
+  reducedMotion: boolean
+  network: BrowserNetworkPreset | null
+  /** The page runs this many times slower (2–20); null: at full speed. */
+  cpuSlowdown: number | null
+  /** Language and formats, e.g. `de-DE`; null: the app's. */
+  locale: string | null
+  /** IANA time zone, e.g. `America/New_York`; null: the computer's. */
+  timezone: string | null
 }
 
 /** Where Claude acts in the page, for the highlight over it; in pixels of the view. */
@@ -654,6 +674,17 @@ export interface ClaudeSettings {
   noClaudeInChrome: boolean
   /** The hint in sessions that start with Claude in Chrome was put away for good. */
   claudeInChromeHintDismissed: boolean
+  /** Sessions the app starts can read the limits of the account they run on (tool `limits`). */
+  limitsTool: boolean
+  /** Sessions the app starts can search and read the transcripts of earlier sessions (`sessions_search`, `session_read`). */
+  sessionsTool: boolean
+  /**
+   * Sessions the app starts can open shell tabs next to themselves, run commands in them and read
+   * their output (`shell_*`). The commands run outside Claude Code's permissions.
+   */
+  shellTools: boolean
+  /** Claude Code uses the shell tools without asking every time (`--allowedTools`). */
+  shellToolsAllowed: boolean
 }
 
 /** Where Claude Code connects Claude in Chrome when a session starts (unless it gets `--no-chrome`). */

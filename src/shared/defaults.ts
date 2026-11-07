@@ -102,6 +102,10 @@ export function createDefaultSettings(platform = 'win32'): AppSettings {
       browserToolsAllowed: true,
       noClaudeInChrome: false,
       claudeInChromeHintDismissed: false,
+      limitsTool: true,
+      sessionsTool: true,
+      shellTools: false,
+      shellToolsAllowed: false,
     },
     general: {
       confirmCloseRunning: true,

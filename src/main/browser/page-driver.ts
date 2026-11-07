@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto'
 import { nativeImage, type NativeImage, type WebContents } from 'electron'
+import { FRAME_MARK_RE, frameError, indentLines, MAX_FRAME_DEPTH, parseRef, prefixRefs, type FrameRecord, type PageFrames } from './frames'
 import { keyEvents } from './keys'
-import { MAX_SNAPSHOT_CHARS, pageCall, SCRIPT_WORLD } from './page-scripts'
+import { FRAME_MARK, MAX_SNAPSHOT_CHARS, pageCall, SCRIPT_WORLD } from './page-scripts'
 
 /** Pages Claude moves the mouse in right now, by how many of its mouse events are under way. */
 const claudesMice = new WeakMap<WebContents, number>()
@@ -35,6 +37,18 @@ const MAX_FULL_PAGE_HEIGHT = 8000
 /** Until the page has drawn itself after scrolling. */
 const REPAINT_MS = 120
 const SCRIPT_TIMEOUT_MS = 15_000
+/** The script world of the page driver in frames of other sites (see frames.ts). */
+const FRAME_WORLD = 'claude-manager'
+/** A frame's snapshot gets no more than this, so one frame can't fill the whole snapshot. */
+const MAX_FRAME_SNAPSHOT_CHARS = 20_000
+/** Less room than this left in the snapshot: the frame is only named. */
+const MIN_FRAME_SNAPSHOT_CHARS = 400
+
+/** A snapshot and the document it was taken of. */
+export interface Snapshot {
+  doc: string
+  text: string
+}
 
 export function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined
@@ -46,14 +60,24 @@ export const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(r
 
 /** One page Claude drives: input through the DevTools protocol, reading through the scripts. */
 export class PageDriver {
-  /** `focusView`: asks the window to give the page its keyboard (see `takeKeyboard`). */
+  /**
+   * `focusView`: asks the window to give the page its keyboard (see `takeKeyboard`). `frames`: the
+   * page's frames of other sites, kept by the browser across actions; without it they aren't read.
+   */
   constructor(
     readonly contents: WebContents,
     private readonly focusView?: () => void,
+    private readonly frames?: PageFrames,
   ) {}
 
   cdp<T = Record<string, unknown>>(method: string, params?: Record<string, unknown>): Promise<T> {
     return this.contents.debugger.sendCommand(method, params) as Promise<T>
+  }
+
+  /** A command for one DevTools session: a frame in a process of its own; undefined: the page. */
+  cdpIn<T = Record<string, unknown>>(session: string | undefined, method: string, params?: Record<string, unknown>): Promise<T> {
+    if (session === undefined) return this.cdp<T>(method, params)
+    return this.contents.debugger.sendCommand(method, params, session) as Promise<T>
   }
 
   /** Calls a helper of page-scripts.ts in the page. */
@@ -68,12 +92,191 @@ export class PageDriver {
     return result.ok as T
   }
 
-  snapshot(): Promise<string> {
-    return this.call<string>('snapshot', MAX_SNAPSHOT_CHARS)
+  /** Calls a helper for the element `ref` (its first argument), in the page or in the frame the ref is from. */
+  callAt<T>(ref: string, name: string, ...args: unknown[]): Promise<T> {
+    const { frame, local } = parseRef(ref)
+    if (frame === null) return this.call<T>(name, ref, ...args)
+    return this.inFrame<T>(this.frameRecord(frame, ref), name, local, ...args)
   }
 
-  locate(ref: string): Promise<ElementBox> {
-    return this.call<ElementBox>('locate', ref)
+  /** The outline of the page with refs, frames of other sites included. */
+  async snapshot(): Promise<Snapshot> {
+    const shot = await this.call<Snapshot>('snapshot', MAX_SNAPSHOT_CHARS, false)
+    if (this.frames) this.frames.setDocument(shot.doc)
+    if (!shot.text.includes(FRAME_MARK)) return shot
+    const text = await this.fillFrames(shot.text, null, MAX_SNAPSHOT_CHARS - shot.text.length, 0)
+    return { doc: shot.doc, text }
+  }
+
+  async locate(ref: string): Promise<ElementBox> {
+    const { frame, local } = parseRef(ref)
+    if (frame === null) return this.call<ElementBox>('locate', ref)
+    const record = this.frameRecord(frame, ref)
+    const box = await this.inFrame<ElementBox>(record, 'locate', local)
+    const offset = await this.frameOffset(record, { x: box.x + box.width / 2, y: box.y + box.height / 2 })
+    return { ...box, x: box.x + offset.x, y: box.y + offset.y }
+  }
+
+  /** Two elements for a drag, both in view if they fit (see the script's locatePair); in one frame. */
+  async locatePair(fromRef: string, toRef: string): Promise<{ from: ElementBox; to: ElementBox; together: boolean }> {
+    const from = parseRef(fromRef)
+    const to = parseRef(toRef)
+    if (from.frame !== to.frame) throw new Error('The element and the target are in different frames; dragging from one frame into another is not possible.')
+    if (from.frame === null) return this.call('locatePair', fromRef, toRef)
+    const record = this.frameRecord(from.frame, fromRef)
+    const pair = await this.inFrame<{ from: ElementBox; to: ElementBox; together: boolean }>(record, 'locatePair', from.local, to.local)
+    const offset = await this.frameOffset(record, { x: pair.from.x + pair.from.width / 2, y: pair.from.y + pair.from.height / 2 })
+    const shift = (box: ElementBox) => ({ ...box, x: box.x + offset.x, y: box.y + offset.y })
+    return { ...pair, from: shift(pair.from), to: shift(pair.to) }
+  }
+
+  /** Whether the text is on the page or in one of the frames of other sites the last snapshot found. */
+  async hasText(text: string): Promise<boolean> {
+    if (await this.call<boolean>('hasText', text)) return true
+    for (const record of this.frames?.all() ?? []) {
+      if (await this.inFrame<boolean>(record, 'hasText', text).catch(() => false)) return true
+    }
+    return false
+  }
+
+  private frameRecord(frame: number, ref: string): FrameRecord {
+    const record = this.frames?.get(frame)
+    if (!record) throw new Error(`The frame of ${ref} is gone. Take a new browser_snapshot: refs change with the page.`)
+    return record
+  }
+
+  /** Calls a helper of page-scripts.ts in a frame of another site, in the page driver's world there. */
+  private async inFrame<T>(record: FrameRecord, name: string, ...args: unknown[]): Promise<T> {
+    type Evaluation = { result: { value?: { ok?: T; error?: string } | null }; exceptionDetails?: { text: string } }
+    const evaluate = async (): Promise<Evaluation> => {
+      const contextId = await this.frameContext(record)
+      return this.cdpIn<Evaluation>(record.session, 'Runtime.evaluate', { expression: pageCall(name, ...args), contextId, returnByValue: true })
+    }
+    let evaluation: Evaluation
+    try {
+      evaluation = await withTimeout(evaluate(), SCRIPT_TIMEOUT_MS, 'The frame did not answer in time.')
+    } catch (error) {
+      // Its document changed (and took the world with it), or it runs in another process now.
+      record.contextId = null
+      const message = error instanceof Error ? error.message : String(error)
+      if (!/context|session|target/i.test(message)) throw error
+      evaluation = await withTimeout(evaluate(), SCRIPT_TIMEOUT_MS, 'The frame did not answer in time.').catch(() => {
+        throw new Error(`The frame f${record.num} is gone. Take a new browser_snapshot.`)
+      })
+    }
+    if (evaluation.exceptionDetails) throw new Error(evaluation.exceptionDetails.text)
+    const result = evaluation.result.value
+    if (!result) throw new Error('The frame did not answer.')
+    if (result.error !== undefined) throw new Error(frameError(result.error, record.num))
+    return result.ok as T
+  }
+
+  private async frameContext(record: FrameRecord): Promise<number> {
+    if (record.contextId !== null) return record.contextId
+    const { executionContextId } = await this.cdpIn<{ executionContextId: number }>(record.session, 'Page.createIsolatedWorld', {
+      frameId: record.frameId,
+      worldName: FRAME_WORLD,
+      grantUniveralAccess: false,
+    })
+    record.contextId = executionContextId
+    return executionContextId
+  }
+
+  /**
+   * Puts the snapshots of frames of other sites in the place of their marks in `text` (a snapshot of
+   * the page, or of the frame `scope`), each with no more than `room` characters in all.
+   */
+  private async fillFrames(text: string, scope: FrameRecord | null, room: number, depth: number): Promise<string> {
+    const marks = [...text.matchAll(FRAME_MARK_RE)]
+    if (marks.length === 0) return text
+    const frameIds = this.frames && depth < MAX_FRAME_DEPTH ? await this.findFrames(scope, marks.map((m) => m[2])).catch(() => new Map<string, string>()) : new Map<string, string>()
+    const parts = new Map<string, string>()
+    let left = room
+    for (const [, indent, ref] of marks) {
+      const frameId = frameIds.get(ref)
+      if (!frameId || !this.frames) {
+        parts.set(ref, `${indent}- (content of another site, not readable)`)
+        continue
+      }
+      if (left < MIN_FRAME_SNAPSHOT_CHARS) {
+        parts.set(ref, `${indent}- (content left out: the snapshot is full)`)
+        continue
+      }
+      try {
+        const record = this.frames.record(frameId, scope, ref)
+        const shot = await this.inFrame<Snapshot>(record, 'snapshot', Math.min(left, MAX_FRAME_SNAPSHOT_CHARS), true)
+        const inner = prefixRefs(await this.fillFrames(shot.text, record, left - shot.text.length, depth + 1), record.num)
+        const part = indentLines(inner, indent)
+        left -= part.length
+        parts.set(ref, part)
+      } catch (error) {
+        parts.set(ref, `${indent}- (content of another site, could not be read: ${error instanceof Error ? error.message.split('\n')[0] : String(error)})`)
+      }
+    }
+    return text.replace(FRAME_MARK_RE, (line, _indent, ref: string) => parts.get(ref) ?? line)
+  }
+
+  /**
+   * The frame ids of iframes (by their refs in the page or in the frame `scope`): the script marks
+   * them, the DevTools protocol finds the marks and tells which frame each element holds.
+   */
+  private async findFrames(scope: FrameRecord | null, refs: string[]): Promise<Map<string, string>> {
+    const token = randomUUID().replace(/-/g, '')
+    const prefix = `cm-frame-${token}-`
+    const inScope = <T>(name: string, ...args: unknown[]) => (scope ? this.inFrame<T>(scope, name, ...args) : this.call<T>(name, ...args))
+    const session = scope?.session
+    const found = new Map<string, string>()
+    await inScope('markFrames', token, refs)
+    try {
+      await this.cdpIn(session, 'DOM.getDocument', { depth: 0 })
+      const { searchId, resultCount } = await this.cdpIn<{ searchId: string; resultCount: number }>(session, 'DOM.performSearch', {
+        query: prefix,
+        includeUserAgentShadowDOM: false,
+      })
+      try {
+        if (resultCount > 0) {
+          const { nodeIds } = await this.cdpIn<{ nodeIds: number[] }>(session, 'DOM.getSearchResults', { searchId, fromIndex: 0, toIndex: resultCount })
+          for (const nodeId of nodeIds) {
+            const { node } = await this.cdpIn<{ node: { attributes?: string[]; frameId?: string } }>(session, 'DOM.describeNode', { nodeId })
+            const attributes = node.attributes ?? []
+            const value = attributes[attributes.indexOf('data-claude-manager-frame') + 1] ?? ''
+            if (node.frameId && value.startsWith(prefix)) found.set(value.slice(prefix.length), node.frameId)
+          }
+        }
+      } finally {
+        await this.cdpIn(session, 'DOM.discardSearchResults', { searchId }).catch(() => undefined)
+      }
+    } finally {
+      await inScope('unmarkFrames').catch(() => undefined)
+    }
+    return found
+  }
+
+  /**
+   * Where the document of a frame starts in the page's viewport (CSS pixels), with `point` (in the
+   * frame's own pixels) scrolled into view in every frame around it.
+   */
+  private async frameOffset(record: FrameRecord, point: { x: number; y: number }): Promise<{ x: number; y: number }> {
+    let x = 0
+    let y = 0
+    let current = record
+    let spot = point
+    for (let depth = 0; depth <= MAX_FRAME_DEPTH; depth++) {
+      const parent = current.parent === null ? null : this.frames?.get(current.parent)
+      if (current.parent !== null && !parent) break
+      const box = await (parent
+        ? this.inFrame<{ x: number; y: number }>(parent, 'locateFrame', current.ownerRef, spot)
+        : this.call<{ x: number; y: number }>('locateFrame', current.ownerRef, spot)
+      ).catch((error: Error) => {
+        throw new Error(`The frame f${record.num} is gone (${error.message.split('\n')[0]}). Take a new browser_snapshot.`)
+      })
+      x += box.x
+      y += box.y
+      if (!parent) return { x, y }
+      spot = { x: spot.x + box.x, y: spot.y + box.y }
+      current = parent
+    }
+    throw new Error(`The frame f${record.num} is gone. Take a new browser_snapshot.`)
   }
 
   zoom(): number {

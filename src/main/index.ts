@@ -4,6 +4,7 @@ import { app, BrowserWindow, nativeTheme } from 'electron'
 import { IpcEvent } from '@shared/ipc'
 import type { AppInfo } from '@shared/types'
 import { ApiServer } from './api/api-server'
+import { AppTools } from './browser/app-tools'
 import { BrowserControl } from './browser/browser-control'
 import { BrowserTools } from './browser/browser-tools'
 import { BrowserMcpServer } from './browser/mcp-server'
@@ -86,6 +87,8 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   const handoff = new SessionHandoff(accounts, sessions, terminals, settings)
   const usage = new UsageService(accounts, settings, indexer, userDataDir, userAgent)
   await usage.init()
+  // The server's tools for the app itself (limits, earlier sessions, shells), before the tabs are restored.
+  browserMcp.setAppTools(new AppTools({ terminals, usage, sessions, accounts, settings }))
   const autoSwitch = new AutoSwitch(accounts, terminals, usage, settings, handoff)
   autoSwitch.init()
   const git = new GitService()

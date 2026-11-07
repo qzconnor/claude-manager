@@ -5,8 +5,10 @@ import type {
   BrowserActivity,
   BrowserControlState,
   BrowserDownload,
+  BrowserEmulation,
   BrowserHighlight,
   BrowserLoginRequest,
+  BrowserNetworkPreset,
   BrowserViewport,
 } from '@shared/types'
 import { TypedEmitter } from '../lib/typed-emitter'
@@ -14,8 +16,10 @@ import { browserDownloads } from '../window/browser-downloads'
 import { browserLogins } from '../window/browser-logins'
 import { mobileUserAgent } from '../window/browser-policy'
 import type { TerminalService } from '../services/terminal-service'
+import { PageFrames } from './frames'
 import { delay, isClaudesMouse, PageDriver, withTimeout } from './page-driver'
 import { pointerMoveMs, type PointerSpot } from './pointer'
+import { snapshotChanges } from './snapshot-diff'
 
 /** Claude's last action keeps the page drawn this long, also while its tab is hidden. */
 const ACTIVE_MS = 60_000
@@ -36,11 +40,31 @@ export interface ConsoleEntry {
 }
 
 export interface NetworkEntry {
+  /** Its number for Claude (browser_network_request). */
+  id: number
+  /** The DevTools protocol's id, and the session of its frame (undefined: the page's), for its body. */
+  requestId: string
+  session: string | undefined
   method: string
   url: string
   type: string
   status: number | null
+  statusText: string
   failure: string | null
+  mimeType: string | null
+  requestHeaders: Record<string, string>
+  responseHeaders: Record<string, string> | null
+  /** The body the page sent; null with `hasPostData`: too large for the event, ask the protocol. */
+  postData: string | null
+  hasPostData: boolean
+  /** When it started (ms since the epoch) and how long it took until its end. */
+  startedAt: number
+  durationMs: number | null
+  /** Bytes that came over the network (compressed). */
+  encodedBytes: number | null
+  fromCache: boolean
+  /** Monotonic protocol time (s) of its start, for its duration. */
+  timestamp: number
 }
 
 export interface PageDialog {
@@ -113,8 +137,17 @@ export interface ActionContext {
    * pointer takes to get there (ms): the action should wait for it.
    */
   highlight(label: string, box?: Box | null, pointer?: { x: number; y: number; click?: boolean } | null): number
+  /**
+   * The page as Claude reads it. `changes`: only what changed since the session's last snapshot of
+   * this document (see snapshot-diff.ts), when that is shorter; otherwise the whole outline.
+   */
+  snapshot(changes: boolean): Promise<string>
   consoleEntries(): ConsoleEntry[]
   networkEntries(): NetworkEntry[]
+  /** What the page pretends right now (browser_emulate). */
+  emulation(): BrowserEmulation | null
+  /** Has the page pretend this from now on (null: nothing); it stays until the session ends or the user resets it. */
+  setEmulation(emulation: BrowserEmulation | null): Promise<void>
   /** A dialog that blocks the page until it is answered (one the page opened while Claude didn't act). */
   dialog(): PageDialog | null
   /** Resolves when the page opens such a dialog. */
@@ -163,7 +196,15 @@ interface Browser {
   /** Claude's actions, one after another. */
   queue: Promise<unknown>
   consoleEntries: ConsoleEntry[]
+  /** By session and request id of the protocol. */
   network: Map<string, NetworkEntry>
+  nextRequest: number
+  /** The page's frames of other sites and their DevTools sessions. */
+  frames: PageFrames
+  /** The last snapshot Claude got of the page, to send only what changed after the next action. */
+  lastSnapshot: { sessionId: string; doc: string; text: string } | null
+  /** What the page pretends for Claude; it ends with the session. */
+  emulation: BrowserEmulation | null
   dialog: PageDialog | null
   dialogSignal: { promise: Promise<PageDialog>; resolve: (dialog: PageDialog) => void }
   caught: CaughtDialog[]
@@ -308,7 +349,9 @@ export class BrowserControl extends TypedEmitter<Events> {
       for (const browser of this.browsers.values()) {
         if (browser.control && !open.has(browser.control.sessionId)) {
           browser.control = null
+          browser.lastSnapshot = null
           void this.dropViewport(browser)
+          void this.dropEmulation(browser)
           this.emitControl(browser)
         }
       }
@@ -326,6 +369,8 @@ export class BrowserControl extends TypedEmitter<Events> {
     browser.protocol = false
     browser.dialog = null
     browser.chooser = null
+    browser.frames = new PageFrames()
+    browser.lastSnapshot = null
     contents.on('console-message', (event) => this.onConsole(browser, contents, event))
     // The window sees no clicks in the page, and the page's focus is no help: it may have it already.
     contents.on('before-mouse-event', (_event, mouse) => {
@@ -400,7 +445,25 @@ export class BrowserControl extends TypedEmitter<Events> {
     browser.viewport = null
     const contents = browser.contents
     if (!mobile || !contents || contents.isDestroyed() || !contents.debugger.isAttached()) return
-    await setPhoneMode(new PageDriver(contents), false).catch(() => undefined)
+    await setPhoneMode(new PageDriver(contents), false, browser.emulation?.locale ?? null).catch(() => undefined)
+  }
+
+  /** The user's way back from what Claude has the page pretend. */
+  async resetEmulation(browserId: string): Promise<void> {
+    const browser = this.browsers.get(browserId)
+    if (!browser?.emulation) return
+    await this.dropEmulation(browser)
+    this.addActivity(browser, { kind: 'control', label: 'Du hast die Emulation beendet', status: 'done' })
+    this.emitControl(browser)
+  }
+
+  /** The page is itself again: no dark mode, slow network or other place of Claude's. */
+  private async dropEmulation(browser: Browser): Promise<void> {
+    if (!browser.emulation) return
+    browser.emulation = null
+    const contents = browser.contents
+    if (!contents || contents.isDestroyed() || !contents.debugger.isAttached()) return
+    await applyEmulation(new PageDriver(contents), null, browser.viewport?.mobile ?? false, browser.frames.frameSessions()).catch(() => undefined)
   }
 
   /**
@@ -419,7 +482,11 @@ export class BrowserControl extends TypedEmitter<Events> {
       const back = await this.waitForRelease(browser)
       if (!back) throw new ToolError(TAKEN_OVER)
       const contents = await this.contentsOf(browser)
-      const snapshot = await new PageDriver(contents).snapshot().catch(() => '')
+      browser.lastSnapshot = null
+      const snapshot = await new PageDriver(contents, undefined, browser.frames)
+        .snapshot()
+        .then((shot) => shot.text)
+        .catch(() => '')
       throw new ToolError(HANDED_BACK + snapshot)
     }
     const wasActive = this.isActive(browser)
@@ -435,7 +502,7 @@ export class BrowserControl extends TypedEmitter<Events> {
       const contents = await this.contentsOf(browser)
       // A page that was hidden gets its size from the window first.
       if (!wasActive) await delay(300)
-      const page = new PageDriver(contents, () => this.emit('focus', browser.id))
+      const page = new PageDriver(contents, () => this.emit('focus', browser.id), browser.frames)
       await this.ensureProtocol(browser, contents, page)
       if (browser.dialog && !step.whileDialog) {
         throw new ToolError(`${describeDialog(browser.dialog)} Answer it with browser_handle_dialog first.`)
@@ -522,8 +589,22 @@ export class BrowserControl extends TypedEmitter<Events> {
         this.emit('highlight', browser.id, highlight)
         return moveMs
       },
+      snapshot: async (changes) => {
+        const shot = await page.snapshot()
+        const sessionId = browser.control?.sessionId ?? ''
+        const last = browser.lastSnapshot
+        browser.lastSnapshot = { sessionId, doc: shot.doc, text: shot.text }
+        if (!changes || !last || last.sessionId !== sessionId || last.doc !== shot.doc) return shot.text
+        return snapshotChanges(last.text, shot.text) ?? shot.text
+      },
       consoleEntries: () => [...browser.consoleEntries],
-      networkEntries: () => [...browser.network.values()],
+      networkEntries: () => [...browser.network.values()].sort((a, b) => a.id - b.id),
+      emulation: () => (browser.emulation ? { ...browser.emulation } : null),
+      setEmulation: async (emulation) => {
+        browser.emulation = emulation && isEmulating(emulation) ? { ...emulation } : null
+        await applyEmulation(page, browser.emulation, browser.viewport?.mobile ?? false, browser.frames.frameSessions())
+        this.emitControl(browser)
+      },
       dialog: () => browser.dialog,
       untilDialog: () => browser.dialogSignal.promise,
       caughtDialogs: (since) => browser.caught.filter((d) => d.at >= since),
@@ -543,7 +624,7 @@ export class BrowserControl extends TypedEmitter<Events> {
         const before = browser.viewport
         const phoneChanged = (size?.mobile ?? false) !== (before?.mobile ?? false)
         browser.viewport = size ? { ...size, zoom: page.zoom() } : null
-        if (phoneChanged) await setPhoneMode(page, size?.mobile ?? false)
+        if (phoneChanged) await setPhoneMode(page, size?.mobile ?? false, browser.emulation?.locale ?? null)
         this.emitControl(browser)
         await untilViewport(page, size, before)
         return phoneChanged
@@ -659,7 +740,9 @@ export class BrowserControl extends TypedEmitter<Events> {
     if (!contents.debugger.isAttached()) contents.debugger.attach('1.3')
     if (!this.listening.has(contents)) {
       this.listening.add(contents)
-      contents.debugger.on('message', (_event, method, params) => this.onProtocol(browser, contents, method, params))
+      contents.debugger.on('message', (_event, method, params, sessionId) =>
+        this.onProtocol(browser, contents, method, params, typeof sessionId === 'string' && sessionId ? sessionId : undefined),
+      )
       contents.debugger.on('detach', () => {
         if (browser.contents === contents) browser.protocol = false
       })
@@ -670,47 +753,128 @@ export class BrowserControl extends TypedEmitter<Events> {
     await page.cdp('Runtime.addBinding', { name: DIALOG_BINDING })
     // The page acts as if it had the keyboard: the window gives it back to the user (BrowserPane).
     await page.cdp('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => undefined)
-    // A new connection starts without the phone mode Claude chose.
-    if (browser.viewport?.mobile) await setPhoneMode(page, true).catch(() => undefined)
+    // Frames of other sites in processes of their own get sessions of their own (see frames.ts).
+    await autoAttachFrames(page, undefined)
+    // A new connection starts without the phone mode and the emulation Claude chose.
+    if (browser.viewport?.mobile) await setPhoneMode(page, true, browser.emulation?.locale ?? null).catch(() => undefined)
+    if (browser.emulation) await applyEmulation(page, browser.emulation, browser.viewport?.mobile ?? false, []).catch(() => undefined)
     browser.dialogScript = null
     browser.protocol = true
   }
 
-  private onProtocol(browser: Browser, contents: WebContents, method: string, params: Record<string, unknown>): void {
+  /** A frame in a process of its own got its session: requests, frames in it and Claude's emulation; then it may run. */
+  private async setUpFrame(browser: Browser, contents: WebContents, session: string): Promise<void> {
+    const page = new PageDriver(contents)
+    try {
+      await page.cdpIn(session, 'Network.enable').catch(() => undefined)
+      await autoAttachFrames(page, session)
+      if (browser.emulation) await applyFrameEmulation(page, session, browser.emulation, browser.viewport?.mobile ?? false)
+    } finally {
+      // It waits for this (autoAttachFrames), whatever went wrong.
+      await page.cdpIn(session, 'Runtime.runIfWaitingForDebugger').catch(() => undefined)
+    }
+  }
+
+  private onProtocol(browser: Browser, contents: WebContents, method: string, params: Record<string, unknown>, session: string | undefined): void {
+    if (method === 'Target.attachedToTarget') {
+      const target = params.targetInfo as { targetId: string; type: string }
+      const child = params.sessionId as string
+      if (browser.contents === contents && target.type === 'iframe') {
+        browser.frames.attached(target.targetId, child)
+        void this.setUpFrame(browser, contents, child)
+      } else {
+        // Not a frame Claude reads (or of a page the browser left): it must not wait for one.
+        contents.debugger.sendCommand('Runtime.runIfWaitingForDebugger', undefined, child).catch(() => undefined)
+      }
+      return
+    }
     if (browser.contents !== contents) return
     switch (method) {
+      case 'Target.detachedFromTarget':
+        browser.frames.detached(params.sessionId as string)
+        return
       case 'Network.requestWillBeSent': {
-        const request = params.request as { method: string; url: string }
+        const request = params.request as { method: string; url: string; headers?: Record<string, string>; postData?: string; hasPostData?: boolean }
         if (request.url.startsWith('data:')) return
-        browser.network.set(params.requestId as string, {
+        const key = requestKey(session, params.requestId as string)
+        const redirect = params.redirectResponse as { status: number; statusText?: string; headers?: Record<string, string> } | undefined
+        const earlier = browser.network.get(key)
+        if (redirect && earlier) {
+          // The same request goes on at another address: the earlier one ends with the redirect.
+          earlier.status = redirect.status
+          earlier.statusText = redirect.statusText ?? ''
+          earlier.responseHeaders = redirect.headers ?? null
+          earlier.durationMs = Math.round((Number(params.timestamp) - earlier.timestamp) * 1000)
+          browser.network.delete(key)
+          browser.network.set(`${key}#${earlier.id}`, earlier)
+        }
+        browser.network.set(key, {
+          id: browser.nextRequest++,
+          requestId: params.requestId as string,
+          session,
           method: request.method,
           url: request.url,
           type: String(params.type ?? 'Other'),
           status: null,
+          statusText: '',
           failure: null,
+          mimeType: null,
+          requestHeaders: request.headers ?? {},
+          responseHeaders: null,
+          postData: request.postData ?? null,
+          hasPostData: request.hasPostData === true,
+          startedAt: typeof params.wallTime === 'number' ? Math.round(params.wallTime * 1000) : Date.now(),
+          durationMs: null,
+          encodedBytes: null,
+          fromCache: false,
+          timestamp: Number(params.timestamp) || 0,
         })
-        if (browser.network.size > NETWORK_LIMIT) browser.network.delete(browser.network.keys().next().value!)
+        while (browser.network.size > NETWORK_LIMIT) browser.network.delete(browser.network.keys().next().value!)
+        return
+      }
+      case 'Network.requestServedFromCache': {
+        const entry = findRequest(browser.network, session, params.requestId as string)
+        if (entry) entry.fromCache = true
         return
       }
       case 'Network.responseReceived': {
-        const entry = browser.network.get(params.requestId as string)
+        const entry = findRequest(browser.network, session, params.requestId as string)
         if (!entry) return
-        const response = params.response as { status: number }
+        const response = params.response as {
+          status: number
+          statusText?: string
+          mimeType?: string
+          headers?: Record<string, string>
+          fromDiskCache?: boolean
+          fromServiceWorker?: boolean
+        }
         entry.status = response.status
+        entry.statusText = response.statusText ?? ''
+        entry.mimeType = response.mimeType ?? null
+        entry.responseHeaders = response.headers ?? null
+        if (response.fromDiskCache) entry.fromCache = true
         if (response.status >= 400 && worthLogging(entry)) {
           this.pageWarning(browser, 'network', `HTTP ${response.status}: ${entry.method} ${shortUrl(entry.url)}`)
         }
         return
       }
+      case 'Network.loadingFinished': {
+        const entry = findRequest(browser.network, session, params.requestId as string)
+        if (!entry) return
+        entry.encodedBytes = typeof params.encodedDataLength === 'number' ? params.encodedDataLength : null
+        entry.durationMs = Math.max(0, Math.round((Number(params.timestamp) - entry.timestamp) * 1000))
+        return
+      }
       case 'Network.loadingFailed': {
-        const entry = browser.network.get(params.requestId as string)
+        const entry = findRequest(browser.network, session, params.requestId as string)
         if (!entry || params.canceled) return
         entry.failure = String(params.errorText ?? 'failed')
+        entry.durationMs = Math.max(0, Math.round((Number(params.timestamp) - entry.timestamp) * 1000))
         if (worthLogging(entry)) this.pageWarning(browser, 'network', `${entry.failure}: ${entry.method} ${shortUrl(entry.url)}`)
         return
       }
       case 'Runtime.bindingCalled': {
-        if (params.name !== DIALOG_BINDING) return
+        if (params.name !== DIALOG_BINDING || session !== undefined) return
         let caught: CaughtDialog
         try {
           const raw = JSON.parse(String(params.payload)) as Record<string, unknown>
@@ -733,6 +897,7 @@ export class BrowserControl extends TypedEmitter<Events> {
         return
       }
       case 'Page.javascriptDialogOpening': {
+        if (session !== undefined) return
         const dialog = { type: String(params.type), message: String(params.message ?? ''), defaultPrompt: String(params.defaultPrompt ?? '') }
         browser.dialog = dialog
         browser.dialogSignal.resolve(dialog)
@@ -741,9 +906,10 @@ export class BrowserControl extends TypedEmitter<Events> {
         return
       }
       case 'Page.javascriptDialogClosed':
-        browser.dialog = null
+        if (session === undefined) browser.dialog = null
         return
       case 'Page.fileChooserOpened':
+        if (session !== undefined) return
         browser.chooser = { backendNodeId: Number(params.backendNodeId), multiple: params.mode === 'selectMultiple' }
         return
     }
@@ -828,6 +994,10 @@ export class BrowserControl extends TypedEmitter<Events> {
         queue: Promise.resolve(),
         consoleEntries: [],
         network: new Map(),
+        nextRequest: 1,
+        frames: new PageFrames(),
+        lastSnapshot: null,
+        emulation: null,
         dialog: null,
         dialogSignal: signal(),
         caught: [],
@@ -880,6 +1050,7 @@ export class BrowserControl extends TypedEmitter<Events> {
       active: this.isActive(browser),
       takenOver: control.takenOver,
       viewport: browser.viewport ? { ...browser.viewport } : null,
+      emulation: browser.emulation ? { ...browser.emulation } : null,
     }
   }
 
@@ -936,18 +1107,133 @@ function shortUrl(url: string): string {
 /** How long the window may take to give the page the size Claude chose. */
 const VIEWPORT_WAIT_MS = 3000
 
-/** A phone to the page (touch, a phone's user agent, the viewport meta tag), or the browser again. */
-async function setPhoneMode(page: PageDriver, on: boolean): Promise<void> {
+/**
+ * A phone to the page (touch, a phone's user agent, the viewport meta tag), or the browser again.
+ * `locale`: the language Claude chose (browser_emulate), which goes with the user agent.
+ */
+async function setPhoneMode(page: PageDriver, on: boolean, locale: string | null): Promise<void> {
   if (on) {
     await page.cdp('Emulation.setDeviceMetricsOverride', { width: 0, height: 0, deviceScaleFactor: 0, mobile: true })
     await page.cdp('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })
-    await page.cdp('Emulation.setUserAgentOverride', mobileUserAgent(page.contents.getUserAgent()))
   } else {
     await page.cdp('Emulation.clearDeviceMetricsOverride')
     await page.cdp('Emulation.setTouchEmulationEnabled', { enabled: false })
-    // An empty agent ends the override.
-    await page.cdp('Emulation.setUserAgentOverride', { userAgent: '' })
   }
+  await setUserAgent(page, on, locale)
+}
+
+/**
+ * The user agent (a phone's or the browser's own) and the language the page is asked for, in the
+ * page or in a frame in a process of its own (`session`).
+ */
+async function setUserAgent(page: PageDriver, mobile: boolean, locale: string | null, session?: string): Promise<void> {
+  const language = locale ? { acceptLanguage: locale } : {}
+  if (mobile) await page.cdpIn(session, 'Emulation.setUserAgentOverride', { ...mobileUserAgent(page.contents.getUserAgent()), ...language })
+  else if (locale) await page.cdpIn(session, 'Emulation.setUserAgentOverride', { userAgent: page.contents.getUserAgent(), ...language })
+  // An empty agent ends the override.
+  else await page.cdpIn(session, 'Emulation.setUserAgentOverride', { userAgent: '' })
+}
+
+/** The session's key of a request: request ids are only unique within one DevTools session. */
+function requestKey(session: string | undefined, requestId: string): string {
+  return `${session ?? ''}|${requestId}`
+}
+
+/**
+ * The entry of a request an event of `session` is about. The document of a frame in a process of
+ * its own starts in the session around the frame and is loaded in the frame's own (its id is unique):
+ * then its entry follows it there, where its body is.
+ */
+export function findRequest(network: Map<string, NetworkEntry>, session: string | undefined, requestId: string): NetworkEntry | undefined {
+  const entry = network.get(requestKey(session, requestId))
+  if (entry || session === undefined) return entry
+  for (const other of network.values()) {
+    if (other.requestId !== requestId || other.type !== 'Document') continue
+    other.session = session
+    return other
+  }
+  return undefined
+}
+
+/**
+ * Chromium attaches a session to every frame in a process of its own, below the page or a frame
+ * (`session`). The frame waits until setUpFrame let it run: its scripts start with the emulation.
+ */
+async function autoAttachFrames(page: PageDriver, session: string | undefined): Promise<void> {
+  const params = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }
+  try {
+    await page.cdpIn(session, 'Target.setAutoAttach', { ...params, filter: [{ type: 'iframe' }] })
+  } catch {
+    // An older protocol without filters: then everything it would attach, the handler only takes frames.
+    await page.cdpIn(session, 'Target.setAutoAttach', params).catch(() => undefined)
+  }
+}
+
+/** Chrome's network presets for DevTools (bytes per second, latency in ms). */
+const NETWORK_PRESETS: Record<BrowserNetworkPreset, { offline: boolean; latency: number; downloadThroughput: number; uploadThroughput: number }> = {
+  offline: { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 },
+  'slow-3g': { offline: false, latency: 2000, downloadThroughput: 50_000, uploadThroughput: 50_000 },
+  'fast-3g': { offline: false, latency: 562.5, downloadThroughput: 180_000, uploadThroughput: 84_375 },
+  'fast-4g': { offline: false, latency: 165, downloadThroughput: 1_012_500, uploadThroughput: 168_750 },
+}
+const NO_NETWORK_LIMIT = { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }
+
+/** Whether an emulation has the page pretend anything at all. */
+export function isEmulating(emulation: BrowserEmulation): boolean {
+  return (
+    emulation.colorScheme !== null ||
+    emulation.reducedMotion ||
+    emulation.network !== null ||
+    emulation.cpuSlowdown !== null ||
+    emulation.locale !== null ||
+    emulation.timezone !== null
+  )
+}
+
+/**
+ * What the page pretends (null: nothing), in the page and in its frames in processes of their own
+ * (`frameSessions`), which feel the network and the CPU apart from the page.
+ */
+async function applyEmulation(page: PageDriver, emulation: BrowserEmulation | null, mobile: boolean, frameSessions: string[]): Promise<void> {
+  await page.cdp('Emulation.setEmulatedMedia', { features: mediaFeatures(emulation) })
+  await page.cdp('Emulation.setTimezoneOverride', { timezoneId: emulation?.timezone ?? '' }).catch((error: Error) => {
+    if (emulation?.timezone) throw new ToolError(`The time zone ${JSON.stringify(emulation.timezone)} is unknown: ${error.message}`)
+  })
+  // Another language replaces the last one only after it is gone.
+  await page.cdp('Emulation.setLocaleOverride', { locale: '' }).catch(() => undefined)
+  if (emulation?.locale) {
+    await page.cdp('Emulation.setLocaleOverride', { locale: emulation.locale }).catch((error: Error) => {
+      throw new ToolError(`The locale ${JSON.stringify(emulation.locale)} is unknown: ${error.message}`)
+    })
+  }
+  await setUserAgent(page, mobile, emulation?.locale ?? null)
+  await page.cdp('Network.emulateNetworkConditions', emulation?.network ? NETWORK_PRESETS[emulation.network] : NO_NETWORK_LIMIT)
+  await page.cdp('Emulation.setCPUThrottlingRate', { rate: emulation?.cpuSlowdown ?? 1 })
+  for (const session of frameSessions) await applyFrameEmulation(page, session, emulation, mobile)
+}
+
+/**
+ * The emulation in a frame in a process of its own: the process has its own media, clock, language
+ * and network. Each part on its own: a process has one time zone and language, which a frame in
+ * the page's process (or another frame of its site) may have set already.
+ */
+async function applyFrameEmulation(page: PageDriver, session: string, emulation: BrowserEmulation | null, mobile: boolean): Promise<void> {
+  const send = (method: string, params: Record<string, unknown>) => page.cdpIn(session, method, params).catch(() => undefined)
+  await send('Emulation.setEmulatedMedia', { features: mediaFeatures(emulation) })
+  await send('Emulation.setTimezoneOverride', { timezoneId: emulation?.timezone ?? '' })
+  await send('Emulation.setLocaleOverride', { locale: '' })
+  if (emulation?.locale) await send('Emulation.setLocaleOverride', { locale: emulation.locale })
+  await setUserAgent(page, mobile, emulation?.locale ?? null, session).catch(() => undefined)
+  await send('Network.emulateNetworkConditions', emulation?.network ? NETWORK_PRESETS[emulation.network] : NO_NETWORK_LIMIT)
+  await send('Emulation.setCPUThrottlingRate', { rate: emulation?.cpuSlowdown ?? 1 })
+}
+
+/** The media features of an emulation; empty values end an override. */
+function mediaFeatures(emulation: BrowserEmulation | null): { name: string; value: string }[] {
+  return [
+    { name: 'prefers-color-scheme', value: emulation?.colorScheme ?? '' },
+    { name: 'prefers-reduced-motion', value: emulation?.reducedMotion ? 'reduce' : '' },
+  ]
 }
 
 /** Waits until the page has the size `wanted`; for null, until it lost the size it had (`before`). */

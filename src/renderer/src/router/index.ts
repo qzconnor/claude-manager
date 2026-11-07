@@ -5,7 +5,7 @@ import SessionsView from '@/views/SessionsView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import TerminalsView from '@/views/TerminalsView.vue'
 
-export const SETTINGS_TABS = ['appearance', 'terminal', 'claude', 'notifications', 'api', 'updates', 'about'] as const
+export const SETTINGS_TABS = ['appearance', 'terminal', 'claude', 'tools', 'notifications', 'api', 'updates', 'about'] as const
 export type SettingsTab = (typeof SETTINGS_TABS)[number]
 
 /** The updates and release notes, a tab of the settings. */

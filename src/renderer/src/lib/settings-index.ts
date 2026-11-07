@@ -143,17 +143,6 @@ const TREE = [
         ],
       },
       {
-        id: 'claude.browser',
-        title: 'Browser',
-        keywords: 'Webseite MCP',
-        fields: [
-          { id: 'claude.browserTools', label: 'Browser für Claude-Sessions', keywords: 'MCP Server Werkzeuge Tools' },
-          { id: 'claude.browserToolsAllowed', label: 'Ohne Nachfrage bedienen', keywords: 'Erlaubnis Berechtigung fragen' },
-          { id: 'claude.noClaudeInChrome', label: 'Ohne Claude in Chrome', keywords: 'Erweiterung no-chrome' },
-          { id: 'claude.clearBrowserData', label: 'Browserdaten löschen', keywords: 'Cookies Cache abmelden Logins' },
-        ],
-      },
-      {
         id: 'claude.command',
         title: 'Befehl „cm“',
         keywords: 'cm Kommandozeile CLI Explorer Adressleiste',
@@ -184,6 +173,34 @@ const TREE = [
             label: { windows: 'Mit Windows starten', other: 'Beim Anmelden starten' },
             keywords: 'Autostart Systemstart Anmelden',
           },
+        ],
+      },
+    ],
+  },
+  {
+    tab: 'tools',
+    label: 'Werkzeuge',
+    sections: [
+      {
+        id: 'claude.browser',
+        title: 'Browser',
+        keywords: 'Webseite MCP',
+        fields: [
+          { id: 'claude.browserTools', label: 'Browser für Claude-Sessions', keywords: 'MCP Server Werkzeuge Tools' },
+          { id: 'claude.browserToolsAllowed', label: 'Ohne Nachfrage bedienen', keywords: 'Erlaubnis Berechtigung fragen' },
+          { id: 'claude.noClaudeInChrome', label: 'Ohne Claude in Chrome', keywords: 'Erweiterung no-chrome' },
+          { id: 'claude.clearBrowserData', label: 'Browserdaten löschen', keywords: 'Cookies Cache abmelden Logins' },
+        ],
+      },
+      {
+        id: 'tools.app',
+        title: 'Claude Manager',
+        keywords: 'MCP Werkzeuge Tools App',
+        fields: [
+          { id: 'claude.limitsTool', label: 'Eigene Limits lesen', keywords: 'Usage Nutzung Rate Limit Account' },
+          { id: 'claude.sessionsTool', label: 'Sessions durchsuchen', keywords: 'Verlauf Transcript Chatverlauf frühere' },
+          { id: 'claude.shellTools', label: 'Shell-Tabs steuern', keywords: 'Terminal Befehle Dev-Server Ausgabe PowerShell' },
+          { id: 'claude.shellToolsAllowed', label: 'Ohne Nachfrage', keywords: 'Erlaubnis Berechtigung fragen Shell' },
         ],
       },
     ],

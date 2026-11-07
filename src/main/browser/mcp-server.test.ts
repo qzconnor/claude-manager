@@ -1,18 +1,50 @@
 import { describe, expect, it } from 'vitest'
-import { mcpConfig, mcpLaunchArgs, MCP_SERVER_NAME } from './mcp-server'
+import { createDefaultSettings } from '@shared/defaults'
+import type { ClaudeSettings } from '@shared/types'
+import { allowedToolNames, mcpConfig, mcpLaunchArgs } from './mcp-server'
 import { pageCall } from './page-scripts'
 
 describe('mcpLaunchArgs', () => {
   it('passes the config in the = form, so the prompt after it stays the prompt', () => {
-    expect(mcpLaunchArgs('C:\\data dir\\browser-mcp\\a.json', false)).toEqual(['--mcp-config=C:\\data dir\\browser-mcp\\a.json'])
+    expect(mcpLaunchArgs('C:\\data dir\\browser-mcp\\a.json', [])).toEqual(['--mcp-config=C:\\data dir\\browser-mcp\\a.json'])
   })
 
-  it('allows all tools of the server when the browser may be driven without asking', () => {
-    expect(mcpLaunchArgs('/tmp/a.json', true)).toEqual(['--mcp-config=/tmp/a.json', `--allowedTools=mcp__${MCP_SERVER_NAME}`])
+  it('allows the given tools of the server by their full names, in one argument', () => {
+    expect(mcpLaunchArgs('/tmp/a.json', ['browser_click', 'limits'])).toEqual([
+      '--mcp-config=/tmp/a.json',
+      '--allowedTools=mcp__claude-manager__browser_click,mcp__claude-manager__limits',
+    ])
   })
 
   it('turns Claude in Chrome off when asked, so Claude takes the browser of the app', () => {
-    expect(mcpLaunchArgs('/tmp/a.json', false, true)).toEqual(['--mcp-config=/tmp/a.json', '--no-chrome'])
+    expect(mcpLaunchArgs('/tmp/a.json', [], true)).toEqual(['--mcp-config=/tmp/a.json', '--no-chrome'])
+  })
+})
+
+describe('allowedToolNames', () => {
+  const claude = (patch: Partial<ClaudeSettings> = {}): ClaudeSettings => ({ ...createDefaultSettings().claude, ...patch })
+  const browser = ['browser_navigate', 'browser_click']
+
+  it('allows the browser and the reading tools of the app by default, not the shells', () => {
+    expect(allowedToolNames(claude(), browser, true)).toEqual(['browser_navigate', 'browser_click', 'limits', 'sessions_search', 'session_read'])
+  })
+
+  it('leaves the browser to ask when the settings say so, or when it is off', () => {
+    expect(allowedToolNames(claude({ browserToolsAllowed: false }), browser, true)).toEqual(['limits', 'sessions_search', 'session_read'])
+    expect(allowedToolNames(claude({ browserTools: false }), browser, true)).not.toContain('browser_click')
+  })
+
+  it('allows the shells only when they are on and allowed', () => {
+    expect(allowedToolNames(claude({ shellToolsAllowed: true }), [], true)).not.toContain('shell_input')
+    expect(allowedToolNames(claude({ shellTools: true }), [], true)).not.toContain('shell_input')
+    expect(allowedToolNames(claude({ shellTools: true, shellToolsAllowed: true }), [], true)).toEqual(
+      expect.arrayContaining(['shell_open', 'shell_input', 'shell_output', 'shell_list', 'shell_close']),
+    )
+  })
+
+  it('leaves out switched off tools of the app, and all of them before the app has them', () => {
+    expect(allowedToolNames(claude({ limitsTool: false, sessionsTool: false }), [], true)).toEqual([])
+    expect(allowedToolNames(claude(), browser, false)).toEqual(browser)
   })
 })
 
