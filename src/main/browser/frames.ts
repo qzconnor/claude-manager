@@ -1,3 +1,4 @@
+import type { PageDriver } from './page-driver'
 import { FRAME_MARK } from './page-scripts'
 
 /**
@@ -120,5 +121,19 @@ export class PageFrames {
 
   all(): FrameRecord[] {
     return [...this.records.values()]
+  }
+}
+
+/**
+ * Chromium attaches a session to every frame in a process of its own, below the page or a frame
+ * (`session`). The frame waits until BrowserControl.setUpFrame let it run: its scripts start with the emulation.
+ */
+export async function autoAttachFrames(page: PageDriver, session: string | undefined): Promise<void> {
+  const params = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }
+  try {
+    await page.cdpIn(session, 'Target.setAutoAttach', { ...params, filter: [{ type: 'iframe' }] })
+  } catch {
+    // An older protocol without filters: then everything it would attach, the handler only takes frames.
+    await page.cdpIn(session, 'Target.setAutoAttach', params).catch(() => undefined)
   }
 }

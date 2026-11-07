@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addressOf, addressToUrl, BLANK_PAGE, emulationLabels, fallbackTitle, isBrowsableUrl } from './browser'
+import { addressOf, addressToUrl, BLANK_PAGE, emulationLabels, fallbackTitle, isBrowsableUrl, NO_EMULATION, routeLabel } from './browser'
 
 describe('addressToUrl', () => {
   it('takes addresses as typed and adds the scheme when it is missing', () => {
@@ -55,8 +55,37 @@ describe('addressOf and fallbackTitle', () => {
 describe('emulationLabels', () => {
   it('names what Claude has the page pretend, in German', () => {
     expect(
-      emulationLabels({ colorScheme: 'dark', reducedMotion: true, network: 'slow-3g', cpuSlowdown: 4, locale: 'en-US', timezone: 'America/New_York' }),
-    ).toEqual(['Dunkel', 'Weniger Bewegung', 'Langsames 3G', 'CPU 4× langsamer', 'en-US', 'America/New_York'])
-    expect(emulationLabels({ colorScheme: null, reducedMotion: false, network: null, cpuSlowdown: null, locale: null, timezone: null })).toEqual([])
+      emulationLabels({
+        colorScheme: 'dark',
+        reducedMotion: true,
+        network: 'slow-3g',
+        cpuSlowdown: 4,
+        locale: 'en-US',
+        timezone: 'America/New_York',
+        geolocation: { latitude: 52.52, longitude: 13.4, accuracy: 50 },
+        permissions: { notifications: 'granted', camera: 'denied' },
+      }),
+    ).toEqual([
+      'Dunkel',
+      'Weniger Bewegung',
+      'Langsames 3G',
+      'CPU 4× langsamer',
+      'en-US',
+      'America/New_York',
+      'Standort 52.52, 13.40',
+      'Benachrichtigungen erlaubt',
+      'Kamera verweigert',
+    ])
+    expect(emulationLabels(NO_EMULATION)).toEqual([])
+  })
+})
+
+describe('routeLabel', () => {
+  const route = { id: 1, pattern: '*/api/users*', method: null, action: 'fulfill' as const, status: 500, delayMs: 0, hits: 0, timesLeft: null }
+  it('names what a route does with the requests it takes', () => {
+    expect(routeLabel(route)).toBe('*/api/users* → 500')
+    expect(routeLabel({ ...route, method: 'POST', status: null, delayMs: 2000 })).toBe('POST */api/users* → 200 +2000 ms')
+    expect(routeLabel({ ...route, action: 'fail', pattern: 'ads.example.com' })).toBe('ads.example.com blockiert')
+    expect(routeLabel({ ...route, action: 'delay', delayMs: 3000 })).toBe('*/api/users* +3000 ms')
   })
 })

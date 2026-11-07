@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { findRequest, isEmulating, type NetworkEntry } from './browser-control'
+import { NO_EMULATION } from '@shared/browser'
+import { findRequest, type NetworkEntry } from './network-log'
+import { effectivePermissions, isEmulating } from './page-emulation'
 
 function entry(change: Partial<NetworkEntry>): NetworkEntry {
   return {
@@ -22,6 +24,10 @@ function entry(change: Partial<NetworkEntry>): NetworkEntry {
     encodedBytes: null,
     fromCache: false,
     timestamp: 0,
+    messages: null,
+    messageCount: 0,
+    closed: false,
+    routed: null,
     ...change,
   }
 }
@@ -47,9 +53,22 @@ describe('findRequest', () => {
 
 describe('isEmulating', () => {
   it('tells whether the page pretends anything', () => {
-    const none = { colorScheme: null, reducedMotion: false, network: null, cpuSlowdown: null, locale: null, timezone: null }
-    expect(isEmulating(none)).toBe(false)
-    expect(isEmulating({ ...none, timezone: 'Asia/Tokyo' })).toBe(true)
-    expect(isEmulating({ ...none, reducedMotion: true })).toBe(true)
+    expect(isEmulating(NO_EMULATION)).toBe(false)
+    expect(isEmulating({ ...NO_EMULATION, timezone: 'Asia/Tokyo' })).toBe(true)
+    expect(isEmulating({ ...NO_EMULATION, reducedMotion: true })).toBe(true)
+    expect(isEmulating({ ...NO_EMULATION, geolocation: { latitude: 1, longitude: 2, accuracy: 50 } })).toBe(true)
+    expect(isEmulating({ ...NO_EMULATION, permissions: { notifications: 'denied' } })).toBe(true)
+  })
+})
+
+describe('effectivePermissions', () => {
+  it('grants the location with a place of Claude’s, unless Claude refused it', () => {
+    const place = { latitude: 48.85, longitude: 2.35, accuracy: 50 }
+    expect(effectivePermissions(null)).toEqual({})
+    expect(effectivePermissions({ ...NO_EMULATION, geolocation: place })).toEqual({ geolocation: 'granted' })
+    expect(effectivePermissions({ ...NO_EMULATION, geolocation: place, permissions: { geolocation: 'denied', camera: 'granted' } })).toEqual({
+      geolocation: 'denied',
+      camera: 'granted',
+    })
   })
 })

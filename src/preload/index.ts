@@ -93,6 +93,7 @@ const api: ManagerApi = {
     clearData: () => invoke(IpcInvoke.browserClearData),
     resetViewport: (id) => invoke(IpcInvoke.browserResetViewport, id),
     resetEmulation: (id) => invoke(IpcInvoke.browserResetEmulation, id),
+    resetRoutes: (id) => invoke(IpcInvoke.browserResetRoutes, id),
     claudeInChrome: () => invoke(IpcInvoke.browserClaudeInChrome),
     downloads: () => invoke(IpcInvoke.browserDownloads),
     downloadAction: (id, action) => invoke(IpcInvoke.browserDownloadAction, id, action),

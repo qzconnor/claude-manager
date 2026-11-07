@@ -17,7 +17,7 @@ describe('hardenWebview', () => {
     const prefs: WebPreferences = { preload: 'C:/app/preload.js', nodeIntegration: true, contextIsolation: false, sandbox: false, webSecurity: false }
     const params: Record<string, string> = { src: 'https://example.com', partition: 'persist:other' }
     expect(hardenWebview(prefs, params)).toBe(true)
-    expect(prefs).toMatchObject({ nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, partition: 'persist:browser' })
+    expect(prefs).toMatchObject({ nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, transparent: false, partition: 'persist:browser' })
     expect(prefs.preload).toBeUndefined()
     expect(params.partition).toBe('persist:browser')
   })

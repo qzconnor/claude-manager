@@ -9,6 +9,7 @@ import {
   MonitorIcon,
   PlayIcon,
   RotateCwIcon,
+  RouteIcon,
   ScrollTextIcon,
   SmartphoneIcon,
   SparklesIcon,
@@ -18,7 +19,7 @@ import {
 } from '@lucide/vue'
 import { useElementSize } from '@vueuse/core'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { addressOf, addressToUrl, BLANK_PAGE, BROWSER_PARTITION, emulationLabels, isBrowsableUrl } from '@shared/browser'
+import { addressOf, addressToUrl, BLANK_PAGE, BROWSER_PARTITION, emulationLabels, isBrowsableUrl, routeLabel } from '@shared/browser'
 import type { TerminalInfo } from '@shared/types'
 import { Button } from '@/components/ui/button'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
@@ -214,6 +215,12 @@ const emulation = computed(() => {
 })
 function resetEmulation() {
   void attempt(() => browsers.resetEmulation(props.terminal.id), 'Emulation konnte nicht beendet werden')
+}
+
+/** Claude's routes for the page's requests (browser_route), as labels for their badge. */
+const routes = computed(() => (control.value?.routes ?? []).map(routeLabel))
+function resetRoutes() {
+  void attempt(() => browsers.resetRoutes(props.terminal.id), 'Routen konnten nicht beendet werden')
 }
 /**
  * Claude's mouse pointer: it glides from spot to spot (in main's time, see pointer.ts), presses
@@ -784,9 +791,9 @@ watch(
         />
       </div>
 
-      <!-- Above the page: the size Claude gave it and what Claude has it pretend, each with the way back. -->
+      <!-- Above the page: the size Claude gave it, what Claude has it pretend and Claude's routes, each with the way back. -->
       <div
-        v-if="(frame && viewport) || emulation.length"
+        v-if="(frame && viewport) || emulation.length || routes.length"
         class="pointer-events-none absolute left-1/2 z-20 flex max-w-[calc(100%-1rem)] -translate-x-1/2 items-center gap-2"
         :style="{ top: `${frame ? Math.max(8, frame.top - 34) : 8}px` }"
       >
@@ -825,6 +832,24 @@ watch(
             aria-label="Emulation beenden"
             title="Emulation beenden"
             @click="resetEmulation"
+          >
+            <XIcon />
+          </Button>
+        </div>
+        <div
+          v-if="routes.length"
+          class="pointer-events-auto flex min-w-0 items-center gap-1.5 rounded-full border bg-popover/90 py-0.5 pr-0.5 pl-2.5 text-[11px] text-popover-foreground shadow-sm backdrop-blur-md animate-in fade-in slide-in-from-bottom-1 duration-200"
+          :title="`Claude beantwortet Anfragen selbst:\n${routes.join('\n')}`"
+        >
+          <RouteIcon class="size-3.5 shrink-0 text-muted-foreground" />
+          <span class="truncate font-medium">{{ routes.length === 1 ? routes[0] : `${routes.length} Routen` }}</span>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            class="shrink-0 rounded-full"
+            aria-label="Routen beenden"
+            title="Routen beenden"
+            @click="resetRoutes"
           >
             <XIcon />
           </Button>

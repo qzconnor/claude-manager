@@ -153,5 +153,6 @@ export const useBrowsersStore = defineStore('browsers', () => {
     },
     resetViewport: (id: string) => window.api.browser.resetViewport(id),
     resetEmulation: (id: string) => window.api.browser.resetEmulation(id),
+    resetRoutes: (id: string) => window.api.browser.resetRoutes(id),
   }
 })

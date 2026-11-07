@@ -23,6 +23,9 @@ export function hardenWebview(webPreferences: WebPreferences, params: Record<str
   webPreferences.webSecurity = true
   webPreferences.allowRunningInsecureContent = false
   webPreferences.experimentalFeatures = false
+  // A page without a background of its own is white (or dark with color-scheme: dark) as in
+  // Chrome, on screen and in screenshots; a guest is transparent by default.
+  webPreferences.transparent = false
   webPreferences.partition = BROWSER_PARTITION
   params.partition = BROWSER_PARTITION
   return !params.src || isBrowsableUrl(params.src)

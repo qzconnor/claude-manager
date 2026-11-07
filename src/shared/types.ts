@@ -322,10 +322,41 @@ export interface BrowserControlState {
   viewport: BrowserViewport | null
   /** What Claude has the page pretend (dark mode, slow network …); null: nothing. */
   emulation: BrowserEmulation | null
+  /** Requests Claude answers, slows down or blocks itself (browser_route); they end with the session. */
+  routes: BrowserRoute[]
+}
+
+/** A route of Claude's for the page's requests, as the badge over the page shows it. */
+export interface BrowserRoute {
+  id: number
+  /** The addresses it takes: `*` matches anything; without `*` an address that contains it. */
+  pattern: string
+  /** Only requests with this method (GET, POST …); null: all. */
+  method: string | null
+  /** fulfill: Claude's answer; fail: a network error; delay: the real answer, later. */
+  action: 'fulfill' | 'fail' | 'delay'
+  /** The status of Claude's answer (fulfill). */
+  status: number | null
+  delayMs: number
+  /** How many requests it took so far. */
+  hits: number
+  /** It ends after this many more requests; null: with the session. */
+  timesLeft: number | null
 }
 
 /** A network as Claude can have the page feel it (Chrome's presets). */
 export type BrowserNetworkPreset = 'offline' | 'slow-3g' | 'fast-3g' | 'fast-4g'
+
+/** Permissions Claude can give the page or refuse it (browser_emulate). */
+export type BrowserPermission = 'geolocation' | 'notifications' | 'camera' | 'microphone' | 'clipboard-read'
+
+/** Where the page believes it is (browser_emulate). */
+export interface BrowserGeolocation {
+  latitude: number
+  longitude: number
+  /** Meters. */
+  accuracy: number
+}
 
 /** What Claude has the page pretend (browser_emulate); it ends with the session or the user's reset. */
 export interface BrowserEmulation {
@@ -340,6 +371,10 @@ export interface BrowserEmulation {
   locale: string | null
   /** IANA time zone, e.g. `America/New_York`; null: the computer's. */
   timezone: string | null
+  /** Where the page believes it is; it also gets the permission for the location. null: nowhere. */
+  geolocation: BrowserGeolocation | null
+  /** Permissions the page gets or is refused; those left out the browser refuses as always. */
+  permissions: Partial<Record<BrowserPermission, 'granted' | 'denied'>>
 }
 
 /** Where Claude acts in the page, for the highlight over it; in pixels of the view. */

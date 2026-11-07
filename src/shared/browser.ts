@@ -1,4 +1,4 @@
-import type { BrowserEmulation, BrowserNetworkPreset } from './types'
+import type { BrowserEmulation, BrowserNetworkPreset, BrowserPermission, BrowserRoute } from './types'
 
 /**
  * The browser tabs: web pages in a part of a tab, with a profile of their own (cookies, storage)
@@ -67,6 +67,26 @@ const NETWORK_LABELS: Record<BrowserNetworkPreset, string> = {
   'fast-4g': '4G',
 }
 
+/** A page that pretends nothing. */
+export const NO_EMULATION: BrowserEmulation = {
+  colorScheme: null,
+  reducedMotion: false,
+  network: null,
+  cpuSlowdown: null,
+  locale: null,
+  timezone: null,
+  geolocation: null,
+  permissions: {},
+}
+
+const PERMISSION_LABELS: Record<BrowserPermission, string> = {
+  geolocation: 'Standort',
+  notifications: 'Benachrichtigungen',
+  camera: 'Kamera',
+  microphone: 'Mikrofon',
+  'clipboard-read': 'Zwischenablage lesen',
+}
+
 /** What Claude has the page pretend, as short German labels for the log and the badge over the page. */
 export function emulationLabels(emulation: BrowserEmulation): string[] {
   const labels: string[] = []
@@ -76,5 +96,18 @@ export function emulationLabels(emulation: BrowserEmulation): string[] {
   if (emulation.cpuSlowdown) labels.push(`CPU ${emulation.cpuSlowdown}× langsamer`)
   if (emulation.locale) labels.push(emulation.locale)
   if (emulation.timezone) labels.push(emulation.timezone)
+  if (emulation.geolocation) labels.push(`Standort ${emulation.geolocation.latitude.toFixed(2)}, ${emulation.geolocation.longitude.toFixed(2)}`)
+  for (const [name, setting] of Object.entries(emulation.permissions) as [BrowserPermission, string][]) {
+    labels.push(`${PERMISSION_LABELS[name]} ${setting === 'granted' ? 'erlaubt' : 'verweigert'}`)
+  }
   return labels
+}
+
+/** A route of Claude's as a short German label, e.g. "GET /api/users → 500". */
+export function routeLabel(route: BrowserRoute): string {
+  const target = `${route.method ? `${route.method} ` : ''}${route.pattern}`
+  const delay = route.delayMs ? ` +${route.delayMs} ms` : ''
+  if (route.action === 'fail') return `${target} blockiert${delay}`
+  if (route.action === 'delay') return `${target}${delay}`
+  return `${target} → ${route.status ?? 200}${delay}`
 }

@@ -50,6 +50,31 @@ export interface Snapshot {
   text: string
 }
 
+/** What browser_find found: lines like the snapshot's, where they are; and how many there were in all. */
+export interface FindResult {
+  items: { line: string; region: string; place: string; context: string }[]
+  total: number
+  /** Matches that are hidden (not counted in items). */
+  hidden: number
+}
+
+export interface AuditIssue {
+  rule: string
+  severity: 'error' | 'warning'
+  /** The element, as a snapshot line with ref; null: the page as a whole. */
+  line: string | null
+  detail: string
+}
+
+/** What the accessibility check found; `counts` by rule, also beyond the issues listed. */
+export interface AuditResult {
+  issues: AuditIssue[]
+  counts: Record<string, number>
+  checked: number
+  /** Frames of other sites the page has (checked when the last snapshot found them). */
+  foreign: number
+}
+
 export function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined
   const timeout = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error(message)), ms)))
@@ -128,6 +153,41 @@ export class PageDriver {
     const offset = await this.frameOffset(record, { x: pair.from.x + pair.from.width / 2, y: pair.from.y + pair.from.height / 2 })
     const shift = (box: ElementBox) => ({ ...box, x: box.x + offset.x, y: box.y + offset.y })
     return { ...pair, from: shift(pair.from), to: shift(pair.to) }
+  }
+
+  /**
+   * Elements by text or role (browser_find), in the page and in the frames of other sites the last
+   * snapshot found; their refs work like the snapshot's.
+   */
+  async find(text: string, role: string, exact: boolean, limit: number): Promise<FindResult> {
+    const result = await this.call<FindResult>('find', text, role, exact, limit)
+    for (const record of this.frames?.all() ?? []) {
+      const inner = await this.inFrame<FindResult>(record, 'find', text, role, exact, Math.max(0, limit - result.items.length)).catch(() => null)
+      if (!inner) continue
+      result.items.push(...inner.items.map((item) => ({ ...item, line: prefixRefs(item.line, record.num), region: `frame f${record.num}${item.region ? `, ${item.region}` : ''}` })))
+      result.total += inner.total
+      result.hidden += inner.hidden
+    }
+    return result
+  }
+
+  /** The accessibility check (browser_check_accessibility) of the page and of the frames of other sites the last snapshot found. */
+  async audit(perRule: number): Promise<AuditResult> {
+    const result = await this.call<AuditResult>('audit', perRule)
+    let foreign = result.foreign
+    for (const record of this.frames?.all() ?? []) {
+      const inner = await this.inFrame<AuditResult>(record, 'audit', perRule).catch(() => null)
+      if (!inner) continue
+      foreign--
+      result.checked += inner.checked
+      for (const issue of inner.issues) {
+        // A frame's own page rules (its lang, title, zoom) are its business, not the page's.
+        if (!issue.line) continue
+        if ((result.counts[issue.rule] ?? 0) < perRule) result.issues.push({ ...issue, line: prefixRefs(issue.line, record.num) })
+        result.counts[issue.rule] = (result.counts[issue.rule] ?? 0) + 1
+      }
+    }
+    return { ...result, foreign: Math.max(0, foreign) }
   }
 
   /** Whether the text is on the page or in one of the frames of other sites the last snapshot found. */
