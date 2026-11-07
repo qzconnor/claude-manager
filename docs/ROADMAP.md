@@ -111,3 +111,4 @@ Die App wurde in acht Schritten gebaut. Jeder Schritt baut auf dem vorherigen au
 ## Mögliche nächste Schritte
 
 - Code-Signing, sobald ein Zertifikat vorhanden ist (dann prüft electron-updater auch die Signatur des Updates).
+- OpenAI Codex CLI neben Claude Code: geprüft und machbar, mit Aufwand, Stufen und offenen Fragen in [CODEX-INTEGRATION.md](CODEX-INTEGRATION.md).
