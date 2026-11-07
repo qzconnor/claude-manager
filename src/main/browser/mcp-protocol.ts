@@ -34,6 +34,11 @@ export interface McpServerSpec {
   /** Shown to the model as the server's instructions. */
   instructions?: string
   tools: McpTool[]
+  /**
+   * Whether `callTool` takes this name; by default the listed tools. A tool switched off since the
+   * client listed them is unknown to the list, but its call can say why it fails.
+   */
+  knowsTool?(name: string): boolean
   /** Errors become a result with `isError`, which the model sees. */
   callTool(name: string, args: Record<string, unknown>): Promise<McpToolResult>
 }
@@ -108,7 +113,8 @@ async function handleOne(spec: McpServerSpec, message: unknown): Promise<JsonRpc
     case 'tools/call': {
       const name = params?.name
       const args = params?.arguments ?? {}
-      if (typeof name !== 'string' || !spec.tools.some((tool) => tool.name === name)) {
+      const known = (tool: string) => (spec.knowsTool ? spec.knowsTool(tool) : spec.tools.some((t) => t.name === tool))
+      if (typeof name !== 'string' || !known(name)) {
         return rpcError(id, INVALID_PARAMS, `Unknown tool: ${String(name)}`)
       }
       if (!isObject(args)) return rpcError(id, INVALID_PARAMS, 'arguments must be an object.')

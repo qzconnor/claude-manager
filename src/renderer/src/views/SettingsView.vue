@@ -13,6 +13,7 @@ import SettingsAppearance from '@/components/settings/SettingsAppearance.vue'
 import SettingsClaude from '@/components/settings/SettingsClaude.vue'
 import SettingsNotifications from '@/components/settings/SettingsNotifications.vue'
 import SettingsTerminal from '@/components/settings/SettingsTerminal.vue'
+import SettingsTools from '@/components/settings/SettingsTools.vue'
 import SettingsTransfer from '@/components/settings/SettingsTransfer.vue'
 import SettingsUpdates from '@/components/settings/SettingsUpdates.vue'
 import { SETTINGS_TAB_ICONS } from '@/components/settings/settings-tabs'
@@ -36,6 +37,7 @@ const PAGES: Record<SettingsTab, Component> = {
   appearance: SettingsAppearance,
   terminal: SettingsTerminal,
   claude: SettingsClaude,
+  tools: SettingsTools,
   notifications: SettingsNotifications,
   api: SettingsApi,
   updates: SettingsUpdates,

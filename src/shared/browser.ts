@@ -1,3 +1,5 @@
+import type { BrowserEmulation, BrowserNetworkPreset } from './types'
+
 /**
  * The browser tabs: web pages in a part of a tab, with a profile of their own (cookies, storage)
  * apart from the app and the user's browser.
@@ -56,4 +58,23 @@ export function fallbackTitle(url: string | null): string {
   } catch {
     return DEFAULT_BROWSER_TITLE
   }
+}
+
+const NETWORK_LABELS: Record<BrowserNetworkPreset, string> = {
+  offline: 'Offline',
+  'slow-3g': 'Langsames 3G',
+  'fast-3g': 'Schnelles 3G',
+  'fast-4g': '4G',
+}
+
+/** What Claude has the page pretend, as short German labels for the log and the badge over the page. */
+export function emulationLabels(emulation: BrowserEmulation): string[] {
+  const labels: string[] = []
+  if (emulation.colorScheme) labels.push(emulation.colorScheme === 'dark' ? 'Dunkel' : 'Hell')
+  if (emulation.reducedMotion) labels.push('Weniger Bewegung')
+  if (emulation.network) labels.push(NETWORK_LABELS[emulation.network])
+  if (emulation.cpuSlowdown) labels.push(`CPU ${emulation.cpuSlowdown}× langsamer`)
+  if (emulation.locale) labels.push(emulation.locale)
+  if (emulation.timezone) labels.push(emulation.timezone)
+  return labels
 }

@@ -3,6 +3,7 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   ExternalLinkIcon,
+  FlaskConicalIcon,
   GlobeIcon,
   HandIcon,
   MonitorIcon,
@@ -17,7 +18,7 @@ import {
 } from '@lucide/vue'
 import { useElementSize } from '@vueuse/core'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { addressOf, addressToUrl, BLANK_PAGE, BROWSER_PARTITION, isBrowsableUrl } from '@shared/browser'
+import { addressOf, addressToUrl, BLANK_PAGE, BROWSER_PARTITION, emulationLabels, isBrowsableUrl } from '@shared/browser'
 import type { TerminalInfo } from '@shared/types'
 import { Button } from '@/components/ui/button'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
@@ -204,6 +205,15 @@ const stageStyle = computed(() =>
 
 function resetViewport() {
   void attempt(() => browsers.resetViewport(props.terminal.id), 'Größe konnte nicht zurückgesetzt werden')
+}
+
+/** What Claude has the page pretend (dark mode, slow network …), as labels for its badge. */
+const emulation = computed(() => {
+  const value = control.value?.emulation
+  return value ? emulationLabels(value) : []
+})
+function resetEmulation() {
+  void attempt(() => browsers.resetEmulation(props.terminal.id), 'Emulation konnte nicht beendet werden')
 }
 /**
  * Claude's mouse pointer: it glides from spot to spot (in main's time, see pointer.ts), presses
@@ -774,28 +784,51 @@ watch(
         />
       </div>
 
-      <!-- The size Claude gave the page, above it, and the way back to the tab's size. -->
+      <!-- Above the page: the size Claude gave it and what Claude has it pretend, each with the way back. -->
       <div
-        v-if="frame && viewport"
-        class="absolute left-1/2 z-20 flex max-w-[calc(100%-1rem)] -translate-x-1/2 items-center gap-1.5 rounded-full border bg-popover/90 py-0.5 pr-0.5 pl-2.5 text-[11px] text-popover-foreground shadow-sm backdrop-blur-md animate-in fade-in slide-in-from-bottom-1 duration-200"
-        :style="{ top: `${Math.max(8, frame.top - 34)}px` }"
+        v-if="(frame && viewport) || emulation.length"
+        class="pointer-events-none absolute left-1/2 z-20 flex max-w-[calc(100%-1rem)] -translate-x-1/2 items-center gap-2"
+        :style="{ top: `${frame ? Math.max(8, frame.top - 34) : 8}px` }"
       >
-        <SmartphoneIcon v-if="frame.kind === 'phone'" class="size-3.5 shrink-0 text-muted-foreground" />
-        <TabletIcon v-else-if="frame.kind === 'tablet'" class="size-3.5 shrink-0 text-muted-foreground" />
-        <MonitorIcon v-else class="size-3.5 shrink-0 text-muted-foreground" />
-        <span class="truncate font-medium tabular-nums">{{ viewport.width }} × {{ viewport.height }}</span>
-        <span v-if="viewport.mobile" class="shrink-0 text-muted-foreground">· Mobil</span>
-        <span v-if="frame.scale < 0.995" class="shrink-0 text-muted-foreground tabular-nums">· {{ Math.round(frame.scale * 100) }} %</span>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          class="shrink-0 rounded-full"
-          aria-label="Originalgröße"
-          title="Originalgröße wiederherstellen"
-          @click="resetViewport"
+        <div
+          v-if="frame && viewport"
+          class="pointer-events-auto flex min-w-0 items-center gap-1.5 rounded-full border bg-popover/90 py-0.5 pr-0.5 pl-2.5 text-[11px] text-popover-foreground shadow-sm backdrop-blur-md animate-in fade-in slide-in-from-bottom-1 duration-200"
         >
-          <XIcon />
-        </Button>
+          <SmartphoneIcon v-if="frame.kind === 'phone'" class="size-3.5 shrink-0 text-muted-foreground" />
+          <TabletIcon v-else-if="frame.kind === 'tablet'" class="size-3.5 shrink-0 text-muted-foreground" />
+          <MonitorIcon v-else class="size-3.5 shrink-0 text-muted-foreground" />
+          <span class="truncate font-medium tabular-nums">{{ viewport.width }} × {{ viewport.height }}</span>
+          <span v-if="viewport.mobile" class="shrink-0 text-muted-foreground">· Mobil</span>
+          <span v-if="frame.scale < 0.995" class="shrink-0 text-muted-foreground tabular-nums">· {{ Math.round(frame.scale * 100) }} %</span>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            class="shrink-0 rounded-full"
+            aria-label="Originalgröße"
+            title="Originalgröße wiederherstellen"
+            @click="resetViewport"
+          >
+            <XIcon />
+          </Button>
+        </div>
+        <div
+          v-if="emulation.length"
+          class="pointer-events-auto flex min-w-0 items-center gap-1.5 rounded-full border bg-popover/90 py-0.5 pr-0.5 pl-2.5 text-[11px] text-popover-foreground shadow-sm backdrop-blur-md animate-in fade-in slide-in-from-bottom-1 duration-200"
+          :title="`Claude emuliert: ${emulation.join(', ')}`"
+        >
+          <FlaskConicalIcon class="size-3.5 shrink-0 text-muted-foreground" />
+          <span class="truncate font-medium">{{ emulation.join(' · ') }}</span>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            class="shrink-0 rounded-full"
+            aria-label="Emulation beenden"
+            title="Emulation beenden"
+            @click="resetEmulation"
+          >
+            <XIcon />
+          </Button>
+        </div>
       </div>
 
       <!-- Claude's status over the page's foot: what it does, for which session, and the way to take over. -->

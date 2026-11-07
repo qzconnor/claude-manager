@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addressOf, addressToUrl, BLANK_PAGE, fallbackTitle, isBrowsableUrl } from './browser'
+import { addressOf, addressToUrl, BLANK_PAGE, emulationLabels, fallbackTitle, isBrowsableUrl } from './browser'
 
 describe('addressToUrl', () => {
   it('takes addresses as typed and adds the scheme when it is missing', () => {
@@ -49,5 +49,14 @@ describe('addressOf and fallbackTitle', () => {
     expect(addressOf('https://a.de/')).toBe('https://a.de/')
     expect(fallbackTitle(BLANK_PAGE)).toBe('Neuer Tab')
     expect(fallbackTitle('https://docs.example.com:8443/x')).toBe('docs.example.com:8443')
+  })
+})
+
+describe('emulationLabels', () => {
+  it('names what Claude has the page pretend, in German', () => {
+    expect(
+      emulationLabels({ colorScheme: 'dark', reducedMotion: true, network: 'slow-3g', cpuSlowdown: 4, locale: 'en-US', timezone: 'America/New_York' }),
+    ).toEqual(['Dunkel', 'Weniger Bewegung', 'Langsames 3G', 'CPU 4× langsamer', 'en-US', 'America/New_York'])
+    expect(emulationLabels({ colorScheme: null, reducedMotion: false, network: null, cpuSlowdown: null, locale: null, timezone: null })).toEqual([])
   })
 })

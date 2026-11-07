@@ -11,6 +11,13 @@ export const SCRIPT_WORLD = 1077
 /** Characters of a snapshot before it is cut, roughly 10 000 tokens. */
 export const MAX_SNAPSHOT_CHARS = 40_000
 
+/**
+ * Stands in a snapshot where a frame of another site is (as a child line of its iframe, followed by
+ * the iframe's ref): its document is out of the script's reach, the page driver reads it through the
+ * DevTools protocol and puts it in that place (see frames.ts).
+ */
+export const FRAME_MARK = '⁣frame:'
+
 const INSTALL = String.raw`
 if (!globalThis.__cm) (() => {
   const MAX_TEXT = 300
@@ -18,6 +25,11 @@ if (!globalThis.__cm) (() => {
   const refs = new Map()
   const ids = new WeakMap()
   let next = 1
+  /** This document: a snapshot of another one (after a navigation) can't be compared with the last. */
+  const doc = Math.random().toString(36).slice(2)
+  /** Frames marked for the DevTools protocol (markFrames), until unmarkFrames. */
+  let marked = []
+  const FRAME_MARK = ${JSON.stringify(FRAME_MARK)}
 
   const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim()
   const cut = (s, max) => (s.length > max ? s.slice(0, max - 1) + '…' : s)
@@ -242,13 +254,17 @@ if (!globalThis.__cm) (() => {
   }
 
   function visitFrame(el) {
-    const title = clean(el.title || el.name)
-    let doc = null
+    const title = clean(el.title || el.name || el.getAttribute('aria-label'))
+    let inner = null
     try {
-      doc = el.contentDocument
+      inner = el.contentDocument
     } catch {}
-    if (!doc?.body) return { items: [textItem('iframe' + (title ? ' ' + quote(title) : '') + ' (other origin, not readable)')] }
-    return { items: [{ text: 'iframe' + (title ? ' ' + quote(title) : ''), children: visitChildren(doc.body), hot: false }] }
+    if (inner?.body) return { items: [{ text: 'iframe' + (title ? ' ' + quote(title) : ''), children: visitChildren(inner.body), hot: false }] }
+    // A frame of another site (or one still loading): the page driver fills in its content.
+    const r = el.getBoundingClientRect()
+    if (r.width < 2 || r.height < 2) return EMPTY
+    const ref = refOf(el)
+    return { items: [{ text: 'iframe' + (title ? ' ' + quote(title) : '') + ' [ref=' + ref + ']', children: [textItem(FRAME_MARK + ref)], hot: false }] }
   }
 
   function visit(el) {
@@ -324,8 +340,20 @@ if (!globalThis.__cm) (() => {
     return text
   }
 
+  /** The box of a frame's document in the viewport: inside its border and padding. */
+  function frameContentBox(el) {
+    const b = box(el)
+    const s = el.ownerDocument.defaultView.getComputedStyle(el)
+    const left = parseFloat(s.borderLeftWidth) + parseFloat(s.paddingLeft)
+    const top = parseFloat(s.borderTopWidth) + parseFloat(s.paddingTop)
+    const right = parseFloat(s.borderRightWidth) + parseFloat(s.paddingRight)
+    const bottom = parseFloat(s.borderBottomWidth) + parseFloat(s.paddingBottom)
+    return { x: b.x + left, y: b.y + top, width: Math.max(0, b.width - left - right), height: Math.max(0, b.height - top - bottom) }
+  }
+
   globalThis.__cm = {
-    snapshot(max) {
+    /** The outline and its document; frame: of a frame in another page, which only names its address. */
+    snapshot(max, frame) {
       styles = new WeakMap()
       const lines = []
       let size = 0
@@ -348,17 +376,54 @@ if (!globalThis.__cm) (() => {
       }
       const root = document.body || document.documentElement
       const items = root ? visitChildren(root) : []
-      const doc = document.scrollingElement || document.documentElement
-      add('- Page URL: ' + location.href)
-      add('- Page title: ' + clean(document.title))
-      add('- Scroll: ' + Math.round(scrollY) + ' of ' + Math.max(0, Math.round(doc.scrollHeight - innerHeight)) + ' px down (viewport ' + innerWidth + '×' + innerHeight + ')')
-      if (document.activeElement && document.activeElement !== document.body && !ids.has(document.activeElement)) {
+      const scroller = document.scrollingElement || document.documentElement
+      if (frame) add('- Frame URL: ' + location.href)
+      else {
+        add('- Page URL: ' + location.href)
+        add('- Page title: ' + clean(document.title))
+        add('- Scroll: ' + Math.round(scrollY) + ' of ' + Math.max(0, Math.round(scroller.scrollHeight - innerHeight)) + ' px down (viewport ' + innerWidth + '×' + innerHeight + ')')
+      }
+      const active = document.activeElement
+      if (active && active !== document.body && !ids.has(active) && active.tagName !== 'IFRAME' && active.tagName !== 'FRAME') {
         // Focus inside something without a ref (e.g. an editor) is still worth knowing.
-        add('- Focused: ' + short(document.activeElement))
+        add('- Focused: ' + short(active))
       }
       render(items, 0)
       if (full) lines.push('- … (cut: the page is longer; scroll or use browser_evaluate to read more)')
-      return lines.join('\n')
+      return { doc, text: lines.join('\n') }
+    },
+    /** Marks frames of other sites (by ref) for the DevTools protocol, which finds them by the mark. */
+    markFrames(token, frameRefs) {
+      for (const ref of frameRefs) {
+        const el = refs.get(ref)?.deref()
+        if (!el || !el.isConnected || (el.tagName !== 'IFRAME' && el.tagName !== 'FRAME')) continue
+        el.setAttribute('data-claude-manager-frame', 'cm-frame-' + token + '-' + ref)
+        marked.push(new WeakRef(el))
+      }
+      return marked.length
+    },
+    unmarkFrames() {
+      for (const weak of marked) weak.deref()?.removeAttribute('data-claude-manager-frame')
+      marked = []
+    },
+    /**
+     * Where the document of a frame is in this viewport, for a spot in it (point, in the frame's own
+     * pixels): scrolls the frame so the spot is visible. Returns the box of the frame's document.
+     */
+    locateFrame(ref, point) {
+      const el = element(ref)
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' })
+      let b = frameContentBox(el)
+      const x = b.x + point.x
+      const y = b.y + point.y
+      const outsideX = x < 0 || x > innerWidth
+      const outsideY = y < 0 || y > innerHeight
+      if (outsideX || outsideY) {
+        // A frame larger than the window: the spot comes to the middle.
+        scrollBy({ left: outsideX ? x - innerWidth / 2 : 0, top: outsideY ? y - innerHeight / 2 : 0, behavior: 'instant' })
+        b = frameContentBox(el)
+      }
+      return b
     },
     /** Scrolls the element into view and returns where it is, for the mouse. */
     locate(ref) {

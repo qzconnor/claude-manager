@@ -2,13 +2,15 @@ import { randomBytes } from 'node:crypto'
 import { mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { join } from 'node:path'
+import type { ClaudeSettings } from '@shared/types'
 import type { SettingsService } from '../services/settings-service'
 import type { SessionArgsProvider } from '../services/terminal-service'
+import { allowedAppGroups, appInstructions, appToolGroup, appToolNames, enabledAppGroups, type AppTools } from './app-tools'
 import type { BrowserTools } from './browser-tools'
 import { BROWSER_INSTRUCTIONS } from './browser-tools'
 import { handleRpc, isRequest, PARSE_ERROR, rpcError, type McpServerSpec } from './mcp-protocol'
 
-/** The name Claude Code knows the server by; its tools are `mcp__claude-manager__browser_…`. */
+/** The name Claude Code knows the server by; its tools are `mcp__claude-manager__browser_…`, `mcp__claude-manager__limits` … */
 export const MCP_SERVER_NAME = 'claude-manager'
 const HOST = '127.0.0.1'
 const PATH = '/mcp'
@@ -18,14 +20,26 @@ const KEEPALIVE_MS = 20_000
 
 /**
  * The options that give a session the server (`=` form: Claude Code's options that take several
- * values would otherwise take the prompt after them as one more). `noChrome`: without Claude in
- * Chrome, which Claude might otherwise take instead of the app's browser.
+ * values would otherwise take the prompt after them as one more). `allowedTools`: the server's tools
+ * Claude Code uses without asking. `noChrome`: without Claude in Chrome, which Claude might otherwise
+ * take instead of the app's browser.
  */
-export function mcpLaunchArgs(configFile: string, allowTools: boolean, noChrome = false): string[] {
+export function mcpLaunchArgs(configFile: string, allowedTools: string[], noChrome = false): string[] {
   return [
     `--mcp-config=${configFile}`,
-    ...(allowTools ? [`--allowedTools=mcp__${MCP_SERVER_NAME}`] : []),
+    ...(allowedTools.length ? [`--allowedTools=${allowedTools.map((name) => `mcp__${MCP_SERVER_NAME}__${name}`).join(',')}`] : []),
     ...(noChrome ? ['--no-chrome'] : []),
+  ]
+}
+
+/**
+ * The tools a session may use without asking: the browser's when the settings allow it, the app's
+ * reading tools whenever they are on, its shell tools only when allowed too.
+ */
+export function allowedToolNames(claude: ClaudeSettings, browserToolNames: string[], appTools: boolean): string[] {
+  return [
+    ...(claude.browserTools && claude.browserToolsAllowed ? browserToolNames : []),
+    ...(appTools ? appToolNames(allowedAppGroups(claude)) : []),
   ]
 }
 
@@ -35,9 +49,10 @@ export function mcpConfig(url: string, token: string): unknown {
 }
 
 /**
- * The app's MCP server for the browser (Streamable HTTP on 127.0.0.1). Only sessions the app starts
- * know of it: each gets a config file with a token of its own, which says which session calls, and
- * so which browser it drives. Nothing is registered with Claude Code itself.
+ * The app's MCP server for the browser and the app's own tools (Streamable HTTP on 127.0.0.1). Only
+ * sessions the app starts know of it: each gets a config file with a token of its own, which says
+ * which session calls, and so which browser and shells it drives. Nothing is registered with Claude
+ * Code itself.
  */
 export class BrowserMcpServer implements SessionArgsProvider {
   private server: Server | null = null
@@ -47,6 +62,8 @@ export class BrowserMcpServer implements SessionArgsProvider {
   /** Token and config file by session terminal. */
   private readonly grants = new Map<string, { token: string; file: string }>()
   private readonly dir: string
+  /** The tools for the app itself; they need services that start after the server. */
+  private appTools: AppTools | null = null
 
   constructor(
     userDataDir: string,
@@ -75,10 +92,15 @@ export class BrowserMcpServer implements SessionArgsProvider {
     this.server = server
   }
 
-  /** The options for a new session, given the settings; nothing when the browser is off for sessions. */
+  setAppTools(tools: AppTools): void {
+    this.appTools = tools
+  }
+
+  /** The options for a new session, given the settings; nothing when all of the server's tools are off. */
   args(terminalId: string): string[] {
-    const { browserTools, browserToolsAllowed, noClaudeInChrome } = this.settings.get().claude
-    if (!browserTools || !this.server) return []
+    const claude = this.settings.get().claude
+    const appGroups = this.appTools ? enabledAppGroups(claude) : new Set()
+    if ((!claude.browserTools && appGroups.size === 0) || !this.server) return []
     this.release(terminalId)
     const token = randomBytes(32).toString('base64url')
     const file = join(this.dir, `${terminalId}.json`)
@@ -90,7 +112,12 @@ export class BrowserMcpServer implements SessionArgsProvider {
     }
     this.sessions.set(token, terminalId)
     this.grants.set(terminalId, { token, file })
-    return mcpLaunchArgs(file, browserToolsAllowed, noClaudeInChrome)
+    const allowed = allowedToolNames(
+      claude,
+      this.tools.list().map((tool) => tool.name),
+      this.appTools !== null,
+    )
+    return mcpLaunchArgs(file, allowed, claude.browserTools && claude.noClaudeInChrome)
   }
 
   /** The session ended: its token stops working. */
@@ -138,12 +165,20 @@ export class BrowserMcpServer implements SessionArgsProvider {
       return this.json(res, 400, rpcError(null, PARSE_ERROR, 'Parse error'))
     }
 
+    // What the session gets follows the settings of the moment; a tool switched off says so when called.
+    const claude = this.settings.get().claude
+    const appTools = this.appTools
+    const appGroups = appTools ? enabledAppGroups(claude) : new Set<never>()
+    const browserTools = this.tools.list()
+    const instructions = [claude.browserTools ? BROWSER_INSTRUCTIONS : null, appGroups.size ? appInstructions(appGroups) : null].filter(Boolean)
     const spec: McpServerSpec = {
       name: MCP_SERVER_NAME,
       version: this.version,
-      instructions: BROWSER_INSTRUCTIONS,
-      tools: this.tools.list(),
+      instructions: instructions.length ? instructions.join('\n\n') : undefined,
+      tools: [...(claude.browserTools ? browserTools : []), ...(appTools ? appTools.list(appGroups) : [])],
+      knowsTool: (name) => browserTools.some((tool) => tool.name === name) || (appTools !== null && appToolGroup(name) !== null),
       callTool: (name, args) => {
+        if (appTools && appToolGroup(name) !== null) return appTools.call(sessionId, name, args)
         if (!this.settings.get().claude.browserTools) {
           throw new Error('The user turned the browser off for Claude sessions in the settings of Claude Manager.')
         }

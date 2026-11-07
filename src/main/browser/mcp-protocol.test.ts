@@ -70,6 +70,17 @@ describe('handleRpc', () => {
     expect(await handleRpc(spec(), { jsonrpc: '2.0', id: {}, method: 'ping' })).toMatchObject({ error: { code: INVALID_REQUEST } })
   })
 
+  it('calls a tool left out of the list when the server still knows it, so its result can say why', async () => {
+    const callTool = vi.fn(async () => {
+      throw new Error('Switched off in the settings.')
+    })
+    const answer = await handleRpc(
+      { ...spec(callTool), knowsTool: (name) => name === 'echo' || name === 'hidden' },
+      { jsonrpc: '2.0', id: 12, method: 'tools/call', params: { name: 'hidden' } },
+    )
+    expect(answer).toEqual({ jsonrpc: '2.0', id: 12, result: { content: [{ type: 'text', text: 'Switched off in the settings.' }], isError: true } })
+  })
+
   it('answers a batch, leaving out its notifications', async () => {
     const answer = await handleRpc(spec(), [
       { jsonrpc: '2.0', method: 'notifications/initialized' },
