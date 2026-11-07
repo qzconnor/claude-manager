@@ -19,8 +19,8 @@ interface NavItem {
 
 // No entry for the terminals: their tabs lead there, in the title bar or in the sidebar.
 const primary: NavItem[] = [
-  { name: 'sessions', label: 'Sessions', icon: HistoryIcon },
   { name: 'dashboard', label: 'Usage-Dashboard', icon: GaugeIcon },
+  { name: 'sessions', label: 'Sessions', icon: HistoryIcon },
   { name: 'accounts', label: 'Accounts', icon: UsersIcon },
 ]
 

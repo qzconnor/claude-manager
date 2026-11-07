@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ChevronRightIcon, PlusIcon, TriangleAlertIcon } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import type { SessionSearchHit, SessionSummary } from '@shared/types'
 import AccountDot from '@/components/common/AccountDot.vue'
 import { Badge } from '@/components/ui/badge'
@@ -8,18 +8,22 @@ import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useLauncher } from '@/composables/useLauncher'
+import type { SessionRef } from '@/composables/useSessionDetail'
+import type { SessionProject } from '@/lib/session-tree'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
-import type { SessionRef } from '@/composables/useSessionDetail'
-import { sessionKey } from '@/composables/useSessionSearch'
-import SessionListItem from './SessionListItem.vue'
+import SessionProjectGroup from './SessionProjectGroup.vue'
 
-const PAGE_SIZE = 80
-
+/** An account in the session list, the top of the tree: its folders below it, and their sessions below them. */
 const props = defineProps<{
   accountId: string
-  sessions: SessionSummary[]
+  projects: SessionProject[]
+  /** Sessions in all folders. */
+  count: number
   error: string | null
+  open: boolean
+  /** The folders shown open, by id. */
+  openProjects: Set<string>
   selected: SessionRef | null
   now: number
   /** Matches of a search in the conversations, by `sessionKey`. */
@@ -31,22 +35,22 @@ const props = defineProps<{
   checked?: Set<string>
 }>()
 const emit = defineEmits<{
+  'update:open': [open: boolean]
+  openProject: [project: SessionProject, open: boolean]
   select: [session: SessionSummary]
   toggle: [session: SessionSummary, range: boolean]
+  check: [project: SessionProject, value: boolean]
 }>()
 
 const accounts = useAccountsStore()
 const launcher = useLauncher()
 const account = computed(() => accounts.get(props.accountId))
-const open = ref(true)
-const limit = ref(PAGE_SIZE)
-const visible = computed(() => props.sessions.slice(0, limit.value))
 </script>
 
 <template>
-  <Collapsible v-model:open="open" class="flex flex-col gap-1">
-    <div class="sticky top-0 z-10 flex items-center gap-1 rounded-lg bg-surface-strong p-1 backdrop-blur-md">
-      <!-- A plain row like the sessions below: a ghost button would keep a background while open. -->
+  <Collapsible :open="open" class="flex flex-col gap-0.5" @update:open="emit('update:open', $event)">
+    <div class="sticky top-0 z-10 mb-0.5 flex items-center gap-1 rounded-lg bg-surface-strong p-1 backdrop-blur-md">
+      <!-- A plain row like the folders below: a ghost button would keep a background while open. -->
       <CollapsibleTrigger
         class="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-sm font-medium outline-none transition-colors hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50"
       >
@@ -55,7 +59,7 @@ const visible = computed(() => props.sessions.slice(0, limit.value))
         />
         <AccountDot :color="account?.color" />
         <span class="truncate">{{ account?.name ?? accountId }}</span>
-        <Badge variant="secondary" class="tabular-nums">{{ sessions.length }}</Badge>
+        <Badge variant="secondary" class="tabular-nums">{{ count }}</Badge>
       </CollapsibleTrigger>
       <Tooltip>
         <TooltipTrigger as-child>
@@ -66,28 +70,28 @@ const visible = computed(() => props.sessions.slice(0, limit.value))
         <TooltipContent>Neue Session mit {{ account?.name }}</TooltipContent>
       </Tooltip>
     </div>
-    <CollapsibleContent class="flex flex-col gap-0.5">
+    <CollapsibleContent class="flex flex-col gap-0.5 pl-1">
       <p v-if="error" class="flex items-center gap-2 px-3 py-2 text-xs text-destructive">
         <TriangleAlertIcon class="size-3.5 shrink-0" />
         {{ error }}
       </p>
-      <p v-else-if="sessions.length === 0" class="px-3 py-2 text-xs text-muted-foreground">Keine Sessions gefunden.</p>
-      <SessionListItem
-        v-for="session in visible"
-        :key="session.id"
-        :session="session"
+      <p v-else-if="projects.length === 0" class="px-3 py-2 text-xs text-muted-foreground">Keine Sessions gefunden.</p>
+      <SessionProjectGroup
+        v-for="project in projects"
+        :key="project.id"
+        :project="project"
+        :open="openProjects.has(project.id)"
+        :selected="selected"
         :now="now"
-        :selected="selected?.accountId === accountId && selected.sessionId === session.id"
-        :hit="hits?.get(sessionKey(accountId, session.id))"
+        :hits="hits"
         :terms="terms"
         :selecting="selecting"
-        :checked="checked?.has(sessionKey(accountId, session.id))"
-        @select="emit('select', session)"
-        @toggle="emit('toggle', session, $event)"
+        :checked="checked"
+        @update:open="emit('openProject', project, $event)"
+        @select="emit('select', $event)"
+        @toggle="(session, range) => emit('toggle', session, range)"
+        @check="emit('check', project, $event)"
       />
-      <Button v-if="sessions.length > limit" variant="ghost" size="sm" class="self-center" @click="limit += PAGE_SIZE">
-        Weitere {{ Math.min(PAGE_SIZE, sessions.length - limit) }} von {{ sessions.length - limit }} anzeigen
-      </Button>
     </CollapsibleContent>
   </Collapsible>
 </template>

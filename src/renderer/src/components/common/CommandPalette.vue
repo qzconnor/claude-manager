@@ -166,13 +166,13 @@ function onCloseAutoFocus(event: Event) {
           <SquareTerminalIcon />
           Terminals
         </CommandItem>
-        <CommandItem value="go-sessions" @select="run(() => router.push({ name: 'sessions' }))">
-          <HistoryIcon />
-          Sessions
-        </CommandItem>
         <CommandItem value="go-dashboard" @select="run(() => router.push({ name: 'dashboard' }))">
           <GaugeIcon />
           Usage-Dashboard
+        </CommandItem>
+        <CommandItem value="go-sessions" @select="run(() => router.push({ name: 'sessions' }))">
+          <HistoryIcon />
+          Sessions
         </CommandItem>
         <CommandItem value="go-accounts" @select="run(() => router.push({ name: 'accounts' }))">
           <UsersIcon />

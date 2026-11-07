@@ -31,9 +31,8 @@ import { useAccountSwitch } from '@/composables/useAccountSwitch'
 import { useLauncher } from '@/composables/useLauncher'
 import { useSessionRemoval } from '@/composables/useSessionRemoval'
 import { attempt } from '@/lib/errors'
-import { formatRelative, shortenPath } from '@/lib/format'
+import { formatBytes, formatRelative } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { useAppStore } from '@/stores/app'
 
 const props = defineProps<{
   session: SessionSummary
@@ -52,7 +51,6 @@ const emit = defineEmits<{
   toggle: [range: boolean]
 }>()
 
-const app = useAppStore()
 const launcher = useLauncher()
 const accountSwitch = useAccountSwitch()
 const removal = useSessionRemoval()
@@ -95,7 +93,7 @@ async function copyId() {
         :aria-checked="selecting ? checked : undefined"
         :class="
           cn(
-            'text-left',
+            'px-2.5 py-2 text-left',
             !highlighted && 'hover:bg-muted/60',
             highlighted && 'ring-1 ring-foreground/10',
             selecting && 'flex-nowrap',
@@ -127,14 +125,14 @@ async function copyId() {
               {{ formatRelative(session.updatedAt, now) }}
             </span>
           </div>
+          <!-- The folder is the node above in the list. -->
           <ItemDescription class="flex min-w-0 items-center gap-2 text-xs">
-            <span class="min-w-0 truncate font-mono">{{ shortenPath(session.cwd, app.info?.homeDir) }}</span>
-            <span v-if="session.gitBranch" class="flex shrink-0 items-center gap-1">
-              <GitBranchIcon class="size-3" />
-              <span class="max-w-28 truncate">{{ session.gitBranch }}</span>
+            <span v-if="session.gitBranch" class="flex min-w-0 items-center gap-1">
+              <GitBranchIcon class="size-3 shrink-0" />
+              <span class="truncate">{{ session.gitBranch }}</span>
             </span>
             <span class="ml-auto shrink-0 tabular-nums">
-              {{ session.messageCount }}{{ session.messageCountExact ? '' : '+' }} Nachr.
+              {{ session.messageCount }}{{ session.messageCountExact ? '' : '+' }} Nachr. · {{ formatBytes(session.sizeBytes) }}
             </span>
           </ItemDescription>
           <p v-if="hit" class="line-clamp-2 text-xs text-muted-foreground">
