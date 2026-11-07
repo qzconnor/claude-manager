@@ -1,6 +1,6 @@
-import { lstat, mkdir, readFile, realpath, rm, stat } from 'node:fs/promises'
+import { lstat, readFile, realpath } from 'node:fs/promises'
 import { basename, dirname, join, normalize, resolve, sep } from 'node:path'
-import { writeJsonAtomic } from './json-file'
+import { readConfig as readGlobalConfig, withConfigLock, writeConfig } from './claude-config'
 
 /**
  * Claude Code's question "Do you trust this folder?", mirrored from 2.1.x:
@@ -24,10 +24,6 @@ const PROJECT_DEFAULTS = {
   hasClaudeMdExternalIncludesApproved: false,
   hasClaudeMdExternalIncludesWarningShown: false,
 }
-
-/** Claude Code's config lock (proper-lockfile): its owner refreshes it every 5 s, older is stale. */
-const LOCK_STALE_MS = 10_000
-const LOCK_TIMEOUT_MS = 5000
 
 const isWindows = process.platform === 'win32'
 
@@ -95,7 +91,7 @@ export async function trustFolder(configFile: string, target: TrustTarget): Prom
     const base = entry ?? (legacy ? projects[legacy] : undefined) ?? PROJECT_DEFAULTS
     if (legacy) delete projects[legacy]
     projects[target.key] = { ...base, hasTrustDialogAccepted: true }
-    await writeJsonAtomic(configFile, { ...config, projects })
+    await writeConfig(configFile, { ...config, projects })
   })
 }
 
@@ -175,42 +171,6 @@ async function canonicalGitRoot(root: string): Promise<string> {
 }
 
 /** Null when the file is missing; an unreadable file throws, so it is never overwritten. */
-async function readConfig(file: string): Promise<GlobalConfig | null> {
-  let text: string
-  try {
-    text = await readFile(file, 'utf8')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-    throw error
-  }
-  const config: unknown = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text)
-  if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error(`${file} ist kein JSON-Objekt.`)
-  return config as GlobalConfig
-}
-
-/** The lock folder Claude Code takes while it writes its config. */
-async function withConfigLock(file: string, task: () => Promise<void>): Promise<void> {
-  const lock = `${file}.lock`
-  const deadline = Date.now() + LOCK_TIMEOUT_MS
-  await mkdir(dirname(file), { recursive: true })
-  for (;;) {
-    try {
-      await mkdir(lock)
-      break
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      const info = await stat(lock).catch(() => null)
-      if (info && Date.now() - info.mtimeMs > LOCK_STALE_MS) {
-        await rm(lock, { recursive: true, force: true })
-        continue
-      }
-      if (Date.now() > deadline) throw new Error('Die Claude-Code-Konfiguration ist gerade gesperrt.')
-      await new Promise((resolve) => setTimeout(resolve, 40 + Math.random() * 60))
-    }
-  }
-  try {
-    await task()
-  } finally {
-    await rm(lock, { recursive: true, force: true }).catch(() => undefined)
-  }
+function readConfig(file: string): Promise<GlobalConfig | null> {
+  return readGlobalConfig(file) as Promise<GlobalConfig | null>
 }

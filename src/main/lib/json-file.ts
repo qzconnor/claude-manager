@@ -27,15 +27,20 @@ function stripBom(text: string): string {
 
 const writeQueues = new Map<string, Promise<void>>()
 
+/** `mode`: the file's permissions on macOS and Linux, e.g. 0o600 for a file only its user may read. */
+export interface WriteJsonOptions {
+  mode?: number
+}
+
 /**
  * Writes JSON atomically (temp file + rename). Writes to the same file are serialized,
  * so concurrent callers can never interleave or lose the newest content.
  */
-export function writeJsonAtomic(file: string, data: unknown): Promise<void> {
+export function writeJsonAtomic(file: string, data: unknown, options: WriteJsonOptions = {}): Promise<void> {
   const previous = writeQueues.get(file) ?? Promise.resolve()
   const next = previous
     .catch(() => undefined)
-    .then(() => writeNow(file, `${JSON.stringify(data, null, 2)}\n`))
+    .then(() => writeNow(file, `${JSON.stringify(data, null, 2)}\n`, options))
   writeQueues.set(file, next)
   // Cleans up on success and failure; a failure reaches only the caller, not as an unhandled rejection.
   const forget = () => {
@@ -49,10 +54,10 @@ export function writeJsonAtomic(file: string, data: unknown): Promise<void> {
  * Blocking variant of `writeJsonAtomic` for small files that have to be on disk right away,
  * e.g. state that must survive quitting the app at any moment.
  */
-export function writeJsonAtomicSync(file: string, data: unknown): void {
+export function writeJsonAtomicSync(file: string, data: unknown, options: WriteJsonOptions = {}): void {
   mkdirSync(dirname(file), { recursive: true })
   const tmp = `${file}.${randomBytes(4).toString('hex')}.tmp`
-  writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, 'utf8')
+  writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, { encoding: 'utf8', mode: options.mode })
   try {
     renameSync(tmp, file)
   } catch (error) {
@@ -61,10 +66,10 @@ export function writeJsonAtomicSync(file: string, data: unknown): void {
   }
 }
 
-async function writeNow(file: string, content: string): Promise<void> {
+async function writeNow(file: string, content: string, options: WriteJsonOptions): Promise<void> {
   await mkdir(dirname(file), { recursive: true })
   const tmp = `${file}.${randomBytes(4).toString('hex')}.tmp`
-  await writeFile(tmp, content, 'utf8')
+  await writeFile(tmp, content, { encoding: 'utf8', mode: options.mode })
   // Windows can briefly lock the target (antivirus, indexer) — retry a few times.
   for (let attempt = 0; ; attempt++) {
     try {
