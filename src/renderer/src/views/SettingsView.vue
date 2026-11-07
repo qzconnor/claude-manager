@@ -5,6 +5,7 @@ import { computed, nextTick, ref, watch, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { searchTerms } from '@shared/utils'
 import HighlightText from '@/components/common/HighlightText.vue'
+import OverflowTabsList from '@/components/common/OverflowTabsList.vue'
 import PageContainer from '@/components/common/PageContainer.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import SettingsAbout from '@/components/settings/SettingsAbout.vue'
@@ -21,7 +22,7 @@ import { Card } from '@/components/ui/card'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
 import { Kbd } from '@/components/ui/kbd'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsContent, TabsTrigger } from '@/components/ui/tabs'
 import { provideSettingsFilter, revealSetting, SETTINGS, settingsEntry } from '@/composables/useSettingsSearch'
 import { matchSettings, SETTINGS_TAB_LABELS, type SettingsEntry } from '@/lib/settings-index'
 import { SETTINGS_TABS, type SettingsTab } from '@/router'
@@ -194,10 +195,7 @@ watch(
     </div>
 
     <Tabs v-else :model-value="tab" class="gap-6" @update:model-value="select">
-      <TabsList
-        variant="line"
-        class="w-full justify-start gap-0 overflow-x-auto rounded-none p-0 shadow-[inset_0_-1px_0_var(--color-border)] [scrollbar-width:none] group-data-horizontal/tabs:h-auto"
-      >
+      <OverflowTabsList>
         <TabsTrigger
           v-for="item in tabs"
           :key="item.value"
@@ -214,7 +212,7 @@ watch(
             <span v-else-if="updates.unseen" class="size-2 rounded-full bg-success" aria-label="Neue Versionshinweise" />
           </template>
         </TabsTrigger>
-      </TabsList>
+      </OverflowTabsList>
       <TabsContent v-for="item in tabs" :key="item.value" :value="item.value">
         <component :is="PAGES[item.value]" />
       </TabsContent>
