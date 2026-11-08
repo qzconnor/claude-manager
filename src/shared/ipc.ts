@@ -115,6 +115,7 @@ export const IpcInvoke = {
 
   gitBranch: 'git:branch',
   gitWorktreeCheck: 'git:worktree-check',
+  gitWebUrl: 'git:web-url',
 
   commandStatus: 'command:status',
   commandSetRegistered: 'command:set-registered',
@@ -388,6 +389,8 @@ export interface ManagerApi {
     onBranchChanged(cb: (cwd: string, branch: GitBranch | null) => void): Unsubscribe
     /** Whether Claude Code can make a worktree for a session in `cwd`, and which ones it made there. */
     worktreeCheck(cwd: string): Promise<WorktreeCheck>
+    /** Web page of the repository `cwd` lies in, from its remote (GitHub, GitLab …); null without one. */
+    webUrl(cwd: string): Promise<string | null>
   }
   /** The `cm` command line launcher. */
   command: {

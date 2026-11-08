@@ -56,6 +56,16 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
     return { ok: true, root: root.out, existing: list.ok ? claudeWorktrees(list.out) : [] }
   }
 
+  /**
+   * Web page of the repository `cwd` lies in, from its remote: the upstream of the checked-out branch,
+   * else `origin`, else the only remote (git picks it, with `url.*.insteadOf` applied). Null without one
+   * or for a remote that has no web page (a local path, for example).
+   */
+  async webUrl(cwd: string): Promise<string | null> {
+    const remote = await runGit(cwd, ['ls-remote', '--get-url'])
+    return remote.ok ? repoWebUrl(remote.out) : null
+  }
+
   private async gitDir(cwd: string): Promise<string | null> {
     const known = this.gitDirs.get(cwd)
     if (known) return known
@@ -129,6 +139,35 @@ export function claudeWorktrees(porcelain: string): string[] {
     if (match) names.push(match[1]!)
   }
   return names
+}
+
+/**
+ * The web page behind a remote URL: `https://`, `ssh://`, `git://` and the scp-like `git@host:owner/repo`
+ * all become `https://host/owner/repo`, without user, `.git` and the SSH port. Null for local paths.
+ */
+export function repoWebUrl(remote: string): string | null {
+  const url = remote.trim()
+  let origin: string
+  let path: string
+  const full = /^(https?|ssh|git|git\+ssh|ssh\+git):\/\/(?:[^@/]*@)?([^/:]+)(?::(\d*))?(\/.*)?$/i.exec(url)
+  if (full) {
+    const [, scheme, host, port, rest] = full
+    // An http(s) remote is the page itself, port included; the port of SSH or git is not the web's.
+    origin = /^https?$/i.test(scheme!) ? `${scheme!.toLowerCase()}://${host}${port ? `:${port}` : ''}` : `https://${host}`
+    path = rest ?? ''
+  } else {
+    // scp-like syntax; a single letter before the colon is a Windows drive (`C:/repo`), not a host.
+    const scp = /^(?:[^@/:]+@)?([^/:]{2,}):(?!\/\/)(.+)$/.exec(url)
+    if (!scp) return null
+    origin = `https://${scp[1]}`
+    path = `/${scp[2]!.replace(/^\/+/, '')}`
+  }
+  path = path.replace(/\/+$/, '').replace(/\.git$/i, '').replace(/\/+$/, '')
+  if (!path) return null
+  // Azure DevOps names its repositories differently over SSH than on the web.
+  const azure = /^https:\/\/ssh\.dev\.azure\.com$/i.test(origin) && /^\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(path)
+  if (azure) return `https://dev.azure.com/${azure[1]}/${azure[2]}/_git/${azure[3]}`
+  return origin + path
 }
 
 /** `ref: refs/heads/<name>` names the branch; a bare commit hash means a detached HEAD. */
