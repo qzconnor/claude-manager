@@ -348,6 +348,11 @@ export function registerApiIpc(api: ApiServer): void {
   api.on('status', (status) => broadcast(IpcEvent.apiStatusChanged, status))
 }
 
+/** Tells the windows that the app quits, before the terminals close. */
+export function announceQuitting(): void {
+  broadcast(IpcEvent.appQuitting)
+}
+
 export function forwardWindowState(win: BrowserWindow): void {
   const send = () => {
     if (!win.isDestroyed()) win.webContents.send(IpcEvent.windowState, windowState(win))

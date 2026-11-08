@@ -29,6 +29,7 @@ import { shortenPath } from '@/lib/format'
 import { shellLabel } from '@/lib/platform'
 import { useAccountsStore } from '@/stores/accounts'
 import { useAppStore } from '@/stores/app'
+import { useTerminalsStore } from '@/stores/terminals'
 
 /** Folders the menu offers to start in right away. */
 const RECENT_FOLDERS = 6
@@ -37,6 +38,7 @@ const RECENT_FOLDERS = 6
 const router = useRouter()
 const app = useAppStore()
 const accounts = useAccountsStore()
+const terminals = useTerminalsStore()
 const launcher = useLauncher()
 const root = injectDropdownMenuRootContext()
 const recent = useRecentFolders(RECENT_FOLDERS)
@@ -161,7 +163,12 @@ function onFolderKey(event: KeyboardEvent, path: string) {
     </DropdownMenuGroup>
     <DropdownMenuSeparator />
     <DropdownMenuGroup>
-      <DropdownMenuItem @select="launcher.browser()">
+      <!-- In groups a browser always belongs to a session: beside the one with the keyboard. -->
+      <DropdownMenuItem v-if="terminals.grouped" :disabled="!terminals.sessionFor(terminals.active)" @select="launcher.browserFor(terminals.active)">
+        <GlobeIcon />
+        Browser daneben öffnen
+      </DropdownMenuItem>
+      <DropdownMenuItem v-else @select="launcher.browser()">
         <GlobeIcon />
         Browser öffnen
       </DropdownMenuItem>

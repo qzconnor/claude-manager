@@ -14,6 +14,7 @@ const invoke = <T>(channel: string, ...args: unknown[]) => ipcRenderer.invoke(ch
 const api: ManagerApi = {
   platform: process.platform,
   app: {
+    onQuitting: (cb) => subscribe(IpcEvent.appQuitting, cb),
     info: () => invoke(IpcInvoke.appInfo),
     openExternal: (url) => invoke(IpcInvoke.appOpenExternal, url),
     openPath: (path) => invoke(IpcInvoke.appOpenPath, path),

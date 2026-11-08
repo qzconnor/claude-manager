@@ -693,8 +693,11 @@ export type PanelBackground = 'theme' | 'terminal' | 'original'
 /** Green and red behind changed lines in Claude Code's diffs: a see-through tint of the theme or Claude's own. */
 export type DiffColors = 'theme' | 'original'
 
-/** Where the terminal tabs are: in the title bar or listed in the nav sidebar. */
-export type TabPosition = 'top' | 'sidebar'
+/**
+ * Where the terminal tabs are: in the title bar or listed in the nav sidebar, or (`groups`) like VS Code's
+ * editor groups: every part of the window has its own tab bar, the pages open as tabs too.
+ */
+export type TabPosition = 'top' | 'sidebar' | 'groups'
 
 export interface AppearanceSettings {
   themeId: string

@@ -223,14 +223,14 @@ describe('SettingsService loading', () => {
   it('keeps valid choices', async () => {
     const settings = (
       await load({
-        appearance: { material: 'mica', tabPosition: 'sidebar' },
+        appearance: { material: 'mica', tabPosition: 'groups' },
         terminal: { cursorStyle: 'underline', renderer: 'dom', unicode: 'unicode11', panelBackground: 'original', diffColors: 'original' },
         general: { closeOnExit: 'never' },
         notifications: { when: 'hidden' },
       })
     ).get()
     expect(settings.appearance.material).toBe('mica')
-    expect(settings.appearance.tabPosition).toBe('sidebar')
+    expect(settings.appearance.tabPosition).toBe('groups')
     expect(settings.terminal.cursorStyle).toBe('underline')
     expect(settings.terminal.renderer).toBe('dom')
     expect(settings.terminal.unicode).toBe('unicode11')

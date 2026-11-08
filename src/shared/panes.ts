@@ -96,6 +96,18 @@ export function replacePane(node: PaneNode, oldId: string, newId: string): PaneN
   return mapPanes(node, (id) => (id === oldId ? newId : id))
 }
 
+/**
+ * Whom the pane `id` belongs to, e.g. a browser to the session it was opened beside: going out from
+ * the pane, the first part beside it with an owner in it (`isOwner`); there the first one, the pane
+ * that was split. Null without one.
+ */
+export function ownerOf(node: PaneNode, id: string, isOwner: (id: string) => boolean): string | null {
+  if (!isSplit(node)) return null
+  const [inner, beside] = hasPane(node.first, id) ? [node.first, node.second] : hasPane(node.second, id) ? [node.second, node.first] : [null, null]
+  if (inner === null || beside === null) return null
+  return ownerOf(inner, id, isOwner) ?? paneIds(beside).find(isOwner) ?? null
+}
+
 /** The split at `path` with another share for its first part. The tree as it is when there is no split there. */
 export function setRatio(node: PaneNode, path: SplitPath, ratio: number): PaneNode {
   if (!isSplit(node)) return node

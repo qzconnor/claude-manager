@@ -14,6 +14,8 @@ interface Options {
   onMove?: () => void
   /** Somewhere besides the strip that takes the dragged tab, e.g. the page with the terminals. */
   outside?: OutsideTarget
+  /** A lone tab can be dragged too, to the outside target: a group's only tab into another group. */
+  lone?: boolean
 }
 
 interface OutsideTarget {
@@ -122,12 +124,12 @@ export function useTabDrag(strip: Ref<HTMLElement | null>, options: Options) {
       (child): child is HTMLElement => child instanceof HTMLElement && child.matches('[role="tab"]'),
     )
     const index = tabs.indexOf(from.tab)
-    if (index === -1 || tabs.length < 2) return
+    if (index === -1 || (tabs.length < 2 && !(options.lone && options.outside))) return
     const slots = tabs.map((tab) => {
       const rect = tab.getBoundingClientRect()
       return options.vertical ? { start: rect.top, size: rect.height } : { start: rect.left, size: rect.width }
     })
-    const gap = Math.max(0, slots[1].start - (slots[0].start + slots[0].size))
+    const gap = slots.length > 1 ? Math.max(0, slots[1].start - (slots[0].start + slots[0].size)) : 0
     drag = { ...from, tabs, slots, gap, from: index, to: index, frame: 0, outside: false }
     dragging.value = from.id
     try {

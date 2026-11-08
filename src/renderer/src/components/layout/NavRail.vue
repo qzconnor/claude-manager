@@ -87,7 +87,7 @@ const settingsTooltip = computed(() =>
         :icon="SearchIcon"
         tooltip="Befehlspalette (Strg+Umschalt+P)"
         :expanded="expanded"
-        @click="ui.paletteOpen = true"
+        @click="ui.openPalette('>')"
       />
       <RouterLink v-slot="{ href, navigate, isActive }" :to="updatesPending ? UPDATES_ROUTE : { name: 'settings' }" custom>
         <NavRailButton

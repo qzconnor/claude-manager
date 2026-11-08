@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import {
+  ChevronRightIcon,
+  CircleHelpIcon,
   HistoryIcon,
   KeyRoundIcon,
   MessageSquareTextIcon,
@@ -10,8 +12,8 @@ import {
 } from '@lucide/vue'
 import { refDebounced } from '@vueuse/core'
 import { injectListboxRootContext, ListboxContent, ListboxFilter, ListboxGroup, ListboxGroupLabel, ListboxItem } from 'reka-ui'
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import type { SessionSearchHit, SessionSummary, TerminalInfo } from '@shared/types'
 import { searchTerms } from '@shared/utils'
 import AccountDot from '@/components/common/AccountDot.vue'
@@ -39,12 +41,14 @@ const MAX_SESSIONS = 50
 const RECENT_SESSIONS = 8
 
 /**
- * The open tabs and the sessions, searched by title and through the conversation, like the tab search
- * of a browser. Lives inside a ListboxRoot, whose keyboard navigation it drives from the input.
+ * The open tabs and the sessions, searched by title and through the conversation: the quick open's
+ * mode without a prefix, like VS Code's "Go to File". Lives inside a ListboxRoot, whose keyboard
+ * navigation it drives from the input. Before anything is typed it lists the other modes first.
  */
 const emit = defineEmits<{ done: [] }>()
+/** What is typed; a prefix (`>`, `?`) switches the quick open to another mode. */
+const query = defineModel<string>('query', { required: true })
 
-const route = useRoute()
 const router = useRouter()
 const app = useAppStore()
 const accounts = useAccountsStore()
@@ -56,7 +60,6 @@ const { closeTerminal } = useTerminalActions()
 const listbox = injectListboxRootContext()
 const now = useClock(60_000)
 
-const query = ref('')
 /** Titles are filtered on every key, the conversations shortly after typing stops. */
 const terms = computed(() => searchTerms(query.value))
 const { hits, searching, prepare } = useSessionSearch(refDebounced(query, 150))
@@ -178,11 +181,21 @@ function sessionDetails(session: SessionSummary): string {
     .join(' · ')
 }
 
+/** In one tab bar, a page hides the terminals: none of them is the active one then. */
+const onTerminals = computed(() => router.currentRoute.value.name === 'terminals')
+
 function openTab(terminal: TerminalInfo) {
   emit('done')
   terminals.activate(terminal.id)
-  if (route.name !== 'terminals') void router.push({ name: 'terminals' })
+  // In groups the route follows the tab by itself.
+  if (router.currentRoute.value.name !== 'terminals') void router.push({ name: 'terminals' })
 }
+
+/** The other modes of the quick open, offered before anything is typed. */
+const MODES = [
+  { prefix: '>', label: 'Befehle anzeigen und ausführen', shortcut: 'Strg+Umschalt+P', icon: ChevronRightIcon },
+  { prefix: '?', label: 'Weitere Möglichkeiten', shortcut: '', icon: CircleHelpIcon },
+]
 
 function resume(session: SessionSummary) {
   emit('done')
@@ -209,8 +222,8 @@ const rowButtonClass =
     <ListboxFilter
       v-model="query"
       auto-focus
-      placeholder="Tabs und Sessions durchsuchen…"
-      aria-label="Tabs und Sessions durchsuchen"
+      placeholder="Tabs und Sessions suchen (> für Befehle, ? für Hilfe)"
+      aria-label="Tabs und Sessions suchen"
       spellcheck="false"
       class="h-11 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
     />
@@ -218,9 +231,24 @@ const rowButtonClass =
     <span v-else class="shrink-0 text-xs text-muted-foreground">Strg+Umschalt+A</span>
   </div>
 
-  <ListboxContent
-    class="max-h-[min(32rem,calc(var(--reka-popover-content-available-height)-3rem))] overflow-y-auto p-1.5 outline-none"
-  >
+  <ListboxContent class="max-h-[min(32rem,calc(80vh-6rem))] overflow-y-auto p-1.5 outline-none">
+    <ListboxGroup v-if="!query.trim()" class="border-b pb-1.5 mb-1">
+      <ListboxItem
+        v-for="mode in MODES"
+        :key="mode.prefix"
+        :value="`mode:${mode.prefix}`"
+        :class="cn(rowClass, 'py-1')"
+        @select.prevent="query = mode.prefix"
+      >
+        <component :is="mode.icon" class="size-4 shrink-0 text-muted-foreground" />
+        <span class="min-w-0 flex-1 truncate text-sm">
+          {{ mode.label }}
+          <span class="ml-1 font-mono text-muted-foreground">{{ mode.prefix }}</span>
+        </span>
+        <span v-if="mode.shortcut" class="shrink-0 text-xs text-muted-foreground">{{ mode.shortcut }}</span>
+      </ListboxItem>
+    </ListboxGroup>
+
     <ListboxGroup v-if="tabRows.length">
       <ListboxGroupLabel :class="groupLabelClass">
         Geöffnete Tabs
@@ -257,7 +285,7 @@ const rowButtonClass =
               <HighlightText :text="row.terminal.title" :terms="terms" />
             </span>
             <span
-              v-if="route.name === 'terminals' && row.terminal.id === terminals.activeId"
+              v-if="terminals.grouped ? row.terminal.id === terminals.focusedTab : onTerminals && row.terminal.id === terminals.activeId"
               class="shrink-0 rounded-sm bg-primary/10 px-1.5 text-[11px] leading-4 font-medium text-primary"
             >
               Aktiv

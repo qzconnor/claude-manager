@@ -11,7 +11,7 @@ import { BrowserMcpServer } from './browser/mcp-server'
 import { CommandIntegration } from './cli/command-integration'
 import { isLaunchRequest, readLaunchRequest, resolveLaunch, type LaunchRequest } from './cli/launch'
 import type { AppContext } from './context'
-import { forwardWindowState, registerApiIpc, registerIpc } from './ipc'
+import { announceQuitting, forwardWindowState, registerApiIpc, registerIpc } from './ipc'
 import { linuxPackage } from './lib/linux'
 import { AUTOSTART_ARG, setLaunchAtLogin } from './lib/login-item'
 import { selectLinuxPasswordStore } from './lib/secrets'
@@ -333,8 +333,9 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     tray.dispose()
     updates.dispose()
     api.dispose()
-    // Before the tabs close, otherwise an empty list would be remembered.
+    // Before the tabs close, otherwise an empty list would be remembered (here and in the window).
     restore.dispose()
+    announceQuitting()
     terminals.disposeAll()
     browserMcp.dispose()
     sessionHooks.dispose()

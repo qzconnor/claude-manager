@@ -261,7 +261,7 @@ export function useTerminal(options: UseTerminalOptions) {
   function handleKey(e: KeyboardEvent): boolean {
     if (e.type !== 'keydown') return true
     // App shortcuts bubble up to the window listener instead of reaching the shell. Alt+arrow only
-    // where it leads to another terminal of the tab.
+    // where it leads to another terminal of the tab (in groups, to another group).
     const shortcut = matchShortcut(e)
     if (shortcut && (shortcut.action !== 'focus-pane' || terminalsStore.neighbour(terminalId, shortcut.direction!))) return false
     const ctrl = e.ctrlKey && !e.altKey && !e.metaKey
