@@ -28,24 +28,23 @@ export function useShortcuts() {
     if (next !== current) void settings.update({ terminal: { fontSize: next } })
   }
 
-  const showTerminals = () => {
-    if (router.currentRoute.value.name !== 'terminals') void router.push({ name: 'terminals' })
-  }
-
   const onTerminals = () => router.currentRoute.value.name === 'terminals'
+  /** In one tab bar, a tab chosen by key shows the terminals; in groups the route follows the tab by itself. */
+  const showTerminals = () => {
+    if (!terminals.grouped && !onTerminals()) void router.push({ name: 'terminals' })
+  }
   /** The browser with the keyboard, if a browser has it. */
   const activeBrowser = () => (onTerminals() ? browsers.get(terminals.activeId) : undefined)
 
   /** `event`: the key in the window, which is kept from the page; a browser page's key has been already. */
   function run(shortcut: Shortcut, event?: KeyboardEvent): void {
     if (shortcut.action === 'focus-pane') {
-      const next = onTerminals() && terminals.activeId ? terminals.neighbour(terminals.activeId, shortcut.direction!) : null
-      if (next) {
+      // In groups to the group beside, also from a page; in one tab bar to the terminal beside in the tab.
+      if ((terminals.grouped || onTerminals()) && terminals.focusNeighbour(shortcut.direction!)) {
         event?.preventDefault()
-        terminals.activate(next)
         return
       }
-      // At the edge of the tab a browser goes back or forward like Chrome; a terminal keeps the keys.
+      // At the edge a browser goes back or forward like Chrome; a terminal keeps the keys.
       const browser = activeBrowser()
       if (browser && (shortcut.direction === 'left' || shortcut.direction === 'right')) {
         event?.preventDefault()
@@ -61,10 +60,12 @@ export function useShortcuts() {
         void launcher.newSession()
         break
       case 'close-tab':
-        if (terminals.activeId) void closeTerminal(terminals.activeId)
+        // The tab with the keyboard: the terminal, in groups also a page.
+        if (terminals.focusedTab) void closeTerminal(terminals.focusedTab)
         break
       case 'next-tab':
       case 'previous-tab':
+        // In groups within the group with the keyboard, like editor tabs.
         terminals.cycle(action === 'next-tab' ? 1 : -1)
         showTerminals()
         break
@@ -75,10 +76,10 @@ export function useShortcuts() {
         void router.push({ name: 'settings' })
         break
       case 'command-palette':
-        ui.paletteOpen = true
+        ui.openPalette('>')
         break
       case 'tab-search':
-        ui.tabSearchOpen = !ui.tabSearchOpen
+        ui.openPalette()
         break
       case 'zoom-in':
         zoom(1)
@@ -97,7 +98,7 @@ export function useShortcuts() {
         break
       case 'split-right':
       case 'split-down':
-        if (onTerminals() && terminals.active) void launcher.split(terminals.active, action === 'split-right' ? 'row' : 'column')
+        void launcher.splitActive(action === 'split-right' ? 'row' : 'column')
         break
       case 'browser-address':
         activeBrowser()?.focusAddress()

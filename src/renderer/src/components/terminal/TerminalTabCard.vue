@@ -8,6 +8,7 @@ import {
   FolderIcon,
   FolderOpenIcon,
   HardDriveIcon,
+  Link2Icon,
   PencilIcon,
   ShrinkIcon,
   TagIcon,
@@ -38,6 +39,8 @@ const props = defineProps<{
   account?: Account
   /** Set when the session lies with another account than the one it runs with. */
   sessionAccount?: Account
+  /** A browser's session, named where the two don't lie side by side. */
+  session?: TerminalInfo
 }>()
 defineEmits<{ openFolder: []; rename: [] }>()
 
@@ -98,10 +101,16 @@ const activity = computed(() => {
         </div>
       </div>
 
-      <div v-if="terminal.mode === 'browser'" class="flex gap-2">
-        <BrowserFavicon :terminal-id="terminal.id" class="mt-px size-3.5 shrink-0 text-muted-foreground" />
-        <p class="min-w-0 flex-1 break-all text-muted-foreground">{{ terminal.url === 'about:blank' ? 'Leere Seite' : terminal.url }}</p>
-      </div>
+      <template v-if="terminal.mode === 'browser'">
+        <div class="flex gap-2">
+          <BrowserFavicon :terminal-id="terminal.id" class="mt-px size-3.5 shrink-0 text-muted-foreground" />
+          <p class="min-w-0 flex-1 break-all text-muted-foreground">{{ terminal.url === 'about:blank' ? 'Leere Seite' : terminal.url }}</p>
+        </div>
+        <div v-if="session" class="flex gap-2">
+          <Link2Icon class="mt-px size-3.5 shrink-0 text-muted-foreground" />
+          <p class="min-w-0 flex-1 break-words"><span class="text-muted-foreground">Gehört zu </span>{{ session.title }}</p>
+        </div>
+      </template>
       <div v-else class="flex items-center gap-2">
         <FolderIcon class="size-3.5 shrink-0 text-muted-foreground" />
         <div class="min-w-0 flex-1">

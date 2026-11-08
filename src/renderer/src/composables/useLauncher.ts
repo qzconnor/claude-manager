@@ -34,9 +34,74 @@ export function useLauncher() {
     }
   }
 
+  /**
+   * Splits the part of `from` in its tab (in groups: a new group beside its group): the new terminal
+   * comes to the right (`row`) or below (`column`) and runs like `from`, a new session or a shell with
+   * the same account in the same folder. A browser passes on the terminal beside it. Next to a login or
+   * a lone browser, a new session of the default account starts.
+   */
+  function split(from: TerminalInfo, direction: SplitDirection) {
+    const split = { terminalId: from.id, direction }
+    const like = terminals.workingTerminalOf(from)
+    if (!like || like.mode === 'login') return launch({ accountId: defaultAccountId(), split })
+    return launch({
+      accountId: like.accountId,
+      authAccountId: like.authAccountId,
+      // Next to a session in a worktree, in the worktree.
+      cwd: like.worktree?.path ?? like.cwd,
+      mode: like.mode === 'shell' ? 'shell' : 'session',
+      split,
+    })
+  }
+
+  /** A browser in a new tab, or next to a terminal (`split`); the empty page asks for an address. */
+  async function browser(url?: string | null, split?: TerminalCreateOptions['split']) {
+    try {
+      const info = await terminals.openBrowser({ url, split })
+      if (router.currentRoute.value.name !== 'terminals') await router.push({ name: 'terminals' })
+      return info
+    } catch (error) {
+      toastError(error, 'Browser konnte nicht geöffnet werden')
+      return undefined
+    }
+  }
+
   return {
     defaultAccountId,
     launch,
+    split,
+    browser,
+    /**
+     * A browser for the session of `terminal` (for a browser, the session it belongs to): below the
+     * browser the session had last, so in groups it comes as a tab beside it, else beside the session.
+     * Nothing without a session: with the tabs in groups a browser always belongs to one.
+     */
+    browserFor(terminal: TerminalInfo | null) {
+      const session = terminals.sessionFor(terminal)
+      if (!session) return undefined
+      const own = terminals.browsersOf(session.id)
+      const last = own.length ? own.reduce((best, b) => (terminals.focusedAt(b.id) > terminals.focusedAt(best.id) ? b : best)) : null
+      return browser(null, last ? { terminalId: last.id, direction: 'column' } : { terminalId: session.id, direction: 'row' })
+    },
+    /**
+     * Splits the terminal with the keyboard, while the terminals are shown. In groups: a new group
+     * beside the one with the keyboard, with a session like the terminal it shows; with a page shown
+     * there, a new session of the default account.
+     */
+    async splitActive(direction: SplitDirection) {
+      if (!terminals.grouped) {
+        const shown = router.currentRoute.value.name === 'terminals' ? terminals.active : null
+        return shown ? split(shown, direction) : undefined
+      }
+      const group = terminals.activeGroup
+      const shown = group?.tabs.find((t) => t.id === group.active)?.terminal
+      if (shown) return split(shown, direction)
+      if (!group) return undefined
+      const id = terminals.splitEmpty(group.id, direction === 'row' ? 'right' : 'down')
+      const info = await launch({ accountId: defaultAccountId() })
+      if (!info) terminals.removeEmptyGroup(id)
+      return info
+    },
     newSession: (accountId?: string, cwd?: string | null) => launch({ accountId: accountId ?? defaultAccountId(), cwd }),
     async newSessionInFolder(accountId?: string) {
       const id = accountId ?? defaultAccountId()
@@ -63,36 +128,6 @@ export function useLauncher() {
         title: fork ? `Fork · ${session.title}` : null,
       }),
     login: (accountId: string) => launch({ accountId, mode: 'login' }),
-    /** A browser in a new tab, or next to a terminal (`split`); the empty page asks for an address. */
-    async browser(url?: string | null, split?: TerminalCreateOptions['split']) {
-      try {
-        const info = await terminals.openBrowser({ url, split })
-        if (router.currentRoute.value.name !== 'terminals') await router.push({ name: 'terminals' })
-        return info
-      } catch (error) {
-        toastError(error, 'Browser konnte nicht geöffnet werden')
-        return undefined
-      }
-    },
     shell: (accountId: string, cwd?: string | null) => launch({ accountId, mode: 'shell', cwd }),
-    /**
-     * Splits the part of `from` in its tab: the new terminal comes to the right (`row`) or below
-     * (`column`) and runs like `from`, a new session or a shell with the same account in the same folder.
-     * A browser passes on the terminal beside it. Next to a login or a lone browser, a new session of
-     * the default account starts.
-     */
-    split(from: TerminalInfo, direction: SplitDirection) {
-      const split = { terminalId: from.id, direction }
-      const like = terminals.workingTerminalOf(from)
-      if (!like || like.mode === 'login') return launch({ accountId: defaultAccountId(), split })
-      return launch({
-        accountId: like.accountId,
-        authAccountId: like.authAccountId,
-        // Next to a session in a worktree, in the worktree.
-        cwd: like.worktree?.path ?? like.cwd,
-        mode: like.mode === 'shell' ? 'shell' : 'session',
-        split,
-      })
-    },
   }
 }

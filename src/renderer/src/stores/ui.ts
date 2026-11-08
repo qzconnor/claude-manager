@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import type { PaneDirection } from '@shared/panes'
 import type { DialogOptions } from '@shared/types'
 import type { SessionRef } from '@/composables/useSessionDetail'
+import type { DropSide } from '@/lib/workspace'
 
 export type ConfirmOptions = DialogOptions
 
@@ -13,11 +14,31 @@ export interface TabDock {
   side: PaneDirection
 }
 
+/** With the tabs in groups, a tab dragged over the window: dropped now, it goes into the group `groupId` or on `side` of it. */
+export interface GroupDock {
+  tabId: string
+  groupId: string
+  side: DropSide
+}
+
 /** Transient UI state shared across components (dialogs, palette, search requests). */
 export const useUiStore = defineStore('ui', () => {
+  /**
+   * The quick open (like VS Code's): what is typed decides what it searches. Without a prefix the
+   * tabs and sessions, after `>` the commands, after `?` it lists the prefixes.
+   */
   const paletteOpen = ref(false)
-  /** The search through the open tabs and the sessions. */
-  const tabSearchOpen = ref(false)
+  const paletteQuery = ref('')
+
+  /** Opens the quick open with `prefix` typed; asked again with the same prefix, it closes. */
+  function openPalette(prefix = '') {
+    if (paletteOpen.value && (prefix ? paletteQuery.value.startsWith(prefix) : !/^[>?]/.test(paletteQuery.value))) {
+      paletteOpen.value = false
+      return
+    }
+    paletteQuery.value = prefix
+    paletteOpen.value = true
+  }
   /** Incremented to ask the active terminal to open its search bar. */
   const searchRequest = ref(0)
   /** Incremented to put the keyboard into the search of the settings page. */
@@ -35,10 +56,14 @@ export const useUiStore = defineStore('ui', () => {
    * The page below opens its top border there, so the tab merges into it.
    */
   const selectedTabEdges = ref<{ left: number; right: number } | null>(null)
+  /** The tab under the mouse; with the tabs in groups, the tabs that go with it look hovered too. */
+  const hoveredTab = ref<string | null>(null)
   /** Id of the tab being dragged to another position; hover cards stay closed meanwhile. */
   const draggingTab = ref<string | null>(null)
   /** Where the dragged tab lands if dropped on the page now; the page shows it. */
   const tabDock = ref<TabDock | null>(null)
+  /** The same with the tabs in groups. */
+  const groupDock = ref<GroupDock | null>(null)
 
   const confirmState = ref<(ConfirmOptions & { open: boolean }) | null>(null)
   let confirmResolve: ((value: boolean) => void) | null = null
@@ -59,7 +84,8 @@ export const useUiStore = defineStore('ui', () => {
 
   return {
     paletteOpen,
-    tabSearchOpen,
+    paletteQuery,
+    openPalette,
     searchRequest,
     settingsSearchRequest,
     focusTerminalRequest,
@@ -67,8 +93,10 @@ export const useUiStore = defineStore('ui', () => {
     folderToShow,
     worktreeRequest,
     selectedTabEdges,
+    hoveredTab,
     draggingTab,
     tabDock,
+    groupDock,
     confirmState,
     confirm,
     settleConfirm,

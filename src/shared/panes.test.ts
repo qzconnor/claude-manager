@@ -5,6 +5,7 @@ import {
   insertPane,
   layoutPanes,
   neighbourPane,
+  ownerOf,
   paneIds,
   parsePaneNode,
   removePanes,
@@ -83,6 +84,25 @@ describe('replacePane, setRatio and paneIds', () => {
     expect(paneIds(tree)).toEqual(['a', 'b', 'c'])
     expect(hasPane(tree, 'c')).toBe(true)
     expect(hasPane(tree, 'x')).toBe(false)
+  })
+})
+
+describe('ownerOf', () => {
+  const session = (id: string) => id.startsWith('s')
+
+  it('finds the session a browser was opened beside', () => {
+    expect(ownerOf(row('s1', 'b1'), 'b1', session)).toBe('s1')
+    // A second browser below the first one belongs to the same session.
+    expect(ownerOf(row('s1', column('b1', 'b2')), 'b2', session)).toBe('s1')
+    // Two sessions side by side, the browser beside both: the one that was split.
+    expect(ownerOf(row(row('s1', 's2'), 'b1'), 'b1', session)).toBe('s1')
+    expect(ownerOf(row('s1', row('s2', 'b2')), 'b2', session)).toBe('s2')
+  })
+
+  it('finds none for a browser on its own or a pane that is not there', () => {
+    expect(ownerOf('b1', 'b1', session)).toBeNull()
+    expect(ownerOf(row('b1', 'b2'), 'b2', session)).toBeNull()
+    expect(ownerOf(row('s1', 'b1'), 'x', session)).toBeNull()
   })
 })
 

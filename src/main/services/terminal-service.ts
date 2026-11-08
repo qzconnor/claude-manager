@@ -6,7 +6,7 @@ import { basename, join } from 'node:path'
 import type * as Pty from 'node-pty'
 import { BLANK_PAGE, fallbackTitle, isBrowsableUrl } from '@shared/browser'
 import { applyOrder } from '@shared/order'
-import { dropPanes, isSplit, paneIds, removePanes, replacePane, splitPane } from '@shared/panes'
+import { dropPanes, hasPane, isSplit, ownerOf, paneIds, removePanes, replacePane, splitPane } from '@shared/panes'
 import type {
   AttentionKind,
   BrowserOpenOptions,
@@ -456,14 +456,33 @@ export class TerminalService extends TypedEmitter<Events> {
     clearTimeout(timer)
   }
 
+  /** Closes a terminal; the browsers that belong to a session (see `browsersOf`) go with it. */
   close(id: string): void {
     const record = this.terminals.get(id)
     if (!record) return
-    if (record.flushTimer) clearTimeout(record.flushTimer)
-    this.kill(id)
-    this.terminals.delete(id)
-    this.splits = dropPanes(this.splits, new Set([id]))
+    const ids = [id, ...(record.info.mode === 'browser' ? [] : this.browsersOf(id))]
+    for (const each of ids) {
+      const closing = this.terminals.get(each)!
+      if (closing.flushTimer) clearTimeout(closing.flushTimer)
+      this.kill(each)
+      this.terminals.delete(each)
+    }
+    this.splits = dropPanes(this.splits, new Set(ids))
     this.emitChanged()
+  }
+
+  /**
+   * The browsers that belong to a terminal: those opened beside it, in its split (see `ownerOf`). A
+   * terminal that replaces another takes its place there, and so its browsers.
+   */
+  browsersOf(id: string): string[] {
+    const split = this.splits.find((s) => hasPane(s, id))
+    if (!split) return []
+    const isOwner = (pane: string) => {
+      const mode = this.terminals.get(pane)?.info.mode
+      return mode !== undefined && mode !== 'browser'
+    }
+    return paneIds(split).filter((pane) => this.terminals.get(pane)?.info.mode === 'browser' && ownerOf(split, pane, isOwner) === id)
   }
 
   /**

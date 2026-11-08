@@ -45,6 +45,7 @@ const tabPosition = useSetting(
 const TAB_POSITIONS: { value: TabPosition; label: string }[] = [
   { value: 'top', label: 'Oben' },
   { value: 'sidebar', label: 'Seitenleiste' },
+  { value: 'groups', label: 'Gruppen (wie VS Code)' },
 ]
 
 const MATERIALS: { value: WindowMaterial; label: string }[] = [
@@ -70,7 +71,7 @@ function onMaterial(value: unknown) {
       <SettingField
         anchor="appearance.tabPosition"
         label="Position"
-        description="Oben in der Titelleiste oder untereinander in der Seitenleiste. Dort bekommen auch die Symbole der Navigation eine Beschriftung."
+        description="Oben in der Titelleiste oder untereinander in der Seitenleiste. Dort bekommen auch die Symbole der Navigation eine Beschriftung. In Gruppen wie in VS Code hat jeder Teil des Fensters seine eigene Tableiste, und Sessions, Usage, Accounts und Einstellungen öffnen sich auch als Tabs."
       >
         <SegmentedControl v-model="tabPosition" :options="TAB_POSITIONS" aria-label="Position der Tabs" />
       </SettingField>

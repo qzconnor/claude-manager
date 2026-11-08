@@ -44,7 +44,7 @@ const TREE = [
         id: 'appearance.tabs',
         title: 'Tabs',
         keywords: 'Tableiste Reiter',
-        fields: [{ id: 'appearance.tabPosition', label: 'Position', keywords: 'oben Titelleiste Seitenleiste Sidebar vertikal Navigation' }],
+        fields: [{ id: 'appearance.tabPosition', label: 'Position', keywords: 'oben Titelleiste Seitenleiste Sidebar vertikal Navigation Gruppen VS Code Editor Layout Modus' }],
       },
       {
         id: 'appearance.window',

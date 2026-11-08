@@ -152,6 +152,8 @@ export const IpcSend = {
 /** Events main → renderer (webContents.send ↔ ipcRenderer.on). */
 export const IpcEvent = {
   windowState: 'event:window-state',
+  /** The app quits: the terminals close next, which the window mustn't take for closing them by hand. */
+  appQuitting: 'event:app-quitting',
   settingsChanged: 'event:settings-changed',
   accountsChanged: 'event:accounts-changed',
   terminalsChanged: 'event:terminals-changed',
@@ -205,6 +207,8 @@ export interface ManagerApi {
   /** `process.platform` of the app, known right away (unlike `app.info()`). */
   platform: string
   app: {
+    /** The app quits; the terminals that close now are restored on the next start. */
+    onQuitting(cb: () => void): Unsubscribe
     info(): Promise<AppInfo>
     openExternal(url: string): Promise<void>
     openPath(path: string): Promise<string>
