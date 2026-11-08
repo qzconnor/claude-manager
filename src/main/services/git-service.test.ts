@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GitBranch } from '@shared/types'
-import { claudeWorktrees, GitService } from './git-service'
+import { claudeWorktrees, GitService, repoWebUrl } from './git-service'
 
 const HASH = '0123456789abcdef0123456789abcdef01234567'
 
@@ -151,6 +151,53 @@ describe('worktreeCheck', () => {
     const same = (p: string) => realpathSync.native(p).replaceAll('\\', '/').toLowerCase()
     expect(check.ok && same(check.root)).toBe(same(path))
   })
+})
+
+describe('GitService.webUrl', () => {
+  it('opens the page of origin', async () => {
+    const path = await repo()
+    git(path, 'remote', 'add', 'origin', 'git@github.com:owner/app.git')
+    expect(await service.webUrl(path)).toBe('https://github.com/owner/app')
+  })
+
+  it('takes the only remote when there is no origin', async () => {
+    const path = await repo()
+    git(path, 'remote', 'add', 'upstream', 'https://gitlab.com/group/app.git')
+    expect(await service.webUrl(path)).toBe('https://gitlab.com/group/app')
+  })
+
+  it('is null without a remote, outside a repository and for a local remote', async () => {
+    const path = await repo()
+    expect(await service.webUrl(path)).toBeNull()
+    expect(await service.webUrl(dir)).toBeNull()
+    git(path, 'remote', 'add', 'origin', join(dir, 'elsewhere'))
+    expect(await service.webUrl(path)).toBeNull()
+  })
+})
+
+describe('repoWebUrl', () => {
+  it.each([
+    ['https://github.com/owner/app.git', 'https://github.com/owner/app'],
+    ['https://github.com/owner/app', 'https://github.com/owner/app'],
+    ['https://github.com/owner/app/', 'https://github.com/owner/app'],
+    ['https://user:token@github.com/owner/app.git', 'https://github.com/owner/app'],
+    ['http://git.local:8080/team/app.git', 'http://git.local:8080/team/app'],
+    ['git@github.com:owner/app.git', 'https://github.com/owner/app'],
+    ['github.com:owner/app', 'https://github.com/owner/app'],
+    ['ssh://git@gitlab.example.com:2222/group/sub/app.git', 'https://gitlab.example.com/group/sub/app'],
+    ['git://example.org/app.git', 'https://example.org/app'],
+    ['git@ssh.dev.azure.com:v3/org/project/app', 'https://dev.azure.com/org/project/_git/app'],
+    ['https://org@dev.azure.com/org/project/_git/app', 'https://dev.azure.com/org/project/_git/app'],
+  ])('%s', (remote, web) => {
+    expect(repoWebUrl(remote)).toBe(web)
+  })
+
+  it.each(['C:/Code/app', 'C:\\Code\\app', '/srv/git/app.git', '../app', 'file:///srv/git/app.git', 'origin', ''])(
+    'is null for the local path %j',
+    (remote) => {
+      expect(repoWebUrl(remote)).toBeNull()
+    },
+  )
 })
 
 describe('claudeWorktrees', () => {
