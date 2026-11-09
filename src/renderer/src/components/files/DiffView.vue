@@ -19,7 +19,7 @@ import { useSettingsStore } from '@/stores/settings'
 /**
  * The changes of a file since the last commit, as `git diff HEAD` sees them (staged and not), drawn
  * like an editor's diff in the colours of the terminal's theme, on its see-through background:
- * removed lines red, added ones green, each with its number on both sides, the code highlighted.
+ * removed lines red, added ones green, each with one number (a removed one its old), the code highlighted.
  * It follows the file live: whenever it or git's state changes, the changes are asked again. A file
  * git doesn't know yet shows as all added, one without changes (or outside a repository) as it is.
  */
@@ -211,8 +211,7 @@ const rowHeight = computed(() => Math.round(fontSize.value * 1.55))
 const fontFamily = computed(() => buildFontStack(settings.settings.terminal.fontFamily))
 const OVERSCAN = 12
 
-/** A diff numbers both sides; a whole file only once, with a sign only for a new one. */
-const twoNumbers = computed(() => mode.value === 'diff')
+/** One number per line: a removed one its number in the old file, the others theirs in the new; a sign for a diff and a new file. */
 const withSign = computed(() => mode.value === 'diff' || mode.value === 'new')
 const numberWidth = computed(() => {
   let most = 1
@@ -225,10 +224,7 @@ const columns = computed(() => {
   return Math.min(most, MAX_COLUMNS)
 })
 /** The numbers, the sign and the gaps between them and at both ends (ch). */
-const gutterWidth = computed(() => {
-  const parts = (twoNumbers.value ? 2 : 1) + (withSign.value ? 1 : 0)
-  return numberWidth.value * (twoNumbers.value ? 2 : 1) + (withSign.value ? 1 : 0) + parts - 1 + 2
-})
+const gutterWidth = computed(() => numberWidth.value + (withSign.value ? 2 : 0) + 2)
 
 const scroller = ref<HTMLElement | null>(null)
 const { height: viewHeight } = useElementSize(scroller)
@@ -404,8 +400,7 @@ const iconButton =
             >
               <span v-if="view.line.kind === 'hunk'" class="flex-1 text-left">⋯</span>
               <template v-else>
-                <span v-if="twoNumbers" class="text-right" :style="{ width: `${numberWidth}ch` }">{{ view.line.old ?? '' }}</span>
-                <span class="text-right" :style="{ width: `${numberWidth}ch` }">{{ view.line.new ?? '' }}</span>
+                <span class="text-right" :style="{ width: `${numberWidth}ch` }">{{ view.line.new ?? view.line.old ?? '' }}</span>
                 <span v-if="withSign" class="w-[1ch]">{{ SIGN[view.line.kind] }}</span>
               </template>
             </span>
