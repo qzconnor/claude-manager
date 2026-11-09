@@ -9,3 +9,13 @@ export function folderKey(path: string): string {
   const trimmed = path.trim().replace(TRAILING_SEPARATORS, '')
   return WINDOWS_PATH.test(trimmed) ? trimmed.replaceAll('/', '\\').toLowerCase() : trimmed
 }
+
+/** Whether `path` is the folder `folder` or lies in it, compared by `folderKey`. */
+export function inFolder(path: string, folder: string): boolean {
+  const a = folderKey(path)
+  const b = folderKey(folder)
+  if (!b) return false
+  if (a === b) return true
+  const separator = WINDOWS_PATH.test(b) ? '\\' : '/'
+  return a.startsWith(b.endsWith(separator) ? b : `${b}${separator}`)
+}

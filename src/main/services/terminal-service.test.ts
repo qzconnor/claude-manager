@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AccountService } from './account-service'
 import type { ClaudeCli } from './claude-cli'
 import type { SettingsService } from './settings-service'
-import { TerminalService } from './terminal-service'
+import { currentWorktree, movedTo, TerminalService } from './terminal-service'
 import type { WorkspaceTrust } from './workspace-trust'
 
 vi.mock('electron', () => ({ app: { getPath: () => '' } }))
@@ -49,5 +49,41 @@ describe('own tab name', () => {
     service.setBrowserPage(id, page('Example'))
     service.setBrowserPage(id, page('Example'))
     expect(changed).toHaveBeenCalledTimes(1)
+  })
+})
+
+// Claude Code names the folder of the session in `sessions/<pid>.json`; `/cd` changes it.
+describe('following /cd', () => {
+  const APP = 'C:\\dev\\app'
+  const WORKTREE = 'C:\\dev\\app\\.claude\\worktrees\\login-fix'
+
+  it('moves the tab when the session moves to another folder', () => {
+    expect(movedTo(APP, 'D:\\other', APP)).toBe('D:\\other')
+    expect(movedTo(APP, 'C:\\dev\\app\\src', APP)).toBe('C:\\dev\\app\\src')
+    expect(movedTo('/home/dev/app', '/home/dev/site', '/home/dev/app')).toBe('/home/dev/site')
+  })
+
+  it('takes the first report as the start, also spelled differently', () => {
+    expect(movedTo(null, 'c:/dev/app/', APP)).toBeNull()
+    expect(movedTo(null, 'D:\\other', APP)).toBeNull()
+    expect(movedTo('c:/dev/app/', APP, APP)).toBeNull()
+  })
+
+  it('stays with a worktree of its folder and when coming back', () => {
+    expect(movedTo(APP, WORKTREE, APP)).toBeNull()
+    expect(movedTo(WORKTREE, APP, APP)).toBeNull()
+    expect(movedTo(APP, WORKTREE, 'C:\\dev\\app\\src')).toBeNull()
+    // A worktree of another repository is a folder like any other.
+    expect(movedTo(APP, 'D:\\site\\.claude\\worktrees\\demo', APP)).toBe('D:\\site\\.claude\\worktrees\\demo')
+  })
+
+  it('leaves out the worktree once the session left it', () => {
+    const scanned = { name: 'login-fix', branch: 'login-fix', path: WORKTREE, originalCwd: APP }
+    expect(currentWorktree(scanned, WORKTREE, APP, null)).toBe(scanned)
+    expect(currentWorktree(scanned, 'D:\\other', 'D:\\other', scanned)).toBeNull()
+    expect(currentWorktree(scanned, APP, APP, scanned)).toBeNull()
+    // Before the transcript names it, the folder tells it.
+    expect(currentWorktree(undefined, WORKTREE, APP, null)).toEqual({ name: 'login-fix', branch: null, path: WORKTREE, originalCwd: APP })
+    expect(currentWorktree(scanned, null, APP, null)).toBe(scanned)
   })
 })

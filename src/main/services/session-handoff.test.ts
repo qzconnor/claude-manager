@@ -135,6 +135,18 @@ describe('SessionHandoff.continueTerminal', () => {
     expect(existsSync(transcriptOf('token'))).toBe(false)
   })
 
+  it('goes on in the folder /cd moved the session to, also when the tab missed it', async () => {
+    const moved = join(dir, 'work', 'site')
+    await mkdir(join(paths('own').projectsDir, projectKey(cwd)), { recursive: true })
+    const folder = join(paths('own').projectsDir, projectKey(moved))
+    await mkdir(folder, { recursive: true })
+    await writeFile(join(folder, `${S}.jsonl`), `{"type":"user"}\n${JSON.stringify({ type: 'relocated', sessionId: S, relocatedCwd: moved })}\n`)
+    await handoff().continueTerminal('old', 'other')
+    expect(terminalFns.trustedCwd).toHaveBeenCalledWith('other', moved)
+    expect(createdOptions()).toMatchObject({ accountId: 'other', cwd: moved, resumeSessionId: S })
+    expect(existsSync(join(paths('other').projectsDir, projectKey(moved), `${S}.jsonl`))).toBe(true)
+  })
+
   it('tells that the new tab replaces the old one before the old one closes', async () => {
     await writeTranscript()
     const service = handoff()

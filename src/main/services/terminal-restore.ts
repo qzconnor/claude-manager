@@ -3,7 +3,7 @@ import { isBrowsableUrl } from '@shared/browser'
 import { isSplit, mapPanes, paneIds, parsePaneNode, removePanes } from '@shared/panes'
 import type { PaneNode } from '@shared/types'
 import { readJsonSync, writeJsonAtomicSync } from '../lib/json-file'
-import { findTranscript, SESSION_ID_RE } from '../lib/session-files'
+import { locateTranscript, SESSION_ID_RE } from '../lib/session-files'
 import type { AccountService } from './account-service'
 import type { SettingsService } from './settings-service'
 import { defaultTerminalTitle, type TerminalService } from './terminal-service'
@@ -97,13 +97,15 @@ export class TerminalRestore {
       const auth = accounts.get(tab.authAccountId) ?? accounts.get(tab.accountId)!
       // Older versions saved no flag: a title other than the default was chosen.
       const fixedTitle = tab.fixedTitle ?? tab.title !== defaultTerminalTitle(tab.mode, auth.name, tab.cwd)
+      // In the folder the session is in now: `/cd` may have moved it after the tab was saved.
+      const located = tab.sessionId ? await this.locate(tab.accountId, tab.sessionId, tab.cwd) : null
       try {
         const info = this.terminals.create({
           accountId: tab.accountId,
           authAccountId: auth.id,
-          cwd: tab.cwd,
+          cwd: located?.cwd ?? tab.cwd,
           mode: tab.mode,
-          resumeSessionId: tab.sessionId && (await this.hasTranscript(tab.accountId, tab.sessionId, tab.cwd)) ? tab.sessionId : null,
+          resumeSessionId: located ? tab.sessionId : null,
           title: fixedTitle ? tab.title : null,
           muted: tab.muted === true,
         })
@@ -122,11 +124,13 @@ export class TerminalRestore {
     }
   }
 
-  private async hasTranscript(accountId: string, sessionId: string, cwd: string): Promise<boolean> {
+  /** The tab's session, if it has a transcript to resume, with the folder it goes on in. */
+  private async locate(accountId: string, sessionId: string, cwd: string): Promise<{ cwd: string } | null> {
     try {
-      return (await findTranscript(this.accounts.paths(accountId).projectsDir, sessionId, cwd)) !== null
+      const located = await locateTranscript(this.accounts.paths(accountId).projectsDir, sessionId, cwd)
+      return located ? { cwd: located.cwd ?? cwd } : null
     } catch {
-      return false
+      return null
     }
   }
 

@@ -299,6 +299,39 @@ describe('parseTranscript', () => {
     expect(parseTranscript(jsonl(left), SESSION, true).summary.worktree).toBeNull()
   })
 
+  it('knows the folder /cd moved the session to last, where it is resumed', () => {
+    const relocated = (relocatedCwd: string) => ({ type: 'relocated', sessionId: SESSION, relocatedCwd })
+    const { summary } = parseTranscript(
+      jsonl(
+        user('Hallo', '2026-11-06T10:00:00.000Z'),
+        relocated('/home/dev/first'),
+        user('Weiter', '2026-11-06T10:01:00.000Z', { cwd: '/home/dev/first' }),
+        relocated('/home/dev/site'),
+      ),
+      SESSION,
+      true,
+    )
+    expect(summary.cwd).toBe('/home/dev/site')
+    expect(parseTranscript(jsonl(user('Hallo', '2026-11-06T10:00:00.000Z')), SESSION, true).summary.cwd).toBe('/home/dev/app')
+  })
+
+  it('leaves the worktree out once /cd moved the session elsewhere', () => {
+    const worktree = {
+      originalCwd: 'F:\\Code\\app',
+      worktreePath: 'F:\\Code\\app\\.claude\\worktrees\\one',
+      worktreeName: 'one',
+      worktreeBranch: 'worktree-one',
+      sessionId: SESSION,
+    }
+    const state = { type: 'worktree-state', worktreeSession: worktree, sessionId: SESSION }
+    const relocated = (relocatedCwd: string) => ({ type: 'relocated', sessionId: SESSION, relocatedCwd })
+    const parse = (...entries: Entry[]) => parseTranscript(jsonl(...entries), SESSION, true).summary
+    // Claude Code writes the metadata again at the end, `relocated` before `worktree-state`.
+    expect(parse(state, relocated('D:\\Other'), state)).toMatchObject({ cwd: 'D:\\Other', worktree: null })
+    expect(parse(relocated(worktree.worktreePath), state).worktree?.name).toBe('one')
+    expect(parse(state, relocated('f:/code/app')).worktree?.name).toBe('one')
+  })
+
   it('only collects token usage without the summary', () => {
     const { summary, usage } = parseTranscript(session, SESSION, false)
     expect(summary).toMatchObject({ cwd: null, gitBranch: null, version: null, model: null, firstPrompt: null, messageCount: 0 })
