@@ -227,7 +227,7 @@ const iconButton =
             <EllipsisIcon class="size-4" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" class="w-64">
+        <DropdownMenuContent align="end" class="w-84">
           <DropdownMenuItem @select="split('row')">
             <Columns2Icon />
             Neue Session rechts

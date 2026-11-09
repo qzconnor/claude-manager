@@ -8,40 +8,71 @@ import type { DiffLine } from './file-diff'
  */
 
 const LOADERS: Record<string, () => Promise<{ default: LanguageFn }>> = {
+  apache: () => import('highlight.js/lib/languages/apache'),
   bash: () => import('highlight.js/lib/languages/bash'),
   c: () => import('highlight.js/lib/languages/c'),
+  clojure: () => import('highlight.js/lib/languages/clojure'),
+  cmake: () => import('highlight.js/lib/languages/cmake'),
   cpp: () => import('highlight.js/lib/languages/cpp'),
   csharp: () => import('highlight.js/lib/languages/csharp'),
   css: () => import('highlight.js/lib/languages/css'),
   dart: () => import('highlight.js/lib/languages/dart'),
   diff: () => import('highlight.js/lib/languages/diff'),
+  django: () => import('highlight.js/lib/languages/django'),
   dockerfile: () => import('highlight.js/lib/languages/dockerfile'),
+  dos: () => import('highlight.js/lib/languages/dos'),
+  elixir: () => import('highlight.js/lib/languages/elixir'),
+  erlang: () => import('highlight.js/lib/languages/erlang'),
+  fsharp: () => import('highlight.js/lib/languages/fsharp'),
   go: () => import('highlight.js/lib/languages/go'),
+  gradle: () => import('highlight.js/lib/languages/gradle'),
+  graphql: () => import('highlight.js/lib/languages/graphql'),
+  groovy: () => import('highlight.js/lib/languages/groovy'),
+  handlebars: () => import('highlight.js/lib/languages/handlebars'),
+  haskell: () => import('highlight.js/lib/languages/haskell'),
   ini: () => import('highlight.js/lib/languages/ini'),
   java: () => import('highlight.js/lib/languages/java'),
   javascript: () => import('highlight.js/lib/languages/javascript'),
   json: () => import('highlight.js/lib/languages/json'),
+  julia: () => import('highlight.js/lib/languages/julia'),
   kotlin: () => import('highlight.js/lib/languages/kotlin'),
+  latex: () => import('highlight.js/lib/languages/latex'),
   less: () => import('highlight.js/lib/languages/less'),
   lua: () => import('highlight.js/lib/languages/lua'),
   makefile: () => import('highlight.js/lib/languages/makefile'),
   markdown: () => import('highlight.js/lib/languages/markdown'),
+  nginx: () => import('highlight.js/lib/languages/nginx'),
+  nix: () => import('highlight.js/lib/languages/nix'),
+  objectivec: () => import('highlight.js/lib/languages/objectivec'),
+  ocaml: () => import('highlight.js/lib/languages/ocaml'),
+  perl: () => import('highlight.js/lib/languages/perl'),
   php: () => import('highlight.js/lib/languages/php'),
   powershell: () => import('highlight.js/lib/languages/powershell'),
+  properties: () => import('highlight.js/lib/languages/properties'),
+  protobuf: () => import('highlight.js/lib/languages/protobuf'),
   python: () => import('highlight.js/lib/languages/python'),
+  r: () => import('highlight.js/lib/languages/r'),
   ruby: () => import('highlight.js/lib/languages/ruby'),
   rust: () => import('highlight.js/lib/languages/rust'),
+  scala: () => import('highlight.js/lib/languages/scala'),
   scss: () => import('highlight.js/lib/languages/scss'),
   sql: () => import('highlight.js/lib/languages/sql'),
+  stylus: () => import('highlight.js/lib/languages/stylus'),
   swift: () => import('highlight.js/lib/languages/swift'),
+  twig: () => import('highlight.js/lib/languages/twig'),
   typescript: () => import('highlight.js/lib/languages/typescript'),
+  vbnet: () => import('highlight.js/lib/languages/vbnet'),
+  vim: () => import('highlight.js/lib/languages/vim'),
+  vue: () => import('./hljs-vue'),
+  x86asm: () => import('highlight.js/lib/languages/x86asm'),
   xml: () => import('highlight.js/lib/languages/xml'),
   yaml: () => import('highlight.js/lib/languages/yaml'),
 }
 
-/** Languages embedded in another one: HTML and Vue files have scripts and styles. */
+/** Languages embedded in another one: HTML, Vue and Svelte files have scripts and styles. */
 const EMBEDDED: Record<string, string[]> = {
   xml: ['javascript', 'typescript', 'css'],
+  vue: ['xml', 'javascript', 'typescript', 'css', 'scss', 'less'],
   markdown: ['bash', 'javascript', 'typescript', 'json'],
 }
 
@@ -57,31 +88,51 @@ const BY_EXTENSION: Record<string, string> = {
   json: 'json',
   jsonc: 'json',
   json5: 'json',
+  jsonl: 'json',
   webmanifest: 'json',
+  ipynb: 'json',
+  vue: 'vue',
+  svelte: 'vue',
   html: 'xml',
   htm: 'xml',
   xhtml: 'xml',
   xml: 'xml',
   svg: 'xml',
-  vue: 'xml',
   xaml: 'xml',
   csproj: 'xml',
+  fsproj: 'xml',
+  vbproj: 'xml',
+  props: 'xml',
+  targets: 'xml',
+  resx: 'xml',
   plist: 'xml',
+  razor: 'xml',
+  cshtml: 'xml',
   css: 'css',
   scss: 'scss',
+  sass: 'scss',
   less: 'less',
+  styl: 'stylus',
   md: 'markdown',
   mdx: 'markdown',
+  mdc: 'markdown',
   markdown: 'markdown',
   yml: 'yaml',
   yaml: 'yaml',
   py: 'python',
   pyw: 'python',
+  pyi: 'python',
   rs: 'rust',
   go: 'go',
   java: 'java',
   kt: 'kotlin',
   kts: 'kotlin',
+  scala: 'scala',
+  sc: 'scala',
+  sbt: 'scala',
+  groovy: 'groovy',
+  gvy: 'groovy',
+  gradle: 'gradle',
   swift: 'swift',
   c: 'c',
   h: 'c',
@@ -91,23 +142,64 @@ const BY_EXTENSION: Record<string, string> = {
   hpp: 'cpp',
   hh: 'cpp',
   hxx: 'cpp',
+  ino: 'cpp',
+  m: 'objectivec',
+  mm: 'objectivec',
   cs: 'csharp',
+  fs: 'fsharp',
+  fsi: 'fsharp',
+  fsx: 'fsharp',
+  vb: 'vbnet',
   php: 'php',
   rb: 'ruby',
+  gemspec: 'ruby',
+  rake: 'ruby',
+  pl: 'perl',
+  pm: 'perl',
+  ex: 'elixir',
+  exs: 'elixir',
+  erl: 'erlang',
+  hrl: 'erlang',
+  hs: 'haskell',
+  ml: 'ocaml',
+  mli: 'ocaml',
+  clj: 'clojure',
+  cljs: 'clojure',
+  cljc: 'clojure',
+  edn: 'clojure',
+  jl: 'julia',
+  r: 'r',
+  lua: 'lua',
+  dart: 'dart',
   sh: 'bash',
   bash: 'bash',
   zsh: 'bash',
   ps1: 'powershell',
   psm1: 'powershell',
   psd1: 'powershell',
+  bat: 'dos',
+  cmd: 'dos',
   sql: 'sql',
+  graphql: 'graphql',
+  gql: 'graphql',
+  proto: 'protobuf',
   ini: 'ini',
   toml: 'ini',
   cfg: 'ini',
   conf: 'ini',
-  properties: 'ini',
-  lua: 'lua',
-  dart: 'dart',
+  properties: 'properties',
+  cmake: 'cmake',
+  nix: 'nix',
+  vim: 'vim',
+  tex: 'latex',
+  asm: 'x86asm',
+  hbs: 'handlebars',
+  handlebars: 'handlebars',
+  mustache: 'handlebars',
+  twig: 'twig',
+  j2: 'django',
+  jinja: 'django',
+  jinja2: 'django',
   diff: 'diff',
   patch: 'diff',
 }
@@ -116,6 +208,15 @@ const BY_NAME: Record<string, string> = {
   dockerfile: 'dockerfile',
   makefile: 'makefile',
   gnumakefile: 'makefile',
+  'cmakelists.txt': 'cmake',
+  'nginx.conf': 'nginx',
+  '.htaccess': 'apache',
+  gemfile: 'ruby',
+  rakefile: 'ruby',
+  vagrantfile: 'ruby',
+  podfile: 'ruby',
+  jenkinsfile: 'groovy',
+  '.vimrc': 'vim',
   '.editorconfig': 'ini',
   '.npmrc': 'ini',
   '.gitconfig': 'ini',
@@ -202,12 +303,49 @@ function highlightText(lines: string[], language: string): string[] | null {
 }
 
 /**
- * The lines of a diff as highlighted HTML (escaped by highlight.js), null where there is none. Each
- * hunk is highlighted as a whole, once as the old file (unchanged and removed lines) and once as the
- * new one (unchanged and added lines), so a line keeps the context of the lines around it.
+ * Highlights the lines of the diff as their file shows them in `whole` (the diff of the whole file,
+ * each line in it): the old file and the new one are highlighted from their first line, so a line
+ * in the middle of a Vue file's script, a comment or a template string is code of that kind. Null
+ * when `whole` doesn't fit the lines (made at another moment) or is too big.
  */
-export function highlightDiff(lines: readonly DiffLine[], language: string): (string | null)[] | null {
+function highlightInFile(lines: readonly DiffLine[], whole: readonly DiffLine[], language: string): (string | null)[] | null {
+  const oldFile: string[] = []
+  const newFile: string[] = []
+  let size = 0
+  for (const line of whole) {
+    if (line.kind === 'hunk') continue
+    if (line.old !== null) oldFile[line.old - 1] = line.text
+    if (line.new !== null) newFile[line.new - 1] = line.text
+    size += line.text.length + 1
+  }
+  if (size > MAX_HIGHLIGHT_CHARS) return null
+  const same = (file: string[], number: number | null, text: string) => number !== null && file[number - 1] === text
+  if (!lines.every((line) => line.kind === 'hunk' || same(line.kind === 'del' ? oldFile : newFile, line.kind === 'del' ? line.old : line.new, line.text))) {
+    return null
+  }
+  // A file the diff shows in parts has no gaps in `whole`; the old one only matters with removed lines.
+  const newHtml = highlightText(Array.from(newFile, (text) => text ?? ''), language)
+  const oldHtml = lines.some((line) => line.kind === 'del') ? highlightText(Array.from(oldFile, (text) => text ?? ''), language) : null
+  if (!newHtml) return null
+  return lines.map((line) => {
+    if (line.kind === 'hunk') return null
+    if (line.kind === 'del') return line.old !== null ? (oldHtml?.[line.old - 1] ?? null) : null
+    return line.new !== null ? (newHtml[line.new - 1] ?? null) : null
+  })
+}
+
+/**
+ * The lines of a diff as highlighted HTML (escaped by highlight.js), null where there is none. With
+ * `whole`, the diff of the whole file, each line is highlighted in its file. Otherwise each hunk is
+ * highlighted as a whole, once as the old file (unchanged and removed lines) and once as the new one
+ * (unchanged and added lines), so a line keeps the context of the lines around it.
+ */
+export function highlightDiff(lines: readonly DiffLine[], language: string, whole?: readonly DiffLine[] | null): (string | null)[] | null {
   if (!hasLanguage(language)) return null
+  if (whole && whole !== lines) {
+    const inFile = highlightInFile(lines, whole, language)
+    if (inFile) return inFile
+  }
   let size = 0
   for (const line of lines) size += line.text.length + 1
   if (size > MAX_HIGHLIGHT_CHARS) return null

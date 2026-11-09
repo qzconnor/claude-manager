@@ -400,6 +400,10 @@
 .syntax .hljs-deletion {
   color: var(--syn-red);
 }
+/* In markup (HTML, Vue, JSX) the attributes stand apart from the tag's name. */
+.syntax .hljs-tag .hljs-attr {
+  color: var(--syn-yellow);
+}
 .syntax .hljs-comment,
 .syntax .hljs-quote {
   color: var(--syn-comment);

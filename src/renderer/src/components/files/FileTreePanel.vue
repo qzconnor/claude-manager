@@ -52,9 +52,11 @@ import { fileIcon, type FileIconInfo } from '@/lib/file-icons'
 import {
   absolutePath,
   ancestors,
+  changesTree,
   FILE_TREE_DRAG_TYPE,
   flattenTree,
   folderName,
+  foldersOf,
   gitDecorations,
   parentPath,
   searchTree,
@@ -132,6 +134,31 @@ const branchTooltip = computed(() => {
   return lines.join('\n')
 })
 
+// ── Only the changes ──
+
+const changesOnly = computed(() => model.value.changesOnly)
+/** Folders git reports as new as a whole (`dir/`); their files come from the search's list. */
+const untrackedDirs = computed(() => Object.keys(git.value?.files ?? {}).filter((key) => key.endsWith('/')))
+/** The files git sees changed, deleted ones too, and those in new folders once the list of files is there. */
+const changedPaths = computed(() => {
+  const paths = Object.keys(git.value?.files ?? {}).filter((key) => !key.endsWith('/'))
+  const dirs = untrackedDirs.value
+  if (dirs.length > 0) {
+    for (const path of model.value.search?.paths ?? []) if (dirs.some((dir) => path.startsWith(dir))) paths.push(path)
+  }
+  return paths
+})
+const changesTooltip = computed(() => summary.value.map((item) => `${STATUS_LABEL[item.status]}: ${item.count}`).join(' · '))
+
+function toggleChanges() {
+  model.value.changesOnly = !model.value.changesOnly
+  // A search goes on in the other list, which starts at its top, at the selected entry if it has it.
+  if (scroller.value) scroller.value.scrollTop = 0
+  void nextTick(() => {
+    if (selected.value) revealRow(selected.value, true)
+  })
+}
+
 // ── Search ──
 
 const query = computed({
@@ -141,23 +168,28 @@ const query = computed({
 const searching = computed(() => query.value.trim().length > 0)
 const searchInput = ref<HTMLInputElement | null>(null)
 
+/** The list of all files is needed to search them, and for the files in new folders when only the changes show. */
+const listNeeded = computed(() => (changesOnly.value ? untrackedDirs.value.length > 0 : searching.value))
 watch(
-  () => searching.value && (!model.value.search || model.value.searchStale),
+  () => listNeeded.value && !model.value.searchLoading && (!model.value.search || model.value.searchStale),
   (load) => {
     if (load) void fileTree.loadSearch(model.value)
   },
   { immediate: true },
 )
 
-/** Files git deleted are still known to it, but gone from the disk. */
+/** Files git deleted are still known to it, but gone from the disk; showing only the changes, the changed files are searched. */
 const searchPaths = computed(() => {
+  if (changesOnly.value) return changedPaths.value
   const paths = model.value.search?.paths ?? []
   const deleted = Object.entries(git.value?.files ?? {}).filter(([, s]) => s.status === 'deleted')
   if (deleted.length === 0) return paths
   const gone = new Set(deleted.map(([path]) => path))
   return paths.filter((path) => !gone.has(path))
 })
-const searchResult = computed(() => (searching.value && model.value.search ? searchTree(searchPaths.value, query.value) : null))
+const searchResult = computed(() =>
+  searching.value && (changesOnly.value || model.value.search) ? searchTree(searchPaths.value, query.value) : null,
+)
 
 // ── Rows ──
 
@@ -165,6 +197,7 @@ const hidden = computed(() => (fileTree.showIgnored ? undefined : (path: string)
 const rows = computed<TreeRow[]>(() => {
   if (searching.value) return searchResult.value?.rows ?? []
   const m = model.value
+  if (m.changesOnly) return changesTree(changedPaths.value, m.collapsedChanges)
   return flattenTree({ listings: m.listings, errors: m.errors, expanded: m.expanded, hidden: hidden.value })
 })
 const entries = computed(() => rows.value.filter((row): row is Extract<TreeRow, { kind: 'entry' }> => row.kind === 'entry'))
@@ -295,7 +328,26 @@ function select(path: string | null, scroll = true) {
 const abs = (path: string) => absolutePath(props.target.root, path, SEPARATOR)
 
 function toggleDir(path: string, open?: boolean) {
-  fileTree.setExpanded(model.value, path, open ?? !model.value.expanded.has(path))
+  const m = model.value
+  if (m.changesOnly) {
+    // Its folders are open unless closed here; the tree's own stay as they are.
+    if ((open ?? m.collapsedChanges.has(path)) === true) m.collapsedChanges.delete(path)
+    else m.collapsedChanges.add(path)
+  } else {
+    fileTree.setExpanded(m, path, open ?? !m.expanded.has(path))
+  }
+}
+
+const canCollapse = computed(() => {
+  if (searching.value) return false
+  if (changesOnly.value) return rows.value.some((row) => row.kind === 'entry' && row.expanded)
+  return model.value.expanded.size > 0
+})
+
+function collapseAll() {
+  const m = model.value
+  if (m.changesOnly) for (const dir of foldersOf(changedPaths.value)) m.collapsedChanges.add(dir)
+  else fileTree.collapseAll(m)
 }
 
 function openFile(path: string) {
@@ -345,7 +397,9 @@ onBeforeUnmount(() => clearTimeout(pendingTimer))
 /** Leaves the search and shows the entry in the tree, its folders opened. */
 function showInTree(path: string, dir: boolean) {
   query.value = ''
-  fileTree.reveal(model.value, path)
+  const m = model.value
+  if (m.changesOnly) for (const folder of ancestors(path)) m.collapsedChanges.delete(folder)
+  else fileTree.reveal(m, path)
   if (dir) toggleDir(path, true)
   select(path)
   scroller.value?.focus()
@@ -553,8 +607,8 @@ const iconButton =
             type="button"
             aria-label="Alle Ordner zuklappen"
             :class="iconButton"
-            :disabled="model.expanded.size === 0 || searching"
-            @click="fileTree.collapseAll(model)"
+            :disabled="!canCollapse"
+            @click="collapseAll"
           >
             <ChevronsDownUpIcon class="size-[16px]" />
           </button>
@@ -599,14 +653,30 @@ const iconButton =
         <span v-if="git.behind" class="flex shrink-0 items-center tabular-nums"><ArrowDownIcon class="size-[12px]" />{{ git.behind }}</span>
       </span>
       <span class="flex-1" />
-      <span
-        v-for="item in summary"
-        :key="item.status"
-        :class="cn('shrink-0 font-mono text-[11px] font-medium tabular-nums', STATUS_CLASS[item.status])"
-        :title="`${STATUS_LABEL[item.status]}: ${item.count}`"
-      >
-        {{ STATUS_LETTER[item.status] }}{{ item.count }}
-      </span>
+      <!-- The changes by kind, and a click shows only the changed files. -->
+      <Tooltip v-if="summary.length">
+        <TooltipTrigger as-child>
+          <button
+            type="button"
+            aria-label="Nur geänderte Dateien zeigen"
+            :aria-pressed="changesOnly"
+            class="-mr-[6px] flex h-[20px] shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-[6px] transition-colors outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50 aria-pressed:bg-foreground/10 aria-pressed:ring-1 aria-pressed:ring-foreground/15"
+            @click="toggleChanges"
+          >
+            <span
+              v-for="item in summary"
+              :key="item.status"
+              :class="cn('font-mono text-[11px] font-medium tabular-nums', STATUS_CLASS[item.status])"
+            >
+              {{ STATUS_LETTER[item.status] }}{{ item.count }}
+            </span>
+          </button>
+        </TooltipTrigger>
+        <TooltipContent class="flex-col items-start gap-0.5">
+          <span>{{ changesOnly ? 'Alle Dateien zeigen' : 'Nur geänderte Dateien zeigen' }}</span>
+          <span class="opacity-70">{{ changesTooltip }}</span>
+        </TooltipContent>
+      </Tooltip>
     </div>
 
     <!-- Search by name across every folder, the open ones or not. -->
@@ -622,8 +692,8 @@ const iconButton =
           type="text"
           spellcheck="false"
           autocomplete="off"
-          aria-label="Dateien suchen"
-          placeholder="Dateien suchen"
+          :aria-label="changesOnly ? 'Geänderte Dateien suchen' : 'Dateien suchen'"
+          :placeholder="changesOnly ? 'Geänderte Dateien suchen' : 'Dateien suchen'"
           class="h-full min-w-0 flex-1 bg-transparent px-2 outline-none placeholder:text-muted-foreground"
           @keydown="onSearchKeydown"
         />
@@ -646,7 +716,20 @@ const iconButton =
               ? `${searchResult.matches} Treffer, die besten 400`
               : `${searchResult.matches} ${searchResult.matches === 1 ? 'Treffer' : 'Treffer'}`
         }}
-        <template v-if="model.search?.truncated"> · nicht alle Dateien durchsucht</template>
+        <template v-if="model.search?.truncated && !changesOnly"> · nicht alle Dateien durchsucht</template>
+      </p>
+      <p v-else-if="changesOnly && git && changedPaths.length" class="flex items-center gap-1 px-2.5 pt-1.5 text-[11px] text-muted-foreground">
+        <span class="min-w-0 truncate">
+          Nur Änderungen: {{ changedPaths.length }} {{ changedPaths.length === 1 ? 'Datei' : 'Dateien' }}
+          <template v-if="git.truncated || (untrackedDirs.length && model.search?.truncated)"> · nicht alle</template>
+        </span>
+        <button
+          type="button"
+          class="ml-auto shrink-0 cursor-pointer rounded px-1 text-foreground/80 hover:bg-accent hover:text-foreground"
+          @click="toggleChanges"
+        >
+          Alle zeigen
+        </button>
       </p>
     </div>
 
@@ -723,6 +806,7 @@ const iconButton =
                       cn(
                         'ml-2 min-w-0 flex-1 truncate',
                         view.state ? STATUS_CLASS[view.state.status] : view.folderState && STATUS_CLASS[view.folderState],
+                        view.state?.status === 'deleted' && 'line-through',
                         view.ignored && !view.touch && 'opacity-50',
                         view.touch && 'file-tree-touch',
                         view.touchInside && 'file-tree-touch-folder',
@@ -790,7 +874,18 @@ const iconButton =
               </div>
             </template>
           </div>
-          <p v-if="rows.length === 0 && !searching" class="px-4 pt-3 text-center text-xs text-muted-foreground">Der Ordner ist leer.</p>
+          <template v-if="rows.length === 0 && !searching">
+            <div v-if="!changesOnly" class="px-4 pt-3 text-center text-xs text-muted-foreground">Der Ordner ist leer.</div>
+            <div v-else-if="model.searchLoading" class="flex justify-center pt-6">
+              <Spinner class="size-[16px] text-muted-foreground" />
+            </div>
+            <div v-else class="flex flex-col items-center gap-2 px-4 pt-3 text-center text-xs text-muted-foreground">
+              {{ git ? 'Keine Änderungen seit dem letzten Commit.' : 'Kein Git-Repository.' }}
+              <button type="button" class="cursor-pointer rounded px-1.5 py-0.5 text-foreground/80 hover:bg-accent hover:text-foreground" @click="toggleChanges">
+                Alle Dateien zeigen
+              </button>
+            </div>
+          </template>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent class="w-64">

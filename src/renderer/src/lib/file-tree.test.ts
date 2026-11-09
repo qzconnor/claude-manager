@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import type { FileEntry, FileListing, GitTreeStatus } from '@shared/types'
-import { absolutePath, ancestors, flattenTree, folderName, gitDecorations, parentPath, searchTree, treePathOf } from './file-tree'
+import {
+  absolutePath,
+  ancestors,
+  changesTree,
+  flattenTree,
+  folderName,
+  gitDecorations,
+  parentPath,
+  searchTree,
+  treePathOf,
+} from './file-tree'
 
 const file = (name: string): FileEntry => ({ name, dir: false, link: false, broken: false })
 const dir = (name: string): FileEntry => ({ name, dir: true, link: false, broken: false })
@@ -152,5 +162,28 @@ describe('searchTree', () => {
 
   it('finds nothing for an empty query', () => {
     expect(searchTree(paths, '  ').rows).toEqual([])
+  })
+})
+
+describe('changesTree', () => {
+  const paths = ['src/b.ts', 'README.md', 'src/deep/a.ts', 'docs/x.md']
+
+  it('shows the changed files with their folders open, folders first', () => {
+    expect(changesTree(paths, new Set()).map((r) => `${r.depth}:${r.path}`)).toEqual([
+      '0:docs',
+      '1:docs/x.md',
+      '0:src',
+      '1:src/deep',
+      '2:src/deep/a.ts',
+      '1:src/b.ts',
+      '0:README.md',
+    ])
+  })
+
+  it('leaves the collapsed folders closed', () => {
+    const rows = changesTree(paths, new Set(['src/deep', 'docs']))
+    expect(rows.map((r) => r.path)).toEqual(['docs', 'src', 'src/deep', 'src/b.ts', 'README.md'])
+    expect(rows.find((r) => r.path === 'src/deep')).toMatchObject({ expanded: false, entry: { dir: true } })
+    expect(rows.find((r) => r.path === 'src')).toMatchObject({ expanded: true, match: null })
   })
 })

@@ -186,7 +186,7 @@ const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'bas
 
 /** The folders of a list of files, cached per list: the search looks at them for every key. */
 const folderCache = new WeakMap<readonly string[], string[]>()
-function foldersOf(paths: readonly string[]): string[] {
+export function foldersOf(paths: readonly string[]): string[] {
   let folders = folderCache.get(paths)
   if (!folders) {
     const set = new Set<string>()
@@ -229,9 +229,32 @@ export function searchTree(paths: readonly string[], query: string, limit = 400)
     if (s !== null) hits.push({ path, dir: false, score: s })
   }
   hits.sort((a, b) => a.score - b.score || a.path.length - b.path.length)
-  const shown = hits.slice(0, limit)
-
   // The tree of the hits: every folder they lie in is open.
+  const rows = treeRows(hits.slice(0, limit), null, (name) => {
+    const at = name.toLowerCase().indexOf(needle)
+    return at === -1 ? null : [at, at + needle.length]
+  })
+  return { rows, matches: hits.length }
+}
+
+/** The files git sees changed (`paths`) as a tree with the folders they lie in; those in `collapsed` are closed. */
+export function changesTree(paths: readonly string[], collapsed: ReadonlySet<string>): TreeRow[] {
+  return treeRows(
+    paths.map((path) => ({ path, dir: false })),
+    collapsed,
+    () => null,
+  )
+}
+
+/**
+ * Entries shown as a tree with the folders they lie in, folders first: a folder with entries in it is
+ * open unless it is in `collapsed`; `match` marks the part of a name to highlight.
+ */
+function treeRows(
+  items: Iterable<{ path: string; dir: boolean }>,
+  collapsed: ReadonlySet<string> | null,
+  match: (name: string) => [number, number] | null,
+): TreeRow[] {
   const children = new Map<string, Map<string, boolean>>()
   const add = (path: string, dir: boolean) => {
     const parent = parentPath(path)
@@ -239,9 +262,9 @@ export function searchTree(paths: readonly string[], query: string, limit = 400)
     if (!list) children.set(parent, (list = new Map()))
     list.set(path, dir || (list.get(path) ?? false))
   }
-  for (const hit of shown) {
-    add(hit.path, hit.dir)
-    for (const dir of ancestors(hit.path)) add(dir, true)
+  for (const item of items) {
+    add(item.path, item.dir)
+    for (const dir of ancestors(item.path)) add(dir, true)
   }
   const rows: TreeRow[] = []
   const walk = (dir: string, depth: number) => {
@@ -250,20 +273,11 @@ export function searchTree(paths: readonly string[], query: string, limit = 400)
     )
     for (const [path, isDir] of list) {
       const name = baseName(path)
-      const at = name.toLowerCase().indexOf(needle)
-      const expanded = isDir && children.has(path)
-      rows.push({
-        kind: 'entry',
-        path,
-        name,
-        depth,
-        entry: { name, dir: isDir, link: false, broken: false },
-        expanded,
-        match: at === -1 ? null : [at, at + needle.length],
-      })
+      const expanded = isDir && children.has(path) && !collapsed?.has(path)
+      rows.push({ kind: 'entry', path, name, depth, entry: { name, dir: isDir, link: false, broken: false }, expanded, match: match(name) })
       if (expanded) walk(path, depth + 1)
     }
   }
   walk('', 0)
-  return { rows, matches: hits.length }
+  return rows
 }
