@@ -54,10 +54,10 @@ export const navigationTools: ToolDefinition<never>[] = [
     name: 'browser_tabs',
     title: 'Browser tabs',
     description:
-      "The browser tabs of Claude Manager; they share one profile (cookies, logins). list: all of them; new: opens one below your current browser (with url: opens it there); select: your next actions go to that tab; close: closes a tab you opened. The user's own tabs stay open.",
+      "The browser tabs of Claude Manager; they share one profile (cookies, logins). list: all of them; new: opens one below your current browser (with url: opens it there); select: your next actions go to that tab; close: closes a tab you opened (without index: your current one). The user's own tabs stay open. When you are done with the browser, close the tabs you opened, unless the user wants to look at what they show.",
     properties: {
       action: { type: 'string', enum: ['list', 'new', 'select', 'close'] },
-      index: { type: 'number', description: 'For select and close: the tab from the list (0-based).' },
+      index: { type: 'number', description: 'For select: the tab from the list (0-based). For close: that tab, or your current one without index.' },
       url: { type: 'string', description: 'For new: the address to open in the new tab.' },
     },
     required: ['action'],
@@ -65,7 +65,7 @@ export const navigationTools: ToolDefinition<never>[] = [
     parse: (args) => {
       const action = oneOf(args, 'action', ['list', 'new', 'select', 'close'] as const)
       const index = optionalNumber(args, 'index', 0, 10_000)
-      if ((action === 'select' || action === 'close') && index === undefined) throw new ToolError(`index is required for ${action}.`)
+      if (action === 'select' && index === undefined) throw new ToolError('index is required for select.')
       let url: string | undefined
       if (args.url !== undefined && args.url !== null) {
         url = addressToUrl(requiredString(args, 'url', 8192))
@@ -90,7 +90,7 @@ export const navigationTools: ToolDefinition<never>[] = [
           return prefixed(`Switched to tab ${tab.index}; your next actions go to it.`, await tools.call(sessionId, 'browser_snapshot', {}))
         }
         case 'close': {
-          const tab = control.closeTab(sessionId, p.index!)
+          const tab = control.closeTab(sessionId, p.index)
           return textResult(`Closed tab ${tab.index} (${JSON.stringify(tab.title)}).\n\n${listTabs(control.tabs(sessionId))}`)
         }
       }

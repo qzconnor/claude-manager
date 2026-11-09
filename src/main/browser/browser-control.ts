@@ -596,9 +596,10 @@ export class BrowserControl extends TypedEmitter<Events> {
     return { ...tab, current: true }
   }
 
-  /** Closes a tab the session opened; the user's own tabs stay. */
-  closeTab(sessionId: string, index: number): BrowserTab {
-    const tab = this.tabAt(sessionId, index)
+  /** Closes a tab the session opened, without index its current one; the user's own tabs stay. */
+  closeTab(sessionId: string, index?: number): BrowserTab {
+    const tab = index === undefined ? this.tabs(sessionId).find((t) => t.current) : this.tabAt(sessionId, index)
+    if (!tab) throw new ToolError('You have no current browser tab. List them with browser_tabs and close one by its index.')
     if (!tab.openedBySession) throw new ToolError('This tab was not opened by you. Ask the user to close it if it should go.')
     this.terminals.close(tab.id)
     return tab
