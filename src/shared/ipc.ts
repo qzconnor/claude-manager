@@ -114,6 +114,7 @@ export const IpcInvoke = {
   usageStats: 'usage:stats',
 
   gitBranch: 'git:branch',
+  gitWatch: 'git:watch',
   gitWorktreeCheck: 'git:worktree-check',
   gitWebUrl: 'git:web-url',
 
@@ -381,11 +382,13 @@ export interface ManagerApi {
     onShow(cb: () => void): Unsubscribe
   }
   git: {
-    /**
-     * Branch of the repository `cwd` lies in; null without git or outside a repository.
-     * Changes to it are reported through `onBranchChanged` until another `cwd` is asked for.
-     */
+    /** Branch of the repository `cwd` lies in; null without git or outside a repository. */
     branch(cwd: string): Promise<GitBranch | null>
+    /**
+     * Reports checkouts in the repositories of these folders through `onBranchChanged`, for each folder.
+     * Replaces the folders of the previous call; an empty list stops watching.
+     */
+    watch(cwds: string[]): Promise<void>
     onBranchChanged(cb: (cwd: string, branch: GitBranch | null) => void): Unsubscribe
     /** Whether Claude Code can make a worktree for a session in `cwd`, and which ones it made there. */
     worktreeCheck(cwd: string): Promise<WorktreeCheck>

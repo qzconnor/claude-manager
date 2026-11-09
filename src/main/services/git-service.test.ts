@@ -109,16 +109,59 @@ describe('GitService.branch', () => {
     const path = await repo()
     const changes: [string, GitBranch | null][] = []
     service.on('changed', (cwd, branch) => changes.push([cwd, branch]))
-    await service.branch(path)
+    await service.watch([path])
     await writeFile(join(path, '.git', 'HEAD'), 'ref: refs/heads/next\n')
     await expect.poll(() => changes.at(-1), { timeout: 5000 }).toEqual([path, { name: 'next', detached: false }])
+  })
+
+  it('watches several repositories at once', async () => {
+    const first = await repo('first')
+    const second = await repo('second')
+    const changes: [string, GitBranch | null][] = []
+    service.on('changed', (cwd, branch) => changes.push([cwd, branch]))
+    await service.watch([first, second])
+    await writeFile(join(first, '.git', 'HEAD'), 'ref: refs/heads/one\n')
+    await writeFile(join(second, '.git', 'HEAD'), 'ref: refs/heads/two\n')
+    await expect
+      .poll(() => new Map(changes), { timeout: 5000 })
+      .toEqual(
+        new Map([
+          [first, { name: 'one', detached: false }],
+          [second, { name: 'two', detached: false }],
+        ]),
+      )
+  })
+
+  it('reports to every folder of the same repository', async () => {
+    const path = await repo()
+    const sub = join(path, 'packages', 'app')
+    await mkdir(sub, { recursive: true })
+    const changes: [string, GitBranch | null][] = []
+    service.on('changed', (cwd, branch) => changes.push([cwd, branch]))
+    await service.watch([path, sub])
+    await writeFile(join(path, '.git', 'HEAD'), 'ref: refs/heads/next\n')
+    await expect.poll(() => changes.map(([cwd]) => cwd).sort(), { timeout: 5000 }).toEqual([path, sub].sort())
+  })
+
+  it('stops watching the folders left out of the next call', async () => {
+    const kept = await repo('kept')
+    const dropped = await repo('dropped')
+    const changes: [string, GitBranch | null][] = []
+    service.on('changed', (cwd, branch) => changes.push([cwd, branch]))
+    await service.watch([kept, dropped])
+    await service.watch([kept])
+    await writeFile(join(dropped, '.git', 'HEAD'), 'ref: refs/heads/gone\n')
+    await writeFile(join(kept, '.git', 'HEAD'), 'ref: refs/heads/next\n')
+    await expect.poll(() => changes.at(-1), { timeout: 5000 }).toEqual([kept, { name: 'next', detached: false }])
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    expect(changes.map(([cwd]) => cwd)).not.toContain(dropped)
   })
 
   it('stops reporting after dispose', async () => {
     const path = await repo()
     const changes: unknown[] = []
     service.on('changed', (...args) => changes.push(args))
-    await service.branch(path)
+    await service.watch([path])
     service.dispose()
     await writeFile(join(path, '.git', 'HEAD'), 'ref: refs/heads/next\n')
     await new Promise((resolve) => setTimeout(resolve, 400))

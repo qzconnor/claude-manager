@@ -4,6 +4,7 @@ import { useEventListener } from '@vueuse/core'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { layoutPanes } from '@shared/panes'
 import type { SplitDirection } from '@shared/types'
+import GitBranchChip from '@/components/common/GitBranchChip.vue'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,7 +27,7 @@ import GroupTerminalTab from './GroupTerminalTab.vue'
 
 /**
  * The tab bar of a group, like an editor group's in VS Code: its tabs, a button for a new session in
- * it, and on the right the split button and the group's menu. Tabs are dragged within the bar to
+ * it, and on the right the branch of the shown tab, the split button and the group's menu. Tabs are dragged within the bar to
  * reorder them, onto another group's bar to move them there, or onto a group's content to split it.
  */
 const props = defineProps<{ group: GroupView; focused: boolean }>()
@@ -64,6 +65,15 @@ async function split(direction: SplitDirection) {
   const info = await launcher.newSession()
   if (!info) terminals.removeEmptyGroup(id)
 }
+
+/**
+ * Folder of the shown tab, whose branch the bar names: each group its own, they can show different
+ * repositories. A browser works in the folder of the terminal beside it, a session in a worktree in its folder.
+ */
+const branchDir = computed(() => {
+  const terminal = terminals.workingTerminalOf(shownTerminal.value)
+  return terminal?.worktree?.path || terminal?.cwd || null
+})
 
 /** A browser always belongs to a session: the one the group shows, or the session of the browser it shows. */
 const sessionShown = computed(() => terminals.sessionFor(shownTerminal.value))
@@ -171,9 +181,12 @@ const iconButton =
         />
       </template>
     </div>
-    <div class="flex min-w-0 flex-1 items-center gap-0.5 border-b pr-1.5 pl-0.5">
+    <!-- A container: the branch only shows while the tabs leave room for it. -->
+    <div class="@container flex min-w-0 flex-1 items-center gap-0.5 border-b pr-1.5 pl-0.5">
       <NewTerminalMenu class="[&_button]:h-7" />
       <div class="min-w-0 flex-1" />
+      <!-- Shortened when the tabs take up the bar, gone before it would crowd the buttons. -->
+      <GitBranchChip :cwd="branchDir" class="mr-1 hidden min-w-0 @min-[16rem]:flex" />
       <Tooltip>
         <TooltipTrigger as-child>
           <button type="button" aria-label="Neue Session rechts" :class="iconButton" @click="split('row')">

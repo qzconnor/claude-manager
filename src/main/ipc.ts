@@ -50,6 +50,8 @@ function requireString(value: unknown, name: string): string {
 
 /** The options of a new browser from the window, checked field by field. */
 const DOWNLOAD_ACTIONS: ReadonlySet<string> = new Set<BrowserDownloadAction>(['open', 'show', 'cancel', 'remove'])
+/** The most folders whose repositories are watched for checkouts at once; one per tab is far below. */
+const MAX_WATCHED_FOLDERS = 500
 /** The longest user name or password a page gets. */
 const MAX_CREDENTIAL_LENGTH = 4096
 
@@ -315,6 +317,10 @@ export function registerIpc(ctx: AppContext): void {
 
   // --- git -----------------------------------------------------------------
   ipcMain.handle(IpcInvoke.gitBranch, (_e, cwd: unknown) => ctx.git.branch(requireString(cwd, 'cwd')))
+  ipcMain.handle(IpcInvoke.gitWatch, (_e, cwds: unknown) => {
+    if (!Array.isArray(cwds) || cwds.length > MAX_WATCHED_FOLDERS) throw new Error('Ungültiger Parameter: cwds')
+    return ctx.git.watch(cwds.map((cwd) => requireString(cwd, 'cwds')))
+  })
   ipcMain.handle(IpcInvoke.gitWorktreeCheck, (_e, cwd: unknown) => ctx.git.worktreeCheck(requireString(cwd, 'cwd')))
   ipcMain.handle(IpcInvoke.gitWebUrl, (_e, cwd: unknown) => ctx.git.webUrl(requireString(cwd, 'cwd')))
   ctx.git.on('changed', (cwd, branch) => broadcast(IpcEvent.gitBranchChanged, cwd, branch))
