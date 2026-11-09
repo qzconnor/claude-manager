@@ -49,6 +49,29 @@ function requireString(value: unknown, name: string): string {
   return value
 }
 
+/** The number of a pasted image (`[Image #N]`). */
+function requireImageNumber(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw new Error('Ungültiger Parameter: n')
+  return value
+}
+
+/** Image types of the clipboard a pasted image is kept in, in the order they are preferred. */
+const CLIPBOARD_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
+/** A larger image isn't kept; Claude Code takes none of that size either. */
+const MAX_CLIPBOARD_IMAGE_BYTES = 32 * 1024 * 1024
+
+/** The image in the clipboard as a data URL; null without one. */
+async function clipboardImage(): Promise<string | null> {
+  for (const item of await clipboard.read()) {
+    const type = CLIPBOARD_IMAGE_TYPES.find((candidate) => item.types.includes(candidate))
+    if (!type) continue
+    const blob = await item.getType(type)
+    if (!(blob instanceof Blob) || blob.size === 0 || blob.size > MAX_CLIPBOARD_IMAGE_BYTES) return null
+    return `data:${type};base64,${Buffer.from(await blob.arrayBuffer()).toString('base64')}`
+  }
+  return null
+}
+
 /** The options of a new browser from the window, checked field by field. */
 const DOWNLOAD_ACTIONS: ReadonlySet<string> = new Set<BrowserDownloadAction>(['open', 'show', 'cancel', 'remove'])
 /** The most folders whose repositories are watched for checkouts at once; one per tab is far below. */
@@ -228,6 +251,16 @@ export function registerIpc(ctx: AppContext): void {
   ipcMain.handle(IpcInvoke.terminalsSetMuted, (_e, id: unknown, muted: unknown) => {
     if (typeof muted !== 'boolean') throw new Error('Ungültiger Parameter: muted')
     ctx.terminals.setMuted(requireString(id, 'id'), muted)
+  })
+  ipcMain.handle(IpcInvoke.terminalsPastedImageIds, (_e, id: unknown) => ctx.terminals.pastedImageIds(requireString(id, 'id')))
+  ipcMain.handle(IpcInvoke.terminalsPastedImage, (_e, id: unknown, n: unknown) =>
+    ctx.terminals.pastedImage(requireString(id, 'id'), requireImageNumber(n)),
+  )
+  ipcMain.handle(IpcInvoke.terminalsKeepPastedImage, async (_e, id: unknown, n: unknown) => {
+    const terminalId = requireString(id, 'id')
+    const number = requireImageNumber(n)
+    const image = await clipboardImage()
+    return image !== null && ctx.terminals.keepPastedImage(terminalId, number, image)
   })
   ipcMain.on(IpcSend.terminalViewing, (_e, ids: unknown) => {
     ctx.notifications.setViewing(Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string' && !!id) : [])
