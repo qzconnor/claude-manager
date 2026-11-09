@@ -109,6 +109,7 @@ const api: ManagerApi = {
     onFocus: (cb) => subscribe(IpcEvent.browserFocus, cb),
     onUserClick: (cb) => subscribe(IpcEvent.browserUserClick, cb),
     onShortcut: (cb) => subscribe(IpcEvent.browserShortcut, cb),
+    onOpenTab: (cb) => subscribe(IpcEvent.browserOpenTab, cb),
   },
   sessions: {
     list: (accountId) => invoke(IpcInvoke.sessionsList, accountId),

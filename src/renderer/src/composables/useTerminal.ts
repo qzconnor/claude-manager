@@ -29,6 +29,34 @@ export interface UseTerminalOptions {
 /** The first Windows build whose ConPTY wraps lines like a terminal; xterm needs no workaround from it on. */
 const MODERN_CONPTY_BUILD = 21376
 
+/** A hidden terminal gives up its WebGL context after this long; it gets a new one when shown again (ms). */
+const WEBGL_HIDDEN_MS = 30_000
+/**
+ * At most this many terminals hold a WebGL context. Chromium keeps about 16 per window and drops the
+ * oldest beyond that, also one on screen; hidden terminals give theirs up first.
+ */
+const MAX_WEBGL_CONTEXTS = 8
+/** After this many lost contexts (GPU resets) a terminal stays with the DOM renderer. */
+const MAX_WEBGL_LOSSES = 3
+
+interface WebglHolder {
+  shown: () => boolean
+  release: () => void
+}
+
+/** The terminals with a WebGL context, the one shown last at the end. */
+const webglHolders = new Map<symbol, WebglHolder>()
+
+/** `key` holds a context (again) and was shown last; hidden terminals beyond the limit give theirs up, the longest unseen first. */
+function holdWebgl(key: symbol, holder: WebglHolder): void {
+  webglHolders.delete(key)
+  webglHolders.set(key, holder)
+  for (const [other, { shown, release }] of webglHolders) {
+    if (webglHolders.size <= MAX_WEBGL_CONTEXTS) break
+    if (other !== key && !shown()) release()
+  }
+}
+
 /** `tints` are the colors of the palette slots that Claude's backgrounds are exchanged for. */
 export function toXtermTheme(p: TerminalPalette, tints: SlotTints): ITheme {
   return {
@@ -132,7 +160,15 @@ export function useTerminal(options: UseTerminalOptions) {
   let term: Terminal | null = null
   let searchAddon: SearchAddon | null = null
   let webgl: WebglAddon | null = null
+  /** The canvas the WebGL renderer draws on, to free its context. */
+  let webglCanvas: HTMLCanvasElement | null = null
+  const webglKey = Symbol(terminalId)
+  /** On screen (not in a hidden tab, group or page). */
+  let shown = false
+  let hiddenTimer = 0
+  let webglLosses = 0
   let resizeObserver: ResizeObserver | null = null
+  let visibilityObserver: IntersectionObserver | null = null
   let fitFrame = 0
   /** Height of the container at the last fit, so writes don't have to measure the layout. */
   let viewHeight = 0
@@ -165,17 +201,31 @@ export function useTerminal(options: UseTerminalOptions) {
   }
 
   function enableWebgl(): void {
-    if (!term || webgl) return
+    if (!term) return
+    if (webgl) {
+      holdWebgl(webglKey, { shown: () => shown, release: disableWebgl })
+      return
+    }
+    if (webglLosses >= MAX_WEBGL_LOSSES) return
     try {
       const addon = new WebglAddon()
       addon.onContextLoss(() => {
-        // GPU reset or too many contexts — fall back to the DOM renderer.
-        addon.dispose()
-        if (webgl === addon) webgl = null
+        // GPU reset or too many contexts: a terminal on screen gets a new one right away, a hidden one
+        // when shown again; the DOM renderer draws meanwhile.
+        webglLosses++
+        if (webgl !== addon) {
+          addon.dispose()
+          return
+        }
+        disableWebgl()
+        if (shown) enableWebgl()
       })
+      const canvases = new Set(term.element?.querySelectorAll('canvas'))
       term.loadAddon(addon)
       makeSlotsTranslucent(addon)
       webgl = addon
+      webglCanvas = [...(term.element?.querySelectorAll('canvas') ?? [])].find((canvas) => !canvases.has(canvas)) ?? null
+      holdWebgl(webglKey, { shown: () => shown, release: disableWebgl })
     } catch (error) {
       console.warn('[terminal] WebGL unavailable, using DOM renderer', error)
       webgl = null
@@ -183,8 +233,29 @@ export function useTerminal(options: UseTerminalOptions) {
   }
 
   function disableWebgl(): void {
-    webgl?.dispose()
+    clearTimeout(hiddenTimer)
+    webglHolders.delete(webglKey)
+    if (!webgl) return
+    // Disposing only takes the canvas away; its context would count against Chromium's limit until
+    // garbage collected. The canvas has a WebGL 2 context already, so this asks for no new one.
+    const gl = webglCanvas?.getContext('webgl2')
+    webgl.dispose()
     webgl = null
+    webglCanvas = null
+    gl?.getExtension('WEBGL_lose_context')?.loseContext()
+  }
+
+  /** Only terminals on screen keep a WebGL context: one hidden for a while gives it up. */
+  function setShown(next: boolean): void {
+    if (next) {
+      shown = true
+      clearTimeout(hiddenTimer)
+      if (settingsStore.settings.terminal.renderer === 'webgl') enableWebgl()
+      return
+    }
+    if (!shown) return
+    shown = false
+    if (webgl) hiddenTimer = window.setTimeout(disableWebgl, WEBGL_HIDDEN_MS)
   }
 
   /**
@@ -327,7 +398,8 @@ export function useTerminal(options: UseTerminalOptions) {
     term.unicode.activeVersion = s.unicode === 'graphemes' ? '15-graphemes' : '11'
 
     term.open(el)
-    if (s.renderer === 'webgl') enableWebgl()
+    // Right away for a terminal on screen, so the output so far isn't drawn by the DOM renderer first.
+    setShown(el.getClientRects().length > 0)
     term.attachCustomKeyEventHandler(handleKey)
 
     const t = term
@@ -398,6 +470,9 @@ export function useTerminal(options: UseTerminalOptions) {
 
     resizeObserver = new ResizeObserver(() => fit())
     resizeObserver.observe(el)
+    // Hidden tabs, groups and pages have no size: WebGL only while on screen (see `setShown`).
+    visibilityObserver = new IntersectionObserver((entries) => setShown(entries.at(-1)?.isIntersecting ?? false))
+    visibilityObserver.observe(el)
     ready.value = true
     fit()
     if (active.value) await nextTick(() => focus())
@@ -405,6 +480,8 @@ export function useTerminal(options: UseTerminalOptions) {
 
   watch(active, (isActive) => {
     if (!isActive) return
+    // Before the tab comes on screen, so it doesn't show a frame of the DOM renderer.
+    setShown(true)
     void nextTick(() => {
       fit()
       focus()
@@ -420,8 +497,12 @@ export function useTerminal(options: UseTerminalOptions) {
       setSlotTints(tints)
       Object.assign(term.options, terminalOptions(s, p, tints))
       term.unicode.activeVersion = s.unicode === 'graphemes' ? '15-graphemes' : '11'
-      if (s.renderer === 'webgl') enableWebgl()
-      else disableWebgl()
+      if (s.renderer !== 'webgl') disableWebgl()
+      else if (shown) {
+        // Switched back on: another try after lost contexts.
+        if (prev.renderer !== 'webgl') webglLosses = 0
+        enableWebgl()
+      }
       webgl?.clearTextureAtlas()
       fit()
     },
@@ -431,6 +512,7 @@ export function useTerminal(options: UseTerminalOptions) {
     disposed = true
     cancelAnimationFrame(fitFrame)
     resizeObserver?.disconnect()
+    visibilityObserver?.disconnect()
     for (const cleanup of cleanups.splice(0)) cleanup()
     disableWebgl()
     term?.dispose()

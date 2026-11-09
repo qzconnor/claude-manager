@@ -41,11 +41,13 @@ const strip = ref<HTMLElement | null>(null)
 
 // The selected tab stacks the same layers as the content below it, so it has exactly its colour.
 const { containerBackground } = useTerminalAppearance()
-const joined = computed(() => {
+// The same object while the colour stays, so the tabs don't render again for it.
+const joined = computed<Record<string, string>>((previous) => {
   const shown = props.group.tabs.find((t) => t.id === props.group.active)
-  return shown?.terminal
-    ? { background: `linear-gradient(${containerBackground.value}, ${containerBackground.value}), var(--surface)` }
-    : { background: 'var(--surface)' }
+  const background = shown?.terminal
+    ? `linear-gradient(${containerBackground.value}, ${containerBackground.value}), var(--surface)`
+    : 'var(--surface)'
+  return previous?.background === background ? previous : { background }
 })
 
 function select(id: string) {

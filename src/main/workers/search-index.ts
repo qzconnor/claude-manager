@@ -4,11 +4,12 @@
  * so the whole index stays in memory and every search is a plain substring scan.
  * It is kept on disk as well; transcripts only grow, so a changed one is read from where it was left.
  */
-import { open, readFile, stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { sep } from 'node:path'
 import { foldCase, searchTerms } from '@shared/utils'
 import { readJson, writeJsonAtomic } from '../lib/json-file'
 import type { TranscriptSearchHit } from './indexer-protocol'
+import { readAppended } from './read-appended'
 import { collectSearchText, SEARCH_ASSISTANT, SEARCH_USER } from './transcript-parser'
 
 interface Entry {
@@ -35,7 +36,6 @@ const REFRESH_INTERVAL_MS = 2000
 /** Characters of context before the match and the snippet's length. */
 const SNIPPET_BEFORE = 50
 const SNIPPET_LENGTH = 200
-const NEWLINE = 0x0a
 
 export class SearchIndex {
   private entries: Record<string, Entry> = {}
@@ -153,22 +153,6 @@ export class SearchIndex {
       const data: CacheFile = { version: CACHE_VERSION, files: this.entries }
       void writeJsonAtomic(this.cacheFile, data).catch(() => undefined)
     }, 5000)
-  }
-}
-
-/**
- * The bytes after `offset` (the end of a line read before), or null when the file has to be read
- * again from the start: nothing was read yet, or it no longer continues the part read before.
- */
-async function readAppended(path: string, offset: number, size: number): Promise<Buffer | null> {
-  if (offset === 0) return null
-  const handle = await open(path, 'r')
-  try {
-    const buffer = Buffer.alloc(size - offset + 1)
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset - 1)
-    return bytesRead > 0 && buffer[0] === NEWLINE ? buffer.subarray(1, bytesRead) : null
-  } finally {
-    await handle.close()
   }
 }
 

@@ -9,6 +9,7 @@ import {
   limitLabel,
   maskSecret,
   mergeKnown,
+  sameData,
   searchTerms,
   standardTwin,
 } from './utils'
@@ -22,6 +23,29 @@ describe('isPlainObject', () => {
     expect(isPlainObject(undefined)).toBe(false)
     expect(isPlainObject('x')).toBe(false)
     expect(isPlainObject(1)).toBe(false)
+  })
+})
+
+describe('sameData', () => {
+  it('compares objects and arrays all the way down', () => {
+    expect(sameData({ a: 1, b: { c: [1, { d: 'x' }] } }, { a: 1, b: { c: [1, { d: 'x' }] } })).toBe(true)
+    expect(sameData({ a: 1, b: { c: [1, { d: 'x' }] } }, { a: 1, b: { c: [1, { d: 'y' }] } })).toBe(false)
+    expect(sameData([1, 2], [1, 2, 3])).toBe(false)
+  })
+
+  it('ignores the order of keys but not missing ones', () => {
+    expect(sameData({ a: 1, b: 2 }, { b: 2, a: 1 })).toBe(true)
+    expect(sameData({ a: 1, b: undefined }, { a: 1, c: undefined })).toBe(false)
+    expect(sameData({ a: 1 }, { a: 1, b: 2 })).toBe(false)
+  })
+
+  it('tells null, arrays, objects and primitives apart', () => {
+    expect(sameData(null, null)).toBe(true)
+    expect(sameData(null, {})).toBe(false)
+    expect(sameData([], {})).toBe(false)
+    expect(sameData({}, [])).toBe(false)
+    expect(sameData(1, '1')).toBe(false)
+    expect(sameData(NaN, NaN)).toBe(true)
   })
 })
 

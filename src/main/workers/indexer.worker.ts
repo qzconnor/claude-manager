@@ -2,13 +2,24 @@
  * Worker thread that indexes Claude Code transcripts so the main process (and with it every
  * terminal) never blocks on parsing hundreds of megabytes of JSONL.
  *
- * Results are cached per file (size + mtime) in memory and on disk.
+ * Results are cached per file (size + mtime) in memory and on disk. A transcript that grew (a session
+ * at work) is read on from where it was, as long as its scan is still in memory.
  */
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { parentPort, workerData } from 'node:worker_threads'
 import { readJson, writeJsonAtomic } from '../lib/json-file'
-import { parseTranscript, readConversation, readToolCall, type ParsedSummary, type UsageEntry } from './transcript-parser'
+import { readAppended } from './read-appended'
+import {
+  newTranscriptScan,
+  readConversation,
+  readToolCall,
+  scanResult,
+  scanTranscript,
+  type ParsedSummary,
+  type TranscriptScan,
+  type UsageEntry,
+} from './transcript-parser'
 import type { IndexerRequest, IndexerResponse, IndexedSession, TokenStatsResult, TokenTuple } from './indexer-protocol'
 import { SearchIndex } from './search-index'
 
@@ -98,18 +109,61 @@ const searchIndex = new SearchIndex(searchCacheFile, async (projectsDir) =>
 type Indexed = { entry: CacheEntry; size: number; mtimeMs: number } | null
 const inflight = new Map<string, Promise<Indexed>>()
 
+/** A transcript read up to `offset`, the end of its last complete line. */
+interface ScanProgress {
+  scan: TranscriptScan
+  offset: number
+}
+
+/**
+ * The scans of the transcripts read last, the newest at the end. Sessions at work write to theirs all
+ * the time; with the scan kept, only what they appended is read (transcripts get 100 MB and more).
+ */
+const scans = new Map<string, ScanProgress>()
+const MAX_SCANS = 16
+
+/** Reads on from the kept scan where the file continues it, otherwise the whole file. */
+async function scanFile(file: TranscriptFile, key: string, size: number): Promise<ScanProgress | null> {
+  const kept = scans.get(key)
+  scans.delete(key)
+  let progress: ScanProgress | null = null
+  if (kept && size >= kept.offset) {
+    const appended = await readAppended(file.path, kept.offset, size).catch(() => null)
+    if (appended) {
+      kept.offset += scanTranscript(kept.scan, appended)
+      progress = kept
+    }
+  }
+  if (!progress) {
+    let buf: Buffer
+    try {
+      buf = await readFile(file.path)
+    } catch {
+      return null
+    }
+    const scan = newTranscriptScan(file.isSession)
+    progress = { scan, offset: scanTranscript(scan, buf) }
+  }
+  scans.set(key, progress)
+  for (const old of scans.keys()) {
+    if (scans.size <= MAX_SCANS) break
+    scans.delete(old)
+  }
+  return progress
+}
+
 /** Parses a file at most once at a time, even when several requests need it concurrently. */
 function indexFile(file: TranscriptFile): Promise<Indexed> {
   const key = `${file.path}|${file.isSession}`
   let pending = inflight.get(key)
   if (!pending) {
-    pending = indexFileNow(file).finally(() => inflight.delete(key))
+    pending = indexFileNow(file, key).finally(() => inflight.delete(key))
     inflight.set(key, pending)
   }
   return pending
 }
 
-async function indexFileNow(file: TranscriptFile): Promise<Indexed> {
+async function indexFileNow(file: TranscriptFile, key: string): Promise<Indexed> {
   let st
   try {
     st = await stat(file.path)
@@ -120,13 +174,9 @@ async function indexFileNow(file: TranscriptFile): Promise<Indexed> {
   if (cached && cached.size === st.size && cached.mtimeMs === st.mtimeMs && (cached.summary || !file.isSession)) {
     return { entry: cached, size: st.size, mtimeMs: st.mtimeMs }
   }
-  let buf: Buffer
-  try {
-    buf = await readFile(file.path)
-  } catch {
-    return null
-  }
-  const parsed = parseTranscript(buf, file.sessionId, file.isSession)
+  const progress = await scanFile(file, key, st.size)
+  if (!progress) return null
+  const parsed = scanResult(progress.scan, file.sessionId)
   const entry: CacheEntry = {
     size: st.size,
     mtimeMs: st.mtimeMs,
