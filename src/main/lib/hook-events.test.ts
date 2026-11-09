@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   applyHookCall,
+  fileActivity,
   HOOK_EVENTS,
   hookSettings,
   mergeHookSettings,
@@ -252,5 +253,68 @@ describe('applyHookCall', () => {
     const busy = run([bash, { kind: 'subagent', id: 'a', running: true }, { kind: 'compact', running: true }]).state
     const other = '1c7d2e0f-8b8e-4b4f-a068-3c9f2d5e6b70'
     expect(run([{ kind: 'prompt' }], busy, other).state).toEqual({ ...newHookState(), sessionId: other })
+  })
+})
+
+describe('fileActivity', () => {
+  const body = (name: string, tool: string, input: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+    hook_event_name: name,
+    tool_name: tool,
+    tool_input: input,
+    cwd: resolve('/work'),
+    tool_use_id: 'toolu_1',
+    ...extra,
+  })
+
+  it('tells the file a tool reads or writes, relative paths from the folder Claude works in', () => {
+    expect(fileActivity(body('PreToolUse', 'Read', { file_path: resolve('/work/src/a.ts') }))).toEqual({
+      touches: [{ path: resolve('/work/src/a.ts'), kind: 'read' }],
+    })
+    expect(fileActivity(body('PreToolUse', 'Edit', { file_path: 'src/b.ts' }))?.touches).toEqual([{ path: resolve('/work/src/b.ts'), kind: 'write' }])
+    expect(fileActivity(body('PreToolUse', 'NotebookEdit', { notebook_path: resolve('/work/n.ipynb') }))?.touches?.[0]?.kind).toBe('write')
+    // Only before the tool runs.
+    expect(fileActivity(body('PostToolUse', 'Read', { file_path: resolve('/work/a.ts') }))).toBeNull()
+  })
+
+  it('tells the file a search looks in and the files it found', () => {
+    expect(fileActivity(body('PreToolUse', 'Grep', { pattern: 'x', path: 'src/a.ts' }))).toEqual({
+      maybe: [{ path: resolve('/work/src/a.ts'), kind: 'search' }],
+    })
+    expect(fileActivity(body('PreToolUse', 'Grep', { pattern: 'x' }))).toBeNull()
+    const glob = body('PostToolUse', 'Glob', { pattern: '**/*.ts' }, { tool_response: { filenames: ['src/a.ts', resolve('/other/b.ts')], numFiles: 2 } })
+    expect(fileActivity(glob)?.maybe).toEqual([
+      { path: resolve('/work/src/a.ts'), kind: 'search' },
+      { path: resolve('/other/b.ts'), kind: 'search' },
+    ])
+    // Grep's lines start with the file.
+    const lines = body('PostToolUse', 'Grep', { pattern: 'x', output_mode: 'content' }, { tool_response: { mode: 'content', filenames: [], content: 'src/a.ts:3:x = 1\nsrc/a.ts-4-y\nlib/c.ts:9:x' } })
+    expect(fileActivity(lines)?.maybe?.map((touch) => touch.path)).toEqual([resolve('/work/src/a.ts'), resolve('/work/lib/c.ts')])
+  })
+
+  it('follows a shell command: the files it names, its start and its end', () => {
+    expect(fileActivity(body('PreToolUse', 'Bash', { command: 'cat a.ts && grep -n x b.ts > out.txt' }))).toEqual({
+      maybe: [
+        { path: resolve('/work/a.ts'), kind: 'read' },
+        { path: resolve('/work/x'), kind: 'search' },
+        { path: resolve('/work/b.ts'), kind: 'search' },
+      ],
+      shell: { id: 'toolu_1', cwd: resolve('/work'), end: false, writes: [] },
+    })
+    expect(fileActivity(body('PostToolUseFailure', 'PowerShell', { command: 'Set-Content -Path out.txt -Value 1' }))).toEqual({
+      shell: { id: 'toolu_1', cwd: resolve('/work'), end: true, writes: [resolve('/work/out.txt'), resolve('/work/1')] },
+    })
+  })
+
+  it('tells a commit by the folder the command ran in, once it ran', () => {
+    expect(fileActivity(body('PostToolUse', 'Bash', { command: 'git add -A && git commit -m "fix"' }))?.commit).toBe(resolve('/work'))
+    expect(fileActivity(body('PostToolUse', 'Bash', { command: 'git -C ../other commit --amend' }))?.commit).toBe(resolve('/work'))
+    expect(fileActivity(body('PreToolUse', 'Bash', { command: 'git commit -m x' }))?.commit).toBeUndefined()
+    expect(fileActivity(body('PostToolUseFailure', 'Bash', { command: 'git commit -m x' }))?.commit).toBeUndefined()
+    expect(fileActivity(body('PostToolUse', 'Bash', { command: 'git log --oneline' }))?.commit).toBeUndefined()
+  })
+
+  it('comes with the call', () => {
+    const call = parseHookCall({ ...body('PreToolUse', 'Write', { file_path: resolve('/work/c.ts') }), session_id: SESSION })
+    expect(call?.files?.touches).toEqual([{ path: resolve('/work/c.ts'), kind: 'write' }])
   })
 })

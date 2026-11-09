@@ -4,6 +4,7 @@ import type { AccountService } from './services/account-service'
 import type { AutoSwitch } from './services/auto-switch'
 import type { ClaudeCli } from './services/claude-cli'
 import type { CswapImport } from './services/cswap-import'
+import type { FileTreeService } from './services/file-tree-service'
 import type { GitService } from './services/git-service'
 import type { IndexerClient } from './services/indexer-client'
 import type { NotificationService } from './services/notification-service'
@@ -37,6 +38,8 @@ export interface AppContext {
   notifications: NotificationService
   /** Branch of the repository a terminal works in, for the title bar. */
   git: GitService
+  /** Folders, git status and changes for the file tree of the tabs. */
+  files: FileTreeService
   command: CommandIntegration
   /** App updates from the GitHub releases. */
   updates: UpdateService

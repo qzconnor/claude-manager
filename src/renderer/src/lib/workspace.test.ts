@@ -3,8 +3,11 @@ import {
   addTab,
   allTabs,
   createWorkspace,
+  diffOfTab,
+  diffTab,
   dockTab,
   groupDropSpot,
+  isViewTab,
   mapTabs,
   moveTab,
   pageOfTab,
@@ -83,6 +86,16 @@ describe('workspace', () => {
     expect(parseWorkspace({ ...ws, groups: ws.groups.slice(1) })).toBeNull()
     expect(pageOfTab(pageTab('settings'))).toBe('settings')
     expect(pageOfTab('page:nope')).toBeNull()
+  })
+
+  it('names a file whose changes a tab shows, and reads it back', () => {
+    const file = { root: 'C:\Repo "x"', path: 'src/a b.ts' }
+    expect(diffOfTab(diffTab(file))).toEqual(file)
+    expect(isViewTab(diffTab(file))).toBe(true)
+    expect(isViewTab('some-terminal-id')).toBe(false)
+    expect(diffOfTab('diff:nope')).toBeNull()
+    expect(diffOfTab('diff:["only-root"]')).toBeNull()
+    expect(diffOfTab('diff:["", "a.ts"]')).toBeNull()
   })
 
   it('finds the drop spot: bar joins, edges split, middle joins', () => {

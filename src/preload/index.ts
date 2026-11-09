@@ -18,6 +18,7 @@ const api: ManagerApi = {
     info: () => invoke(IpcInvoke.appInfo),
     openExternal: (url) => invoke(IpcInvoke.appOpenExternal, url),
     openPath: (path) => invoke(IpcInvoke.appOpenPath, path),
+    showItem: (path) => invoke(IpcInvoke.appShowItem, path),
     pickDirectory: (defaultPath) => invoke(IpcInvoke.appPickDirectory, defaultPath ?? null),
     listFonts: () => invoke(IpcInvoke.appListFonts),
     clipboardHasImage: () => invoke(IpcInvoke.appClipboardHasImage),
@@ -137,6 +138,15 @@ const api: ManagerApi = {
     worktreeCheck: (cwd) => invoke(IpcInvoke.gitWorktreeCheck, cwd),
     webUrl: (cwd) => invoke(IpcInvoke.gitWebUrl, cwd),
     onBranchChanged: (cb) => subscribe(IpcEvent.gitBranchChanged, cb),
+  },
+  files: {
+    list: (dir) => invoke(IpcInvoke.filesList, dir),
+    status: (root) => invoke(IpcInvoke.filesStatus, root),
+    searchList: (root) => invoke(IpcInvoke.filesSearchList, root),
+    watch: (trees) => invoke(IpcInvoke.filesWatch, trees),
+    onChanged: (cb) => subscribe(IpcEvent.filesChanged, cb),
+    diff: (root, path, full) => invoke(IpcInvoke.filesDiff, root, path, full),
+    onTouched: (cb) => subscribe(IpcEvent.filesTouched, cb),
   },
   command: {
     status: () => invoke(IpcInvoke.commandStatus),

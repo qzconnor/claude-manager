@@ -199,6 +199,7 @@ function sanitize(s: AppSettings, fallback: AppSettings = createDefaultSettings(
   s.appearance.radius = clamp(s.appearance.radius, 0, 1.5, d.appearance.radius)
   const tabPositions = ['top', 'sidebar', 'groups'] as const
   s.appearance.tabPosition = tabPositions.includes(s.appearance.tabPosition) ? s.appearance.tabPosition : d.appearance.tabPosition
+  s.appearance.fileTreeSide = s.appearance.fileTreeSide === 'right' ? 'right' : 'left'
   s.terminal.fontSize = clamp(s.terminal.fontSize, 6, 40, d.terminal.fontSize)
   s.terminal.lineHeight = clamp(s.terminal.lineHeight, 1, 2.5, d.terminal.lineHeight)
   s.terminal.letterSpacing = clamp(s.terminal.letterSpacing, -5, 10, d.terminal.letterSpacing)

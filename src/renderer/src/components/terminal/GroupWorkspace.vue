@@ -1,11 +1,17 @@
 <script setup lang="ts">
+import { useElementSize } from '@vueuse/core'
 import { computed, ref, type Component } from 'vue'
 import { layoutPanes, type PaneDivider, type PaneRect } from '@shared/panes'
+import DiffView from '@/components/files/DiffView.vue'
+import FileTreePanel from '@/components/files/FileTreePanel.vue'
 import { PAGE_INFO } from '@/lib/pages'
 import { dockRect } from '@/lib/tab-drag'
 import { cn } from '@/lib/utils'
-import { PAGES, pageTab, TAB_BAR_HEIGHT, type PageName } from '@/lib/workspace'
+import { baseName } from '@/lib/file-tree'
+import { diffOfTab, PAGES, pageTab, TAB_BAR_HEIGHT, type DiffFile, type PageName } from '@/lib/workspace'
 import { useBrowsersStore } from '@/stores/browsers'
+import { MAX_TREE_SHARE, useFileTreeStore, type TreeTarget } from '@/stores/file-tree'
+import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import AccountsView from '@/views/AccountsView.vue'
@@ -21,12 +27,18 @@ import TerminalPane from './TerminalPane.vue'
  * The window below the title bar, as in VS Code: groups share its space, each with a tab bar of its
  * own and the tab it shows below. Every terminal is mounted here once and only placed and shown, so
  * xterm keeps its state when tabs or groups change; they are never moved to another parent, which
- * would start xterm anew. Pages that are open as tabs are kept alive while hidden.
+ * would start xterm anew. Pages that are open as tabs are kept alive while hidden. A group whose tab
+ * has its file tree open shares its content with the tree, on the side the settings name; a file's
+ * changes opened from the tree are a tab of the group, with the tree still beside them.
  */
 const terminals = useTerminalsStore()
 const browsers = useBrowsersStore()
+const fileTree = useFileTreeStore()
+const settings = useSettingsStore()
 const ui = useUiStore()
 const root = ref<HTMLElement | null>(null)
+const { width: rootWidth } = useElementSize(root)
+const treeSide = computed(() => settings.settings.appearance.fileTreeSide)
 
 const PAGE_VIEWS: Record<PageName, Component> = {
   sessions: SessionsView,
@@ -50,15 +62,42 @@ function areaStyle(rect: PaneRect) {
 function barStyle(rect: PaneRect) {
   return { left: percent(rect.left), top: percent(rect.top), width: percent(rect.width) }
 }
-/** Below the group's tab bar. */
-function contentStyle(rect: PaneRect) {
+/** Below the group's tab bar; beside the file tree (`tree` px wide) if the group shows one. */
+function contentStyle(rect: PaneRect, tree = 0) {
   return {
-    left: percent(rect.left),
-    width: percent(rect.width),
+    left: tree && treeSide.value === 'left' ? `calc(${percent(rect.left)} + ${tree}px)` : percent(rect.left),
+    width: tree ? `calc(${percent(rect.width)} - ${tree}px)` : percent(rect.width),
     top: `calc(${percent(rect.top)} + ${TAB_BAR_HEIGHT}px)`,
     height: `calc(${percent(rect.height)} - ${TAB_BAR_HEIGHT}px)`,
   }
 }
+
+/** The file tree of a group: at its left or right edge, below the tab bar. */
+function treeStyle(rect: PaneRect, width: number) {
+  return {
+    left: treeSide.value === 'left' ? percent(rect.left) : `calc(${percent(rect.left + rect.width)} - ${width}px)`,
+    width: `${width}px`,
+    top: `calc(${percent(rect.top)} + ${TAB_BAR_HEIGHT}px)`,
+    height: `calc(${percent(rect.height)} - ${TAB_BAR_HEIGHT}px)`,
+  }
+}
+
+/**
+ * The groups whose shown tab has its file tree open: the tree, the tab it is beside, how wide it is
+ * there (px), and the file of its folder whose changes the group shows.
+ */
+const trees = computed(() => {
+  const map = new Map<string, { target: TreeTarget; tab: string; width: number; max: number; current: string | null }>()
+  for (const group of terminals.groups) {
+    const target = fileTree.targetOfGroup(group)
+    if (!target || !group.active || !fileTree.isOpen(target.id)) continue
+    const max = Math.floor(rectOf(group.id).width * rootWidth.value * MAX_TREE_SHARE)
+    const diff = diffOfTab(group.active)
+    const current = diff?.root === target.root ? diff.path : null
+    if (max > 0) map.set(group.id, { target, tab: group.active, width: Math.min(fileTree.width, max), max, current })
+  }
+  return map
+})
 
 /** Every tab's group, and for the tabs the groups show, that group. */
 const tabGroups = computed(() => {
@@ -71,7 +110,21 @@ const tabGroups = computed(() => {
   return { all, shown }
 })
 const isShown = (tab: string) => tabGroups.value.shown.has(tab)
-const contentOf = (tab: string) => contentStyle(rectOf(tabGroups.value.all.get(tab)))
+/** A tab's place: beside the tree of its group, while it is the tab whose tree that is. */
+function contentOf(tab: string) {
+  const groupId = tabGroups.value.all.get(tab)
+  const tree = groupId ? trees.value.get(groupId) : undefined
+  return contentStyle(rectOf(groupId), tree?.tab === tab ? tree.width : 0)
+}
+
+/** The files whose changes are open as tabs; only the shown ones are drawn. */
+const openDiffs = computed(() =>
+  terminals.groups.flatMap((group) => group.tabs.flatMap((tab) => (tab.diff ? [{ id: tab.id, file: tab.diff as DiffFile }] : []))),
+)
+
+function focusTab(tab: string) {
+  if (terminals.focusedTab !== tab) terminals.activateTab(tab)
+}
 
 /**
  * A browser Claude drives in a hidden tab is drawn, unseen: a page that isn't drawn has no size,
@@ -134,7 +187,12 @@ const dockPreview = computed(() => {
   if (!dock) return null
   const rect = rectOf(dock.groupId)
   const page = PAGES.find((p) => pageTab(p) === dock.tabId)
-  const title = page ? PAGE_INFO[page].label : (terminals.terminals.find((t) => t.id === dock.tabId)?.title ?? '')
+  const diff = diffOfTab(dock.tabId)
+  const title = page
+    ? PAGE_INFO[page].label
+    : diff
+      ? baseName(diff.path)
+      : (terminals.terminals.find((t) => t.id === dock.tabId)?.title ?? '')
   return { rect: dock.side === 'center' ? rect : dockRect(rect, dock.side), title }
 })
 </script>
@@ -177,6 +235,33 @@ const dockPreview = computed(() => {
       :dimmed="several && terminals.focusedTab !== terminal.id"
       @focus="terminals.activate(terminal.id)"
     />
+
+    <!-- The file trees, by their tab: each tab comes back to its own place in the tree. -->
+    <FileTreePanel
+      v-for="[groupId, tree] in trees"
+      :key="`tree-${groupId}-${tree.target.id}`"
+      class="absolute z-[5]"
+      :style="treeStyle(rectOf(groupId), tree.width)"
+      :target="tree.target"
+      :side="treeSide"
+      :max-width="tree.max"
+      :group-id="groupId"
+      :current="tree.current"
+      @pointerdown="terminals.focusGroup(groupId)"
+    />
+
+    <!-- The changes of files, as tabs; drawn while shown, they load again when they come back. -->
+    <template v-for="diff in openDiffs" :key="diff.id">
+      <DiffView
+        v-if="isShown(diff.id)"
+        class="absolute overflow-hidden"
+        :style="contentOf(diff.id)"
+        :root="diff.file.root"
+        :path="diff.file.path"
+        @pointerdown.capture="focusTab(diff.id)"
+        @focusin="focusTab(diff.id)"
+      />
+    </template>
 
     <!-- Pages open as tabs; KeepAlive keeps a hidden one with its state (and calls onActivated when shown). -->
     <div

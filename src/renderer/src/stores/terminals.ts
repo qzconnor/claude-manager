@@ -23,9 +23,12 @@ import {
   addTab,
   allTabs,
   createWorkspace,
+  diffOfTab,
+  diffTab,
   dockTab,
   findGroup,
   groupOfTab,
+  isViewTab,
   mapTabs,
   moveTab,
   pageOfTab,
@@ -38,6 +41,7 @@ import {
   setActive,
   showTab,
   splitGroup,
+  type DiffFile,
   type DropSide,
   type PageName,
   type Workspace,
@@ -49,8 +53,11 @@ export interface TerminalTab extends TerminalTabGroup {
   focused: TerminalInfo
 }
 
-/** With the tabs in groups, a tab of a group: a terminal, or one of the app's pages. */
-export type GroupTabItem = { id: string; terminal: TerminalInfo; page?: undefined } | { id: string; page: PageName; terminal?: undefined }
+/** With the tabs in groups, a tab of a group: a terminal, one of the app's pages, or a file's changes. */
+export type GroupTabItem =
+  | { id: string; terminal: TerminalInfo; page?: undefined; diff?: undefined }
+  | { id: string; page: PageName; terminal?: undefined; diff?: undefined }
+  | { id: string; diff: DiffFile; terminal?: undefined; page?: undefined }
 
 /** A group with what its tabs show, in the order of its tab bar. */
 export interface GroupView {
@@ -143,6 +150,13 @@ export const useTerminalsStore = defineStore('terminals', () => {
   let focusCount = 0
   /** Terminals another one took the place of; they close shortly and get no tab of their own meanwhile. */
   const retired = new Set<string>()
+  /**
+   * Once the terminals are loaded: the ids of the last run (or of this one, after the window loaded again)
+   * mapped to the terminals that took their place, so state kept by id (e.g. an open file tree) finds them.
+   */
+  const restoredIds = ref<ReadonlyMap<string, string> | null>(null)
+  /** Told when a terminal takes the place of another (restart, account switch), before the old one closes. */
+  const replacedListeners = new Set<(oldId: string, newId: string) => void>()
 
   const byId = computed(() => new Map(terminals.value.map((t) => [t.id, t])))
 
@@ -177,6 +191,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
         const items = group.tabs.flatMap<GroupTabItem>((tab) => {
           const page = pageOfTab(tab)
           if (page) return [{ id: tab, page }]
+          const diff = diffOfTab(tab)
+          if (diff) return [{ id: tab, diff }]
           const terminal = byId.value.get(tab)
           return terminal ? [{ id: tab, terminal }] : []
         })
@@ -378,7 +394,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     for (const id of focusedAt.keys()) if (!ids.has(id)) focusedAt.delete(id)
 
     let ws = workspace.value
-    for (const tab of allTabs(ws)) if (!pageOfTab(tab) && !ids.has(tab)) ws = removeTab(ws, tab)
+    for (const tab of allTabs(ws)) if (!isViewTab(tab) && !ids.has(tab)) ws = removeTab(ws, tab)
     for (const terminal of list) {
       if (groupOfTab(ws, terminal.id)) continue
       // By main's order: a terminal that replaces another comes right before it there.
@@ -396,8 +412,11 @@ export const useTerminalsStore = defineStore('terminals', () => {
     focus(target?.focused.id ?? null)
   }
 
-  /** The groups of the last run, their terminals found again by their order if they have new ids. */
-  function restore(list: TerminalInfo[]): Workspace | null {
+  /**
+   * The groups of the last run, their terminals found again by their order if they have new ids; with
+   * the old ids mapped to the new ones.
+   */
+  function restore(list: TerminalInfo[]): { workspace: Workspace; ids: Map<string, string> } | null {
     let saved: SavedWorkspace | null = null
     try {
       saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null') as SavedWorkspace | null
@@ -407,7 +426,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     const ws = saved && parseWorkspace(saved.workspace)
     if (!ws || !Array.isArray(saved?.order)) return null
     const ids = new Set(list.map((t) => t.id))
-    const savedTerminals = allTabs(ws).filter((tab) => !pageOfTab(tab))
+    const savedTerminals = allTabs(ws).filter((tab) => !isViewTab(tab))
     let map = new Map<string, string>()
     if (savedTerminals.every((id) => ids.has(id))) {
       map = new Map(savedTerminals.map((id) => [id, id]))
@@ -420,7 +439,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
         map = new Map(order.map((entry, i) => [entry.id, current[i].id]))
       }
     }
-    return mapTabs(ws, (tab) => (pageOfTab(tab) ? tab : (map.get(tab) ?? null)))
+    return { workspace: mapTabs(ws, (tab) => (isViewTab(tab) ? tab : (map.get(tab) ?? null))), ids: map }
   }
 
   /** Set once the terminals are loaded; the setting loads before them. */
@@ -428,9 +447,11 @@ export const useTerminalsStore = defineStore('terminals', () => {
 
   async function load(): Promise<void> {
     const [list, layouts] = await Promise.all([window.api.terminals.list(), window.api.terminals.layouts()])
-    workspace.value = restore(list) ?? createWorkspace(newGroupId())
+    const restored = restore(list)
+    workspace.value = restored?.workspace ?? createWorkspace(newGroupId())
     sync(list, layouts)
     loaded = true
+    restoredIds.value = restored?.ids ?? new Map()
   }
 
   /** Set once the app quits: its terminals close then, but come back on the next start. */
@@ -447,13 +468,13 @@ export const useTerminalsStore = defineStore('terminals', () => {
     }
   })
 
-  // Switched to groups (not the setting arriving at the start): the pages open there last time stay
-  // closed, only the page shown now comes along (see GroupShell). The terminal with the keyboard keeps
-  // it, in its group.
+  // Switched to groups (not the setting arriving at the start): the pages and files open there last time
+  // stay closed, only the page shown now comes along (see GroupShell). The terminal with the keyboard
+  // keeps it, in its group.
   watch(grouped, (on) => {
     if (!on || !loaded) return
     let ws = workspace.value
-    for (const tab of allTabs(ws)) if (pageOfTab(tab)) ws = removeTab(ws, tab)
+    for (const tab of allTabs(ws)) if (isViewTab(tab)) ws = removeTab(ws, tab)
     workspace.value = ws
     if (activeId.value && groupOfTab(ws, activeId.value)) activateTab(activeId.value)
     else settle()
@@ -527,6 +548,52 @@ export const useTerminalsStore = defineStore('terminals', () => {
     settle()
   }
 
+  /**
+   * File tabs that only preview: the next file shown in their group takes their place, as in VS Code.
+   * Kept tabs (double-click) stay. Not remembered across restarts, the tabs are kept then.
+   */
+  const previewTabs = reactive(new Set<string>())
+  watch(workspace, (ws) => {
+    for (const tab of previewTabs) if (!groupOfTab(ws, tab)) previewTabs.delete(tab)
+  })
+
+  /**
+   * With the tabs in groups, shows a file's changes as a tab of the group: the one open already, or
+   * a new one after the tab the group shows. `keep`: a tab that stays; else one that previews, taking
+   * the place of the group's last preview.
+   */
+  function openDiff(file: DiffFile, groupId: string, keep: boolean): void {
+    const tab = diffTab(file)
+    let ws = workspace.value
+    if (!findGroup(ws, groupId)) return
+    if (groupOfTab(ws, tab)) {
+      if (keep) previewTabs.delete(tab)
+    } else {
+      const preview = findGroup(ws, groupId)!.tabs.find((t) => previewTabs.has(t))
+      if (preview) {
+        ws = replaceTab(ws, preview, tab)
+        previewTabs.delete(preview)
+      } else {
+        ws = addTab(ws, groupId, tab)
+      }
+      if (!keep) previewTabs.add(tab)
+      workspace.value = ws
+    }
+    activateTab(tab)
+  }
+
+  /** A previewing file tab stays from now on. */
+  function keepDiff(tab: string): void {
+    previewTabs.delete(tab)
+  }
+
+  /** Closes a file's tab; its group shows the neighbour tab. */
+  function closeDiff(tab: string): void {
+    previewTabs.delete(tab)
+    workspace.value = removeTab(workspace.value, tab)
+    settle()
+  }
+
   /** Before the tab at `index` goes: the one after it, or the one before. */
   function neighbourTab(index: number): TerminalTab | undefined {
     return tabs.value[index + 1] ?? tabs.value[index - 1]
@@ -577,6 +644,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
    * `select` is false). Asked twice (main's report and the answer), the second time changes nothing.
    */
   function replace(oldId: string, info: TerminalInfo, select = true): void {
+    if (!retired.has(oldId)) for (const listener of replacedListeners) listener(oldId, info.id)
     retired.add(oldId)
     const list = terminals.value.filter((t) => t.id !== info.id)
     const index = list.findIndex((t) => t.id === oldId)
@@ -798,12 +866,12 @@ export const useTerminalsStore = defineStore('terminals', () => {
     settle()
   }
 
-  /** Closes the pages of a group; with its terminals gone (see useTerminalActions) the group goes too. */
+  /** Closes the pages and files of a group; with its terminals gone (see useTerminalActions) the group goes too. */
   function closeGroupPages(groupId: string): void {
     const group = findGroup(workspace.value, groupId)
     if (!group) return
     let ws = workspace.value
-    for (const tab of group.tabs) if (pageOfTab(tab)) ws = removeTab(ws, tab, true)
+    for (const tab of group.tabs) if (isViewTab(tab)) ws = removeTab(ws, tab, true)
     workspace.value = ws
     removeEmptyGroup(groupId)
   }
@@ -820,6 +888,11 @@ export const useTerminalsStore = defineStore('terminals', () => {
 
   window.api.terminals.onChanged((next, layouts) => sync(next, layouts))
 
+  function onReplaced(listener: (oldId: string, newId: string) => void): () => void {
+    replacedListeners.add(listener)
+    return () => replacedListeners.delete(listener)
+  }
+
   return {
     grouped,
     terminals,
@@ -833,6 +906,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
     active,
     activeTab,
     visibleIds,
+    restoredIds,
+    onReplaced,
     tabOf,
     groupOf,
     workingTerminal,
@@ -851,6 +926,10 @@ export const useTerminalsStore = defineStore('terminals', () => {
     focusGroup,
     openPage,
     closePage,
+    previewTabs,
+    openDiff,
+    keepDiff,
+    closeDiff,
     close,
     closeTab,
     kill,

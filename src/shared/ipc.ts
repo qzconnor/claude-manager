@@ -23,7 +23,13 @@ import type {
   CswapStatus,
   DeepPartial,
   DialogRequest,
+  FileDiff,
+  FileListing,
+  FileSearchList,
+  FileTouch,
+  FileTreeWatch,
   GitBranch,
+  GitTreeStatus,
   WorktreeCheck,
   PaneNode,
   PaneSplit,
@@ -48,6 +54,7 @@ export const IpcInvoke = {
   appInfo: 'app:info',
   appOpenExternal: 'app:open-external',
   appOpenPath: 'app:open-path',
+  appShowItem: 'app:show-item',
   appPickDirectory: 'app:pick-directory',
   appListFonts: 'app:list-fonts',
   appClipboardHasImage: 'app:clipboard-has-image',
@@ -117,6 +124,12 @@ export const IpcInvoke = {
   gitWatch: 'git:watch',
   gitWorktreeCheck: 'git:worktree-check',
   gitWebUrl: 'git:web-url',
+
+  filesList: 'files:list',
+  filesStatus: 'files:status',
+  filesSearchList: 'files:search-list',
+  filesWatch: 'files:watch',
+  filesDiff: 'files:diff',
 
   commandStatus: 'command:status',
   commandSetRegistered: 'command:set-registered',
@@ -194,6 +207,9 @@ export const IpcEvent = {
   usageShow: 'event:usage-show',
   /** The branch of the repository last asked for changed (e.g. a checkout in the terminal). */
   gitBranchChanged: 'event:git-branch-changed',
+  /** Entries of folders of a watched file tree changed, or its repository's state. */
+  filesChanged: 'event:files-changed',
+  filesTouched: 'event:files-touched',
   sessionsChanged: 'event:sessions-changed',
   apiStatusChanged: 'event:api-status-changed',
   updatesChanged: 'event:updates-changed',
@@ -215,6 +231,8 @@ export interface ManagerApi {
     info(): Promise<AppInfo>
     openExternal(url: string): Promise<void>
     openPath(path: string): Promise<string>
+    /** Shows the file or folder selected in the Explorer (the file manager). */
+    showItem(path: string): Promise<void>
     pickDirectory(defaultPath?: string | null): Promise<string | null>
     listFonts(): Promise<string[]>
     /** Whether the clipboard holds an image, e.g. a screenshot. */
@@ -400,6 +418,23 @@ export interface ManagerApi {
     worktreeCheck(cwd: string): Promise<WorktreeCheck>
     /** Web page of the repository `cwd` lies in, from its remote (GitHub, GitLab …); null without one. */
     webUrl(cwd: string): Promise<string | null>
+  }
+  /** The file tree of a tab. Paths in a tree are relative to its folder and `/`-separated. */
+  files: {
+    /** The entries of a folder (absolute path), folders first. */
+    list(dir: string): Promise<FileListing>
+    /** Branch and changed and ignored files of the tree's folder; null outside a repository or without git. */
+    status(root: string): Promise<GitTreeStatus | null>
+    /** The files of the folder for the search, without the ones git ignores. */
+    searchList(root: string): Promise<FileSearchList>
+    /** Watches these trees, replacing the ones of the previous call; an empty list stops watching. */
+    watch(trees: FileTreeWatch[]): Promise<void>
+    /** Entries of these folders (relative, '' is the root) may have changed; `git`: also the repository's state. */
+    onChanged(cb: (root: string, dirs: string[], git: boolean) => void): Unsubscribe
+    /** The changes of a file (relative to `root`) since the last commit; `full`: with the whole file around them. */
+    diff(root: string, path: string, full: boolean): Promise<FileDiff>
+    /** Files a session's Claude (or one of its subagents) reads, writes or commits, as it happens. */
+    onTouched(cb: (terminalId: string, touches: FileTouch[]) => void): Unsubscribe
   }
   /** The `cm` command line launcher. */
   command: {

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell, type IpcMainInvokeEvent } from 'electron'
 import { IpcEvent, IpcInvoke, IpcSend } from '@shared/ipc'
 import { parsePaneNode } from '@shared/panes'
@@ -13,6 +13,7 @@ import type {
   BrowserOpenOptions,
   CswapImportInput,
   DeepPartial,
+  FileTreeWatch,
   TerminalCreateOptions,
 } from '@shared/types'
 import type { ApiServer } from './api/api-server'
@@ -54,6 +55,32 @@ const DOWNLOAD_ACTIONS: ReadonlySet<string> = new Set<BrowserDownloadAction>(['o
 const MAX_WATCHED_FOLDERS = 500
 /** The longest user name or password a page gets. */
 const MAX_CREDENTIAL_LENGTH = 4096
+/** The most file trees watched at once, and open folders per tree. */
+const MAX_FILE_TREES = 64
+const MAX_TREE_DIRS = 2000
+/** Longer paths exist on no file system the app runs on. */
+const MAX_PATH_LENGTH = 32_767
+
+/** An absolute path from the window. */
+function requirePath(value: unknown, name: string): string {
+  const path = requireString(value, name)
+  if (path.length > MAX_PATH_LENGTH || !isAbsolute(path) || path.includes('\0')) throw new Error(`Ungültiger Parameter: ${name}`)
+  return path
+}
+
+/** A folder of a tree relative to its root: `/`-separated, without `..` and empty parts. */
+function isTreeDir(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= MAX_PATH_LENGTH && !value.includes('\0') && (value === '' || value.split('/').every((part) => part !== '' && part !== '.' && part !== '..'))
+}
+
+function treesOf(value: unknown): FileTreeWatch[] {
+  if (!Array.isArray(value) || value.length > MAX_FILE_TREES) throw new Error('Ungültiger Parameter: trees')
+  return value.map((tree: { root?: unknown; dirs?: unknown } | null) => {
+    const dirs = tree?.dirs
+    if (!Array.isArray(dirs) || dirs.length > MAX_TREE_DIRS || !dirs.every(isTreeDir)) throw new Error('Ungültiger Parameter: dirs')
+    return { root: requirePath(tree?.root, 'root'), dirs }
+  })
+}
 
 function credentialsOf(value: unknown): BrowserCredentials | null {
   if (value === null || typeof value !== 'object') return null
@@ -91,6 +118,11 @@ export function registerIpc(ctx: AppContext): void {
     const error = await shell.openPath(target)
     if (error) throw new Error(error)
     return error
+  })
+  ipcMain.handle(IpcInvoke.appShowItem, (_e, path: unknown) => {
+    const target = requirePath(path, 'path')
+    if (!existsSync(target)) throw new Error(`„${target}“ existiert nicht.`)
+    shell.showItemInFolder(target)
   })
   ipcMain.handle(IpcInvoke.appPickDirectory, async (event, defaultPath: unknown) => {
     const result = await dialog.showOpenDialog(senderWindow(event), {
@@ -324,6 +356,19 @@ export function registerIpc(ctx: AppContext): void {
   ipcMain.handle(IpcInvoke.gitWorktreeCheck, (_e, cwd: unknown) => ctx.git.worktreeCheck(requireString(cwd, 'cwd')))
   ipcMain.handle(IpcInvoke.gitWebUrl, (_e, cwd: unknown) => ctx.git.webUrl(requireString(cwd, 'cwd')))
   ctx.git.on('changed', (cwd, branch) => broadcast(IpcEvent.gitBranchChanged, cwd, branch))
+
+  // --- file tree -----------------------------------------------------------
+  ipcMain.handle(IpcInvoke.filesList, (_e, dir: unknown) => ctx.files.list(requirePath(dir, 'dir')))
+  ipcMain.handle(IpcInvoke.filesStatus, (_e, root: unknown) => ctx.files.status(requirePath(root, 'root')))
+  ipcMain.handle(IpcInvoke.filesSearchList, (_e, root: unknown) => ctx.files.searchList(requirePath(root, 'root')))
+  ipcMain.handle(IpcInvoke.filesWatch, (_e, trees: unknown) => ctx.files.watch(treesOf(trees)))
+  ipcMain.handle(IpcInvoke.filesDiff, (_e, root: unknown, path: unknown, full: unknown) => {
+    // A file of the tree: relative to its folder, never above it.
+    if (!isTreeDir(path) || path === '') throw new Error('Ungültiger Parameter: path')
+    return ctx.files.diff(requirePath(root, 'root'), path, full === true)
+  })
+  ctx.files.on('changed', (root, dirs, git) => broadcast(IpcEvent.filesChanged, root, dirs, git))
+  ctx.files.on('touched', (terminalId, touches) => broadcast(IpcEvent.filesTouched, terminalId, touches))
 
   // --- `cm` command --------------------------------------------------------
   ipcMain.handle(IpcInvoke.commandStatus, () => ctx.command.status())

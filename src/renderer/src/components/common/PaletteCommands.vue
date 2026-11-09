@@ -3,6 +3,7 @@ import {
   BellIcon,
   BellOffIcon,
   Columns2Icon,
+  FilesIcon,
   FolderGit2Icon,
   FolderIcon,
   FolderOpenIcon,
@@ -28,6 +29,7 @@ import {
 } from '@/components/ui/command'
 import { SETTINGS_TAB_ICONS } from '@/components/settings/settings-tabs'
 import BrowserFavicon from '@/components/terminal/BrowserFavicon.vue'
+import { useFileTreeToggle } from '@/composables/useFileTreeToggle'
 import { useLauncher } from '@/composables/useLauncher'
 import { useRecentFolders } from '@/composables/useRecentFolders'
 import { SETTINGS } from '@/composables/useSettingsSearch'
@@ -62,6 +64,9 @@ const settings = useSettingsStore()
 const launcher = useLauncher()
 const { closeGroup } = useTerminalActions()
 const recent = useRecentFolders(8)
+const fileTree = useFileTreeToggle()
+/** The tree the command opens or closes, if the tab has one. */
+const treeTarget = computed(() => fileTree.focusedTarget.value)
 
 onMounted(() => recent.load())
 
@@ -176,6 +181,16 @@ const canMoveTab = computed(() => !!group.value && group.value.tabs.length > 1 &
         >
           <PanelRightIcon />
           Tab in Gruppe rechts verschieben
+        </CommandItem>
+        <CommandItem
+          v-if="treeTarget"
+          value="toggle-file-tree"
+          filter-text="Dateibaum ein- ausblenden Dateien Explorer Ordner Tree"
+          @select="run(() => fileTree.toggle(treeTarget))"
+        >
+          <FilesIcon />
+          {{ fileTree.shown(treeTarget) ? 'Dateibaum schließen' : 'Dateibaum öffnen' }}
+          <CommandShortcut>Strg+Umschalt+E</CommandShortcut>
         </CommandItem>
         <CommandItem v-if="group && terminals.groups.length > 1" value="close-group" @select="run(() => closeGroup(group!.id))">
           <XIcon />

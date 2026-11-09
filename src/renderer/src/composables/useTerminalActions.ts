@@ -1,6 +1,6 @@
 import type { TerminalInfo } from '@shared/types'
 import { attempt } from '@/lib/errors'
-import { pageOfTab } from '@/lib/workspace'
+import { diffOfTab, pageOfTab } from '@/lib/workspace'
 import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore, type TerminalTab } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
@@ -14,6 +14,7 @@ export function useTerminalActions() {
   async function closeTerminal(id: string): Promise<void> {
     const page = pageOfTab(id)
     if (page) return terminals.closePage(page)
+    if (diffOfTab(id)) return terminals.closeDiff(id)
     const terminal = terminals.terminals.find((t) => t.id === id)
     if (!terminal) return
     // A browser runs no process that could lose work.
@@ -59,6 +60,7 @@ export function useTerminalActions() {
     for (const id of ids) {
       const page = pageOfTab(id)
       if (page) terminals.closePage(page)
+      else if (diffOfTab(id)) terminals.closeDiff(id)
     }
     await attempt(() => Promise.all(list.map((t) => terminals.close(t.id))), 'Tabs konnten nicht geschlossen werden')
   }

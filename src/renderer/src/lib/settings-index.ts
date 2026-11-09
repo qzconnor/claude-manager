@@ -47,6 +47,12 @@ const TREE = [
         fields: [{ id: 'appearance.tabPosition', label: 'Position', keywords: 'oben Titelleiste Seitenleiste Sidebar vertikal Navigation Gruppen VS Code Editor Layout Modus' }],
       },
       {
+        id: 'appearance.fileTree',
+        title: 'Dateibaum',
+        keywords: 'Dateien Explorer Ordner Tree Baum Projekt',
+        fields: [{ id: 'appearance.fileTreeSide', label: 'Seite', keywords: 'links rechts Position Seitenleiste Panel Strg+Umschalt+E' }],
+      },
+      {
         id: 'appearance.window',
         title: 'Fenster',
         keywords: 'Oberfläche',
