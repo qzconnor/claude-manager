@@ -23,6 +23,8 @@ export type ShortcutAction =
   | 'focus-pane'
   | 'browser-address'
   | 'browser-reload'
+  | 'browser-reload-hard'
+  | 'browser-devtools'
   | 'browser-find'
   | 'browser-find-next'
   | 'browser-find-previous'
@@ -111,18 +113,25 @@ function tabDigit(e: ShortcutKey): string | null {
 
 /**
  * Keys of a browser page that belong to the browser around it, like in Chrome: Ctrl+L goes to the
- * address bar, F5 and Ctrl+R load the page again, Ctrl+F searches the page and F3 (Shift+F3) jumps
- * to the next (previous) match. Only for keys the page gets: in a terminal Ctrl+R is Claude Code's
+ * address bar, F5 and Ctrl+R load the page again, Ctrl+Shift+R, Shift+F5 and Ctrl+F5 without the
+ * cache, Ctrl+F searches the page and F3 (Shift+F3) jumps to the next (previous) match, F12 and
+ * Ctrl+Shift+I open the DevTools. Only for keys the page gets: in a terminal Ctrl+R is Claude Code's
  * and the shell's. The back and forward buttons of the mouse (`browser-back`, `browser-forward`)
  * come from the window as app commands.
  */
 export function matchBrowserShortcut(e: ShortcutKey): Shortcut | null {
   if (e.type !== 'keydown' || e.altKey || e.metaKey) return null
   const ctrl = e.ctrlKey
-  if (e.key === 'F5' && !e.shiftKey) return { action: 'browser-reload' }
+  if (e.key === 'F5') return { action: e.shiftKey || ctrl ? 'browser-reload-hard' : 'browser-reload' }
+  if (e.key === 'F12' && !ctrl && !e.shiftKey) return { action: 'browser-devtools' }
   if (e.key === 'F3' && !ctrl) return { action: e.shiftKey ? 'browser-find-previous' : 'browser-find-next' }
-  if (!ctrl || e.shiftKey) return null
+  if (!ctrl) return null
   const key = e.key.toLowerCase()
+  if (e.shiftKey) {
+    if (key === 'r') return { action: 'browser-reload-hard' }
+    if (key === 'i') return { action: 'browser-devtools' }
+    return null
+  }
   if (key === 'l') return { action: 'browser-address' }
   if (key === 'r') return { action: 'browser-reload' }
   if (key === 'f') return { action: 'browser-find' }

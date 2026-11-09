@@ -3,9 +3,12 @@ import {
   cleanPrompt,
   collectSearchText,
   forEachEntry,
+  newTranscriptScan,
   parseTranscript,
   readConversation,
   readToolCall,
+  scanResult,
+  scanTranscript,
   SEARCH_ASSISTANT,
   SEARCH_USER,
   toolSummary,
@@ -198,6 +201,29 @@ describe('parseTranscript', () => {
       ['msg_01:req_b', '2026-11-06', MODEL, 10, 20, 300, 4000],
       ['msg_02:', '2026-11-06', 'unknown', 0, 5, 0, 0],
     ])
+  })
+
+  it('reads on from where it was and leaves a line still being written for the next time', () => {
+    const whole = parseTranscript(session, SESSION, true)
+    // Cut inside a line: the part after the last newline is still being written.
+    const cut = session.indexOf('"ai-title"') + 5
+    const scan = newTranscriptScan(true)
+    const first = scanTranscript(scan, session.subarray(0, cut))
+    expect(session[first - 1]).toBe(0x0a)
+    expect(first).toBeLessThan(cut)
+    expect(scanResult(scan, SESSION).summary.title).toBe('Old summary')
+    expect(first + scanTranscript(scan, session.subarray(first))).toBe(session.length)
+    expect(scanResult(scan, SESSION)).toEqual(whole)
+  })
+
+  it('counts a message read twice once, also across reads', () => {
+    const scan = newTranscriptScan(true)
+    const line = jsonl(assistant('msg_01', [text('a')], '2026-11-06T10:00:00.000Z'))
+    scanTranscript(scan, line)
+    scanTranscript(scan, line)
+    const { summary, usage } = scanResult(scan, SESSION)
+    expect(summary.messageCount).toBe(1)
+    expect(usage).toHaveLength(1)
   })
 
   it('prefers a title from /rename, then the generated one, the summary and the first prompt', () => {

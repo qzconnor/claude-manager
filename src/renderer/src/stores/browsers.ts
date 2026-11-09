@@ -25,7 +25,10 @@ export interface BrowserView {
   state: BrowserViewState
   back(): void
   forward(): void
-  reload(): void
+  /** `ignoringCache`: loads everything anew, like Ctrl+Shift+R. */
+  reload(ignoringCache?: boolean): void
+  /** Opens the page's DevTools in a window of their own, or closes them. */
+  toggleDevTools(): void
   /** Puts the keyboard into the address bar, with the address selected. */
   focusAddress(): void
   /** Opens the search in the page, or puts the keyboard back into it. */

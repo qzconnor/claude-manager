@@ -172,6 +172,7 @@ export const IpcEvent = {
    * button of the mouse (an app command of the window).
    */
   browserShortcut: 'event:browser-shortcut',
+  browserOpenTab: 'event:browser-open-tab',
   /** The list of the browser's downloads changed (all of it). */
   browserDownloads: 'event:browser-downloads',
   /** A page asks for a user name and password. */
@@ -313,6 +314,11 @@ export interface ManagerApi {
     favicon(url: string): Promise<string | null>
     /** A shortcut pressed in a browser page, which the window doesn't see itself, or a mouse button for back and forward. */
     onShortcut(cb: (shortcut: Shortcut) => void): Unsubscribe
+    /**
+     * A link of the page (by its contents id) wants a tab of its own: `target=_blank`, the middle mouse
+     * button, Ctrl+click or the context menu. `background`: without the keyboard, like Chrome.
+     */
+    onOpenTab(cb: (contentsId: number, url: string, background: boolean) => void): Unsubscribe
     /** The page of a browser tab is ready: main can drive it for Claude. */
     attach(id: string, webContentsId: number): void
     /** What Claude did in the browser so far, oldest first. */

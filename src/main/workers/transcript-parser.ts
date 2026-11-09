@@ -142,123 +142,173 @@ function shorten(text: string, max: number): string {
 }
 
 /** Parses one transcript. `withSummary=false` only collects token usage (subagent files). */
-export function parseTranscript(buf: Buffer, sessionId: string, withSummary: boolean): ParseResult {
-  let aiTitle: string | null = null
-  let customTitle: string | null = null
-  let legacySummary: string | null = null
-  let lastPrompt: string | null = null
-  let firstPrompt: string | null = null
-  let lastUserPrompt: string | null = null
-  let cwd: string | null = null
-  let gitBranch: string | null = null
-  let model: string | null = null
-  let version: string | null = null
-  let createdAt: string | null = null
-  let updatedAt: string | null = null
-  let continuedIn: string | null = null
-  let worktree: SessionWorktree | null = null
-  let userMessages = 0
-  const assistantIds = new Set<string>()
-  const usageKeys = new Set<string>()
-  const usage: UsageEntry[] = []
+/**
+ * What a transcript told so far. `scanTranscript` reads more of it into the same scan, so a session at
+ * work is read on from where it was, not from the start.
+ */
+export interface TranscriptScan {
+  withSummary: boolean
+  aiTitle: string | null
+  customTitle: string | null
+  legacySummary: string | null
+  lastPrompt: string | null
+  firstPrompt: string | null
+  lastUserPrompt: string | null
+  cwd: string | null
+  gitBranch: string | null
+  model: string | null
+  version: string | null
+  createdAt: string | null
+  updatedAt: string | null
+  continuedIn: string | null
+  worktree: SessionWorktree | null
+  userMessages: number
+  assistantIds: Set<string>
+  usageKeys: Set<string>
+  usage: UsageEntry[]
+}
 
-  forEachEntry(buf, (e) => {
-    const type = e.type
-    const timestamp = str(e.timestamp)
-    if (timestamp) {
-      if (!createdAt) createdAt = timestamp
-      updatedAt = timestamp
-    }
-    if (withSummary) {
-      if (!cwd) cwd = str(e.cwd)
-      gitBranch = str(e.gitBranch) ?? gitBranch
-      version = str(e.version) ?? version
-    }
+export function newTranscriptScan(withSummary: boolean): TranscriptScan {
+  return {
+    withSummary,
+    aiTitle: null,
+    customTitle: null,
+    legacySummary: null,
+    lastPrompt: null,
+    firstPrompt: null,
+    lastUserPrompt: null,
+    cwd: null,
+    gitBranch: null,
+    model: null,
+    version: null,
+    createdAt: null,
+    updatedAt: null,
+    continuedIn: null,
+    worktree: null,
+    userMessages: 0,
+    assistantIds: new Set(),
+    usageKeys: new Set(),
+    usage: [],
+  }
+}
 
-    switch (type) {
-      case 'ai-title':
-        aiTitle = str(e.aiTitle) ?? aiTitle
-        break
-      case 'custom-title':
-        customTitle = str(e.customTitle) ?? customTitle
-        break
-      case 'summary':
-        legacySummary = str(e.summary) ?? legacySummary
-        break
-      case 'last-prompt':
-        lastPrompt = str(e.lastPrompt) ?? lastPrompt
-        break
-      case 'continued-in':
-        continuedIn = str(e.continuedInSessionId) ?? continuedIn
-        break
-      case 'worktree-state':
-        // `null` once the session left the worktree: the latest one it worked in stays.
-        if (withSummary) worktree = toWorktree(e.worktreeSession) ?? worktree
-        break
-      case 'user': {
-        if (!withSummary || e.isMeta || e.isSidechain) break
-        const message = e.message as { content?: unknown } | undefined
-        const prompt = cleanPrompt(textOf(message?.content))
-        if (!prompt) break
-        userMessages++
-        if (!firstPrompt) firstPrompt = shorten(prompt, 300)
-        lastUserPrompt = prompt
-        break
+function scanEntry(scan: TranscriptScan, e: Record<string, unknown>): void {
+  const { withSummary } = scan
+  const type = e.type
+  const timestamp = str(e.timestamp)
+  if (timestamp) {
+    if (!scan.createdAt) scan.createdAt = timestamp
+    scan.updatedAt = timestamp
+  }
+  if (withSummary) {
+    if (!scan.cwd) scan.cwd = str(e.cwd)
+    scan.gitBranch = str(e.gitBranch) ?? scan.gitBranch
+    scan.version = str(e.version) ?? scan.version
+  }
+
+  switch (type) {
+    case 'ai-title':
+      scan.aiTitle = str(e.aiTitle) ?? scan.aiTitle
+      break
+    case 'custom-title':
+      scan.customTitle = str(e.customTitle) ?? scan.customTitle
+      break
+    case 'summary':
+      scan.legacySummary = str(e.summary) ?? scan.legacySummary
+      break
+    case 'last-prompt':
+      scan.lastPrompt = str(e.lastPrompt) ?? scan.lastPrompt
+      break
+    case 'continued-in':
+      scan.continuedIn = str(e.continuedInSessionId) ?? scan.continuedIn
+      break
+    case 'worktree-state':
+      // `null` once the session left the worktree: the latest one it worked in stays.
+      if (withSummary) scan.worktree = toWorktree(e.worktreeSession) ?? scan.worktree
+      break
+    case 'user': {
+      if (!withSummary || e.isMeta || e.isSidechain) break
+      const message = e.message as { content?: unknown } | undefined
+      const prompt = cleanPrompt(textOf(message?.content))
+      if (!prompt) break
+      scan.userMessages++
+      if (!scan.firstPrompt) scan.firstPrompt = shorten(prompt, 300)
+      scan.lastUserPrompt = prompt
+      break
+    }
+    case 'assistant': {
+      const message = e.message as
+        | { id?: unknown; model?: unknown; usage?: Record<string, unknown> }
+        | undefined
+      const messageId = str(message?.id)
+      const messageModel = str(message?.model)
+      // `<synthetic>` replies come from Claude Code itself (API errors, "No response requested."); the
+      // conversation view and the search leave them out, so the message count does too.
+      if (withSummary && !e.isSidechain && messageId && messageModel !== '<synthetic>' && !scan.assistantIds.has(messageId)) {
+        scan.assistantIds.add(messageId)
+        if (messageModel) scan.model = messageModel
       }
-      case 'assistant': {
-        const message = e.message as
-          | { id?: unknown; model?: unknown; usage?: Record<string, unknown> }
-          | undefined
-        const messageId = str(message?.id)
-        const messageModel = str(message?.model)
-        // `<synthetic>` replies come from Claude Code itself (API errors, "No response requested."); the
-        // conversation view and the search leave them out, so the message count does too.
-        if (withSummary && !e.isSidechain && messageId && messageModel !== '<synthetic>' && !assistantIds.has(messageId)) {
-          assistantIds.add(messageId)
-          if (messageModel) model = messageModel
-        }
-        const u = message?.usage
-        if (u && messageId && messageModel !== '<synthetic>') {
-          const key = `${messageId}:${str(e.requestId) ?? ''}`
-          if (usageKeys.has(key)) break
-          usageKeys.add(key)
-          const day = timestamp ? localDay(timestamp) : null
-          if (!day) break
-          usage.push([
-            key,
-            day,
-            messageModel ?? 'unknown',
-            num(u.input_tokens),
-            num(u.output_tokens),
-            num(u.cache_creation_input_tokens),
-            num(u.cache_read_input_tokens),
-          ])
-        }
-        break
+      const u = message?.usage
+      if (u && messageId && messageModel !== '<synthetic>') {
+        const key = `${messageId}:${str(e.requestId) ?? ''}`
+        if (scan.usageKeys.has(key)) break
+        scan.usageKeys.add(key)
+        const day = timestamp ? localDay(timestamp) : null
+        if (!day) break
+        scan.usage.push([
+          key,
+          day,
+          messageModel ?? 'unknown',
+          num(u.input_tokens),
+          num(u.output_tokens),
+          num(u.cache_creation_input_tokens),
+          num(u.cache_read_input_tokens),
+        ])
       }
+      break
     }
-  })
+  }
+}
 
-  const fallbackPrompt = lastPrompt ?? lastUserPrompt
-  const title = customTitle ?? aiTitle ?? legacySummary ?? firstPrompt ?? 'Ohne Titel'
+/**
+ * Reads the complete lines of `buf` into the scan and returns how many bytes they take; a last line
+ * without its newline is still being written and is read the next time.
+ */
+export function scanTranscript(scan: TranscriptScan, buf: Buffer): number {
+  const end = buf.lastIndexOf(NEWLINE) + 1
+  forEachEntry(buf.subarray(0, end), (e) => scanEntry(scan, e))
+  return end
+}
+
+/** The summary and usage of what the scan read. */
+export function scanResult(scan: TranscriptScan, sessionId: string): ParseResult {
+  const fallbackPrompt = scan.lastPrompt ?? scan.lastUserPrompt
+  const title = scan.customTitle ?? scan.aiTitle ?? scan.legacySummary ?? scan.firstPrompt ?? 'Ohne Titel'
   return {
     summary: {
       id: sessionId,
-      cwd,
-      worktree,
+      cwd: scan.cwd,
+      worktree: scan.worktree,
       title: shorten(title, 160),
-      firstPrompt,
+      firstPrompt: scan.firstPrompt,
       lastPrompt: fallbackPrompt ? shorten(fallbackPrompt, 300) : null,
-      gitBranch,
-      model,
-      messageCount: userMessages + assistantIds.size,
-      createdAt,
-      updatedAt,
-      version,
-      continuedIn,
+      gitBranch: scan.gitBranch,
+      model: scan.model,
+      messageCount: scan.userMessages + scan.assistantIds.size,
+      createdAt: scan.createdAt,
+      updatedAt: scan.updatedAt,
+      version: scan.version,
+      continuedIn: scan.continuedIn,
     },
-    usage,
+    usage: [...scan.usage],
   }
+}
+
+/** The whole transcript at once, a last line without its newline included. */
+export function parseTranscript(buf: Buffer, sessionId: string, withSummary: boolean): ParseResult {
+  const scan = newTranscriptScan(withSummary)
+  forEachEntry(buf, (e) => scanEntry(scan, e))
+  return scanResult(scan, sessionId)
 }
 
 /** Starts a user's message in the search text. */

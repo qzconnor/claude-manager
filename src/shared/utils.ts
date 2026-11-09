@@ -5,6 +5,15 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/** Whether two values hold the same data: plain objects, arrays and primitives, compared all the way down. */
+export function sameData(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true
+  if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((item, i) => sameData(item, b[i]))
+  if (!isPlainObject(a) || !isPlainObject(b)) return false
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length && keys.every((key) => Object.hasOwn(b, key) && sameData(a[key], b[key]))
+}
+
 /**
  * Recursively merges `patch` into `base` and returns a new object.
  * Arrays and primitives in `patch` replace the value in `base`; `undefined` is ignored.

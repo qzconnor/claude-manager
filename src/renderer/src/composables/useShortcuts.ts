@@ -39,18 +39,17 @@ export function useShortcuts() {
   /** `event`: the key in the window, which is kept from the page; a browser page's key has been already. */
   function run(shortcut: Shortcut, event?: KeyboardEvent): void {
     if (shortcut.action === 'focus-pane') {
-      // In groups to the group beside, also from a page; in one tab bar to the terminal beside in the tab.
-      if ((terminals.grouped || onTerminals()) && terminals.focusNeighbour(shortcut.direction!)) {
-        event?.preventDefault()
-        return
-      }
-      // At the edge a browser goes back or forward like Chrome; a terminal keeps the keys.
+      // A browser goes back or forward on Alt+Left and Alt+Right, like Chrome; Alt+Up and Alt+Down
+      // still move on.
       const browser = activeBrowser()
       if (browser && (shortcut.direction === 'left' || shortcut.direction === 'right')) {
         event?.preventDefault()
         if (shortcut.direction === 'left') browser.back()
         else browser.forward()
+        return
       }
+      // In groups to the group beside, also from a page; in one tab bar to the terminal beside in the tab.
+      if ((terminals.grouped || onTerminals()) && terminals.focusNeighbour(shortcut.direction!)) event?.preventDefault()
       return
     }
     event?.preventDefault()
@@ -105,6 +104,12 @@ export function useShortcuts() {
         break
       case 'browser-reload':
         activeBrowser()?.reload()
+        break
+      case 'browser-reload-hard':
+        activeBrowser()?.reload(true)
+        break
+      case 'browser-devtools':
+        activeBrowser()?.toggleDevTools()
         break
       case 'browser-find':
         activeBrowser()?.find()

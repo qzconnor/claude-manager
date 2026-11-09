@@ -106,6 +106,21 @@ describe('matchBrowserShortcut', () => {
     expect(matchBrowserShortcut(press({ key: 'F5', ctrl: false }))).toEqual({ action: 'browser-reload' })
   })
 
+  it('loads the page without the cache on Ctrl+Shift+R, Shift+F5 and Ctrl+F5', () => {
+    expect(matchBrowserShortcut(press({ key: 'R', shift: true }))).toEqual({ action: 'browser-reload-hard' })
+    expect(matchBrowserShortcut(press({ key: 'F5', ctrl: false, shift: true }))).toEqual({ action: 'browser-reload-hard' })
+    expect(matchBrowserShortcut(press({ key: 'F5' }))).toEqual({ action: 'browser-reload-hard' })
+  })
+
+  it('opens the DevTools on F12 and Ctrl+Shift+I', () => {
+    expect(matchBrowserShortcut(press({ key: 'F12', ctrl: false }))).toEqual({ action: 'browser-devtools' })
+    expect(matchBrowserShortcut(press({ key: 'I', shift: true }))).toEqual({ action: 'browser-devtools' })
+    expect(matchBrowserShortcut(press({ key: 'F12' }))).toBeNull()
+    // The app's own shortcuts with Shift stay theirs.
+    expect(matchShortcut(press({ key: 'R', shift: true }))).toBeNull()
+    expect(matchShortcut(press({ key: 'I', shift: true }))).toBeNull()
+  })
+
   it('searches the page with Ctrl+F and steps through the matches with F3 and Shift+F3', () => {
     expect(matchBrowserShortcut(press({ key: 'f' }))).toEqual({ action: 'browser-find' })
     expect(matchBrowserShortcut(press({ key: 'F3', ctrl: false }))).toEqual({ action: 'browser-find-next' })

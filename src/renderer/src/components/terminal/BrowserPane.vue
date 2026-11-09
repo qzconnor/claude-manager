@@ -22,10 +22,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { addressOf, addressToUrl, BLANK_PAGE, BROWSER_PARTITION, emulationLabels, isBrowsableUrl, routeLabel } from '@shared/browser'
 import type { TerminalInfo } from '@shared/types'
 import { Button } from '@/components/ui/button'
+import { useLauncher } from '@/composables/useLauncher'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
 import { attempt } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { useBrowsersStore, type BrowserViewState, type ShownHighlight } from '@/stores/browsers'
+import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import BrowserDownloads from './BrowserDownloads.vue'
 import BrowserFind from './BrowserFind.vue'
@@ -54,7 +56,11 @@ interface WebviewElement extends HTMLElement {
   goBack(): void
   goForward(): void
   reload(): void
+  reloadIgnoringCache(): void
   stop(): void
+  openDevTools(): void
+  closeDevTools(): void
+  isDevToolsOpened(): boolean
   getWebContentsId(): number
   findInPage(text: string, options?: { forward?: boolean; findNext?: boolean; matchCase?: boolean }): number
   stopFindInPage(action: 'clearSelection' | 'keepSelection' | 'activateSelection'): void
@@ -69,6 +75,8 @@ interface FoundInPage {
 }
 
 const browsers = useBrowsersStore()
+const terminals = useTerminalsStore()
+const launcher = useLauncher()
 const ui = useUiStore()
 const { containerBackground, inactiveVeil } = useTerminalAppearance()
 
@@ -82,7 +90,8 @@ const editing = ref(false)
 /** The page's methods work once it is attached and its first document is ready. */
 const ready = ref(false)
 const state = reactive<BrowserViewState>({ loading: false, canGoBack: false, canGoForward: false, favicon: null })
-const failure = ref<{ description: string; url: string } | null>(null)
+/** The page could not be loaded, or its process went away (`crashed`). */
+const failure = ref<{ description: string; url: string; crashed?: boolean } | null>(null)
 /** The id of the page's contents, once the view is attached: questions and downloads of the page name it. */
 const contentsId = ref<number | null>(null)
 /** The page asks for a user name and password. */
@@ -321,9 +330,40 @@ function focusContent() {
   else view.value?.focus()
 }
 
-function reload() {
+function reload(ignoringCache = false) {
   failure.value = null
-  if (ready.value) view.value?.reload()
+  if (!ready.value) return
+  if (ignoringCache) view.value?.reloadIgnoringCache()
+  else view.value?.reload()
+}
+
+function toggleDevTools() {
+  const el = view.value
+  if (!el || !ready.value) return
+  if (el.isDevToolsOpened()) el.closeDevTools()
+  else el.openDevTools()
+}
+
+/**
+ * A link that wants a tab of its own (main's `onOpenTab`): beside this one, as a tab of its group, or
+ * on its own in one tab bar. While Claude acts in the page it stays in it, so Claude can go on there.
+ */
+async function openTab(target: string, background: boolean) {
+  if (control.value?.busy || control.value?.active) {
+    load(target)
+    return
+  }
+  const split = terminals.grouped ? { terminalId: props.terminal.id, direction: 'column' as const } : null
+  const info = await launcher.browser(target, split)
+  if (info && background) terminals.activate(props.terminal.id)
+}
+
+/** Why a page's process went away, for its notice. */
+const GONE_REASONS: Record<string, string> = {
+  oom: 'Der Seite ist der Speicher ausgegangen.',
+  killed: 'Der Prozess der Seite wurde beendet.',
+  'memory-eviction': 'Die Seite wurde entladen, um Speicher frei zu machen.',
+  'launch-failed': 'Der Prozess der Seite konnte nicht starten.',
 }
 
 function openFind() {
@@ -419,6 +459,12 @@ onMounted(() => {
       total: result.matches ?? findMatches.value?.total ?? 0,
     }
   })
+  el.addEventListener('render-process-gone', (event) => {
+    const { reason } = (event as Event & { details: { reason: string } }).details
+    if (reason === 'clean-exit') return
+    state.loading = false
+    failure.value = { crashed: true, description: GONE_REASONS[reason] ?? 'Die Seite ist abgestürzt.', url: url.value }
+  })
   el.addEventListener('did-fail-load', (event) => {
     const { errorCode, errorDescription, validatedURL, isMainFrame } = event as Event & {
       errorCode: number
@@ -434,6 +480,7 @@ onMounted(() => {
     back: () => ready.value && view.value?.goBack(),
     forward: () => ready.value && view.value?.goForward(),
     reload,
+    toggleDevTools,
     focusAddress,
     find: openFind,
     findAgain,
@@ -443,7 +490,11 @@ onMounted(() => {
   void browsers.loadLog(props.terminal.id)
   document.addEventListener('focusout', onDocumentFocusOut, true)
 })
+const stopOpenTab = window.api.browser.onOpenTab((id, target, background) => {
+  if (id === contentsId.value && isBrowsableUrl(target)) void openTab(target, background)
+})
 onBeforeUnmount(() => {
+  stopOpenTab()
   document.removeEventListener('focusout', onDocumentFocusOut, true)
   clearTimeout(highlightTimer)
   clearTimeout(pointerHide)
@@ -699,9 +750,9 @@ watch(
           :style="{ background: containerBackground }"
         >
           <TriangleAlertIcon class="size-8 text-warning" />
-          <p class="font-medium">Seite konnte nicht geladen werden</p>
+          <p class="font-medium">{{ failure.crashed ? 'Seite abgestürzt' : 'Seite konnte nicht geladen werden' }}</p>
           <p class="max-w-md break-all text-xs text-muted-foreground">{{ failure.url }} · {{ failure.description }}</p>
-          <Button variant="outline" size="sm" @click="reload">Erneut versuchen</Button>
+          <Button variant="outline" size="sm" @click="reload()">{{ failure.crashed ? 'Neu laden' : 'Erneut versuchen' }}</Button>
         </div>
         <BrowserLogin v-if="loginRequest" :request="loginRequest" :active="active" @answer="answerLogin" />
 

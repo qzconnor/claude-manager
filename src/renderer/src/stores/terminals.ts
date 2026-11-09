@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, toRaw, watch } from 'vue'
 import { moveItem } from '@shared/order'
 import {
   dropPanes,
@@ -17,6 +17,7 @@ import {
   type SplitPath,
 } from '@shared/panes'
 import type { BrowserOpenOptions, PaneNode, PaneSplit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
+import { sameData } from '@shared/utils'
 import { groupTabs, type TerminalTabGroup } from '@/lib/tabs'
 import {
   addTab,
@@ -77,6 +78,33 @@ const newGroupId = () => `g-${Math.random().toString(36).slice(2, 10)}`
 
 const sideOf = (direction: 'row' | 'column'): PaneDirection => (direction === 'column' ? 'down' : 'right')
 
+/** Same length and the very same items: a list computed anew can keep the old one. */
+const sameItems = <T>(a: readonly T[], b: readonly T[]) => a.length === b.length && a.every((item, i) => item === b[i])
+
+const sameTab = (a: TerminalTab, b: TerminalTab) =>
+  a.id === b.id && a.focused === b.focused && sameItems(a.panes, b.panes) && sameData(a.layout, b.layout)
+
+const sameGroup = (a: GroupView, b: GroupView) =>
+  a.id === b.id &&
+  a.active === b.active &&
+  a.tabs.length === b.tabs.length &&
+  a.tabs.every((tab, i) => tab.id === b.tabs[i].id && tab.terminal === b.tabs[i].terminal && tab.page === b.tabs[i].page)
+
+/**
+ * The items computed anew, where one equals the item of the last time (`same`) the old one instead, and
+ * the old list itself if nothing changed. Tabs whose terminal stayed the same so don't render again when
+ * another terminal changes, e.g. starts working.
+ */
+function keepSame<T extends { id: string }>(previous: readonly T[] | undefined, next: T[], same: (a: T, b: T) => boolean): T[] {
+  if (!previous) return next
+  const before = new Map(previous.map((item) => [item.id, item]))
+  const kept = next.map((item) => {
+    const old = before.get(item.id)
+    return old && same(old, item) ? old : item
+  })
+  return sameItems(kept, previous) ? (previous as T[]) : kept
+}
+
 /** The split whose part is exactly `id`, if main put it beside another terminal. */
 function parentOf(node: PaneNode, id: string): PaneSplit | null {
   if (!isSplit(node)) return null
@@ -125,8 +153,12 @@ export const useTerminalsStore = defineStore('terminals', () => {
 
   // ── One tab bar ──
 
-  const tabs = computed<TerminalTab[]>(() =>
-    groupTabs(terminals.value, splits.value).map((tab) => ({ ...tab, focused: focusedOf(tab) })),
+  const tabs = computed<TerminalTab[]>((previous) =>
+    keepSame(
+      previous,
+      groupTabs(terminals.value, splits.value).map((tab) => ({ ...tab, focused: focusedOf(tab) })),
+      sameTab,
+    ),
   )
   const activeTab = computed(() => tabOf(activeId.value))
 
@@ -136,18 +168,22 @@ export const useTerminalsStore = defineStore('terminals', () => {
 
   // ── Groups ──
 
-  const groups = computed<GroupView[]>(() =>
-    paneIds(workspace.value.layout).flatMap((id) => {
-      const group = findGroup(workspace.value, id)
-      if (!group) return []
-      const items = group.tabs.flatMap<GroupTabItem>((tab) => {
-        const page = pageOfTab(tab)
-        if (page) return [{ id: tab, page }]
-        const terminal = byId.value.get(tab)
-        return terminal ? [{ id: tab, terminal }] : []
-      })
-      return [{ id, tabs: items, active: group.active }]
-    }),
+  const groups = computed<GroupView[]>((previous) =>
+    keepSame(
+      previous,
+      paneIds(workspace.value.layout).flatMap((id) => {
+        const group = findGroup(workspace.value, id)
+        if (!group) return []
+        const items = group.tabs.flatMap<GroupTabItem>((tab) => {
+          const page = pageOfTab(tab)
+          if (page) return [{ id: tab, page }]
+          const terminal = byId.value.get(tab)
+          return terminal ? [{ id: tab, terminal }] : []
+        })
+        return [{ id, tabs: items, active: group.active }]
+      }),
+      sameGroup,
+    ),
   )
   const activeGroup = computed(() => groups.value.find((g) => g.id === workspace.value.activeGroup) ?? groups.value[0] ?? null)
   /** The terminals on screen with the tabs in groups: what each group shows. */
@@ -315,18 +351,29 @@ export const useTerminalsStore = defineStore('terminals', () => {
   /**
    * Takes main's list in: the local order stays (the tab order in one tab bar), unknown terminals come
    * at the end, those another one replaced stay out. Both layouts follow.
+   * Main sends every terminal on each change (e.g. one starts working): those that stayed the same keep
+   * their objects, and an unchanged list or layout isn't set again, so only what changed renders anew.
    */
   function sync(next: TerminalInfo[], nextSplits: PaneSplit[]): void {
     const before = tabs.value
     const index = before.findIndex((tab) => tab.panes.some((p) => p.id === activeId.value))
     const splitsBefore = splits.value
     for (const id of retired) if (!next.some((t) => t.id === id)) retired.delete(id)
-    const known = terminals.value.flatMap((t) => next.find((n) => n.id === t.id) ?? [])
-    const added = next.filter((n) => !retired.has(n.id) && !terminals.value.some((t) => t.id === n.id))
+    const current = toRaw(terminals.value).map((t) => toRaw(t))
+    const previous = new Map(current.map((t) => [t.id, t]))
+    const incoming = new Map(
+      next.map((n) => {
+        const old = previous.get(n.id)
+        return [n.id, old && sameData(old, n) ? old : n]
+      }),
+    )
+    const known = current.flatMap((t) => incoming.get(t.id) ?? [])
+    const added = next.filter((n) => !retired.has(n.id) && !previous.has(n.id)).map((n) => incoming.get(n.id)!)
     const list = [...known, ...added]
-    terminals.value = list
-    splits.value = nextSplits
-    mainOrder.value = next.map((t) => ({ id: t.id, mode: t.mode }))
+    if (!sameItems(list, current)) terminals.value = list
+    if (!sameData(toRaw(splits.value), nextSplits)) splits.value = nextSplits
+    const order = next.map((t) => ({ id: t.id, mode: t.mode }))
+    if (!sameData(toRaw(mainOrder.value), order)) mainOrder.value = order
     const ids = new Set(list.map((t) => t.id))
     for (const id of focusedAt.keys()) if (!ids.has(id)) focusedAt.delete(id)
 

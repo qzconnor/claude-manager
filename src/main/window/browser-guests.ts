@@ -122,15 +122,28 @@ async function fetchFavicon(url: string): Promise<string | null> {
 
 const ZOOM_STEP = 0.5
 
+/**
+ * A link of `guest` wants a tab of its own; the window opens it beside the page's tab, or keeps it in
+ * the page's view while Claude drives it (BrowserPane).
+ */
+function openTab(win: BrowserWindow, guest: WebContents, url: string, background: boolean): void {
+  if (!win.isDestroyed() && !guest.isDestroyed()) win.webContents.send(IpcEvent.browserOpenTab, guest.id, url, background)
+}
+
 function attachGuest(win: BrowserWindow, guest: WebContents): void {
   // Popups (window.open with a size, e.g. "Sign in with Google") become small windows of their own
   // that keep their opener, so they can report back to the page and close. Links that want a new
-  // tab open in the same view.
+  // tab (`target=_blank`, the middle mouse button, Ctrl+click) get one, the others open in the view.
   guest.setWindowOpenHandler(({ url, disposition }) => {
     if (disposition === 'new-window' && isBrowsableUrl(url)) {
       return { action: 'allow', overrideBrowserWindowOptions: popupOptions(win) }
     }
-    if (url !== BLANK_PAGE && isBrowsableUrl(url)) void guest.loadURL(url)
+    if (url === BLANK_PAGE || !isBrowsableUrl(url)) return { action: 'deny' }
+    if (disposition === 'foreground-tab' || disposition === 'background-tab') {
+      openTab(win, guest, url, disposition === 'background-tab')
+    } else {
+      void guest.loadURL(url)
+    }
     return { action: 'deny' }
   })
   guest.on('did-create-window', (popup) => guardPopup(popup))
@@ -158,7 +171,8 @@ function attachGuest(win: BrowserWindow, guest: WebContents): void {
 
   guest.on('context-menu', (_event, params) => {
     if (win.isDestroyed()) return
-    Menu.buildFromTemplate(contextMenu(guest, params)).popup({ window: win })
+    const newTab = (url: string) => openTab(win, guest, url, true)
+    Menu.buildFromTemplate(contextMenu(guest, params, newTab)).popup({ window: win })
   })
 }
 
@@ -238,10 +252,12 @@ function guardPopup(popup: BrowserWindow): void {
   })
 }
 
-function contextMenu(guest: WebContents, params: ContextMenuParams): MenuItemConstructorOptions[] {
+/** `newTab`: opens a link in a tab of its own; a popup has none. */
+function contextMenu(guest: WebContents, params: ContextMenuParams, newTab?: (url: string) => void): MenuItemConstructorOptions[] {
   const items: MenuItemConstructorOptions[] = []
   const separator: MenuItemConstructorOptions = { type: 'separator' }
   if (params.linkURL && isBrowsableUrl(params.linkURL)) {
+    if (newTab) items.push({ label: 'Link in neuem Tab öffnen', click: () => newTab(params.linkURL) })
     items.push(
       { label: 'Link öffnen', click: () => void guest.loadURL(params.linkURL) },
       { label: 'Link im Standardbrowser öffnen', click: () => void shell.openExternal(params.linkURL) },
@@ -266,6 +282,7 @@ function contextMenu(guest: WebContents, params: ContextMenuParams): MenuItemCon
     { label: 'Zurück', enabled: history.canGoBack(), click: () => history.goBack() },
     { label: 'Vor', enabled: history.canGoForward(), click: () => history.goForward() },
     { label: 'Neu laden', click: () => guest.reload() },
+    { label: 'Neu laden ohne Cache', click: () => guest.reloadIgnoringCache() },
     separator,
     { label: 'Untersuchen', click: () => guest.inspectElement(params.x, params.y) },
   )
