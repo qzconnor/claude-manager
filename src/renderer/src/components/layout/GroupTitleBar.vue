@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import AppLogo from '@/components/common/AppLogo.vue'
 import { useAppStore } from '@/stores/app'
-import TitleBarBranch from './TitleBarBranch.vue'
 import TitleBarNotifications from './TitleBarNotifications.vue'
 import TitleBarPages from './TitleBarPages.vue'
 import TitleBarSearch from './TitleBarSearch.vue'
@@ -9,8 +8,9 @@ import TitleBarUsage from './TitleBarUsage.vue'
 
 /**
  * Custom title bar like VS Code's: the search in the middle (the command center), the app's pages and
- * the usage on the right. The tabs live in the groups below. The native caption buttons are drawn by
- * Electron's titleBarOverlay on the right, so that area is kept free.
+ * the usage on the right. The tabs live in the groups below, and each group's bar names the branch of
+ * the tab it shows: the groups can show different repositories. The native caption buttons are drawn
+ * by Electron's titleBarOverlay on the right, so that area is kept free.
  */
 const app = useAppStore()
 </script>
@@ -27,8 +27,6 @@ const app = useAppStore()
     </div>
     <TitleBarSearch class="transition-opacity in-data-unfocused:opacity-75" />
     <div class="flex min-w-0 items-center justify-end">
-      <!-- Outside the group on the right, so it can shrink on its own. -->
-      <TitleBarBranch />
       <div class="mr-2 flex items-center gap-1 transition-opacity in-data-unfocused:opacity-75">
         <TitleBarUsage class="mr-1" />
         <TitleBarPages />

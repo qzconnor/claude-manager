@@ -6,10 +6,10 @@ import type { GitBranch, WorktreeCheck } from '@shared/types'
 import { TypedEmitter } from '../lib/typed-emitter'
 
 interface Watched {
-  /** The working directory last asked for; several can share one repository. */
-  cwd: string
-  gitDir: string
+  /** The working directories asked for that lie in this repository. */
+  cwds: Set<string>
   watcher: FSWatcher
+  timer: NodeJS.Timeout | null
 }
 
 /**
@@ -20,22 +20,42 @@ interface Watched {
 export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: GitBranch | null] }> {
   /** Only hits are kept: a folder can still become a repository later. */
   private readonly gitDirs = new Map<string, string>()
-  private watched: Watched | null = null
-  private timer: NodeJS.Timeout | null = null
+  /** By git directory: tabs in the same repository share one watcher. */
+  private readonly watched = new Map<string, Watched>()
+  /** Counts the calls of `watch`; an older one that finishes late changes nothing. */
+  private generation = 0
 
-  /** Null without git, outside a repository or with an unreadable HEAD. Watches the latest `cwd` only. */
+  /** Null without git, outside a repository or with an unreadable HEAD. */
   async branch(cwd: string): Promise<GitBranch | null> {
     const gitDir = await this.gitDir(cwd)
-    if (!gitDir) {
-      this.unwatch()
-      return null
+    return gitDir ? readBranch(gitDir) : null
+  }
+
+  /**
+   * Watches the repositories these folders lie in for checkouts, reported as `changed` for each folder.
+   * Replaces the folders of the previous call; a folder that is no repository yet is picked up by a later one.
+   */
+  async watch(cwds: readonly string[]): Promise<void> {
+    const generation = ++this.generation
+    const found = await Promise.all([...new Set(cwds)].map(async (cwd) => [cwd, await this.gitDir(cwd)] as const))
+    if (generation !== this.generation) return
+    const wanted = new Map<string, Set<string>>()
+    for (const [cwd, gitDir] of found) {
+      if (gitDir) wanted.set(gitDir, (wanted.get(gitDir) ?? new Set()).add(cwd))
     }
-    this.watch(cwd, gitDir)
-    return readBranch(gitDir)
+    for (const gitDir of [...this.watched.keys()]) {
+      if (!wanted.has(gitDir)) this.unwatch(gitDir)
+    }
+    for (const [gitDir, dirs] of wanted) {
+      const watched = this.watched.get(gitDir)
+      if (watched) watched.cwds = dirs
+      else this.startWatching(gitDir, dirs)
+    }
   }
 
   dispose(): void {
-    this.unwatch()
+    this.generation++
+    for (const gitDir of [...this.watched.keys()]) this.unwatch(gitDir)
   }
 
   /**
@@ -82,41 +102,38 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
     return gitDir
   }
 
-  private watch(cwd: string, gitDir: string): void {
-    if (this.watched?.gitDir === gitDir) {
-      this.watched.cwd = cwd
-      return
-    }
-    this.unwatch()
+  private startWatching(gitDir: string, cwds: Set<string>): void {
     try {
       // git replaces HEAD through HEAD.lock, so the folder is watched, not the file.
       const watcher = watch(gitDir, (_event, file) => {
-        if (file === 'HEAD') this.scheduleRead()
+        if (file === 'HEAD') this.scheduleRead(gitDir)
       })
-      watcher.on('error', () => this.unwatch())
-      this.watched = { cwd, gitDir, watcher }
+      watcher.on('error', () => this.unwatch(gitDir))
+      this.watched.set(gitDir, { cwds, watcher, timer: null })
     } catch {
       // Not watchable: the window still asks again when it gets the focus.
     }
   }
 
-  private scheduleRead(): void {
-    if (this.timer) clearTimeout(this.timer)
-    this.timer = setTimeout(() => {
-      this.timer = null
-      const watched = this.watched
-      if (!watched) return
-      void readBranch(watched.gitDir).then((branch) => {
-        if (this.watched === watched) this.emit('changed', watched.cwd, branch)
+  private scheduleRead(gitDir: string): void {
+    const watched = this.watched.get(gitDir)
+    if (!watched) return
+    if (watched.timer) clearTimeout(watched.timer)
+    watched.timer = setTimeout(() => {
+      watched.timer = null
+      void readBranch(gitDir).then((branch) => {
+        if (this.watched.get(gitDir) !== watched) return
+        for (const cwd of watched.cwds) this.emit('changed', cwd, branch)
       })
     }, 150)
   }
 
-  private unwatch(): void {
-    if (this.timer) clearTimeout(this.timer)
-    this.timer = null
-    this.watched?.watcher.close()
-    this.watched = null
+  private unwatch(gitDir: string): void {
+    const watched = this.watched.get(gitDir)
+    if (!watched) return
+    if (watched.timer) clearTimeout(watched.timer)
+    watched.watcher.close()
+    this.watched.delete(gitDir)
   }
 }
 
