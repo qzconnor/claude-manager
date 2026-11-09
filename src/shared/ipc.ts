@@ -33,6 +33,7 @@ import type {
   WorktreeCheck,
   PaneNode,
   PaneSplit,
+  PastedImage,
   SessionDetail,
   SessionGroup,
   SessionRef,
@@ -92,6 +93,9 @@ export const IpcInvoke = {
   terminalsLayouts: 'terminals:layouts',
   terminalsArrange: 'terminals:arrange',
   terminalsOpenBrowser: 'terminals:open-browser',
+  terminalsPastedImageIds: 'terminals:pasted-image-ids',
+  terminalsPastedImage: 'terminals:pasted-image',
+  terminalsKeepPastedImage: 'terminals:keep-pasted-image',
   browserFavicon: 'browser:favicon',
   browserLog: 'browser:log',
   browserClearLog: 'browser:clear-log',
@@ -311,6 +315,18 @@ export interface ManagerApi {
     restartSession(id: string): Promise<TerminalInfo | null>
     /** A muted tab sends no notifications and doesn't flash the taskbar. */
     setMuted(id: string, muted: boolean): Promise<void>
+    /**
+     * The numbers of the images pasted into the tab's session (`[Image #N]`): those Claude Code wrote
+     * to the transcript with a prompt, and those the app kept when they were pasted.
+     */
+    pastedImageIds(id: string): Promise<number[]>
+    /** Image `n` pasted into the tab's session; null when there is none. */
+    pastedImage(id: string, n: number): Promise<PastedImage | null>
+    /**
+     * Keeps the image in the clipboard as image `n` of the tab's session, which Claude Code just took
+     * from it: so it shows before it is sent. False when the clipboard holds no image.
+     */
+    keepPastedImage(id: string, n: number): Promise<boolean>
     /** Tells which terminals the window shows (none: another page): their news counts as seen. */
     viewing(ids: string[]): void
     /** Tells whether the terminal theme is dark; programs that asked for it hear when that changes. */

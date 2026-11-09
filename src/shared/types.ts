@@ -389,6 +389,14 @@ export interface BrowserHighlight {
   moveMs: number
 }
 
+/** An image pasted into a session (`[Image #N]`). */
+export interface PastedImage {
+  /** data URL */
+  src: string
+  /** Sent with a prompt; otherwise the app's copy from the clipboard, taken when it was pasted. */
+  sent: boolean
+}
+
 export interface TerminalInfo {
   id: string
   /** Account whose config dir holds the session. */

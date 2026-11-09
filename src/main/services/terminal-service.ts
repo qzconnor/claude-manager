@@ -14,6 +14,7 @@ import type {
   CloseOnExit,
   PaneNode,
   PaneSplit,
+  PastedImage,
   SessionLimit,
   SessionWorktree,
   SplitDirection,
@@ -23,6 +24,7 @@ import type {
 import { withdrawBootEntries, withdrawBootEntriesSync, type EndedLaunch } from '../lib/boot-canary'
 import { colorFgBg, colorSchemeReport, ColorSchemeUpdates } from '../lib/color-scheme'
 import { applyHookCall, newHookState, type HookCall, type HookState, type HookTurnEnd } from '../lib/hook-events'
+import { choosePastedImage, newPastedImageScan, readPastedImage, scanPastedImages, type PastedImageScan } from '../lib/pasted-images'
 import { fallbackSessionFolder } from '../lib/session-folder'
 import {
   findTranscript,
@@ -68,6 +70,8 @@ const TURN_END_TIMEOUT_MS = 8000
 const HOOK_END_GRACE_MS = 1500
 /** Changes the hooks report while Claude works (one tool after the other) go out together. */
 const HOOK_CHANGES_MS = 100
+/** The most pasted images a tab keeps before they are sent. */
+const MAX_KEPT_IMAGES = 20
 /** Arguments with which Claude Code picks the session itself. */
 const SESSION_CHOICE_ARG_RE = /^(-c|--continue|-r|--resume|--session-id|--from-pr|--teleport)(=|$)/
 
@@ -140,6 +144,17 @@ interface TerminalRecord {
   viewed: boolean
   /** What the session's hooks told so far; null while none came (no hooks, see SessionHooks). */
   hooks: HookState | null
+  /** The sessions the process had, oldest first: `/clear` starts another one in it. */
+  sessionIds: string[]
+  /** The transcripts of these sessions with their pasted images read so far, by session. */
+  pastedImages: Map<string, PastedImageTranscript>
+  /** Images the user pasted that weren't sent yet, by number: copies of the clipboard (data URLs). */
+  keptImages: Map<number, string>
+}
+
+interface PastedImageTranscript {
+  file: string
+  scan: PastedImageScan
 }
 
 /** Options other parts of the app give every session they start, e.g. the browser's MCP server. */
@@ -554,6 +569,82 @@ export class TerminalService extends TypedEmitter<Events> {
     return { ...this.buffer(id), answered }
   }
 
+  /** The numbers of the images pasted into the tab's sessions (`[Image #N]`): sent ones and those kept when pasted. */
+  async pastedImageIds(id: string): Promise<number[]> {
+    const ids = new Set<number>(this.terminals.get(id)?.keptImages.keys())
+    for (const { scan } of await this.pastedImageTranscripts(id)) for (const n of scan.images.keys()) ids.add(n)
+    return [...ids].sort((a, b) => a - b)
+  }
+
+  /**
+   * Image `n` pasted into the tab's session: the one the process sent; before it is sent, the copy kept
+   * when it was pasted; else one with that number from before the session was resumed.
+   */
+  async pastedImage(id: string, n: number): Promise<PastedImage | null> {
+    const transcripts = await this.pastedImageTranscripts(id)
+    const record = this.terminals.get(id)
+    if (!record) return null
+    const since = Date.parse(record.info.createdAt)
+    const found = choosePastedImage(transcripts, n, since)
+    const read = async () => (found ? await readPastedImage(found.transcript.file, found.at, n).catch(() => null) : null)
+    if (found && found.at.time >= since) {
+      const src = await read()
+      if (src) {
+        // Sent: the copy isn't needed any more.
+        record.keptImages.delete(n)
+        return { src, sent: true }
+      }
+    }
+    const kept = record.keptImages.get(n)
+    if (kept) return { src: kept, sent: false }
+    const src = found && found.at.time < since ? await read() : null
+    return src ? { src, sent: true } : null
+  }
+
+  /** Keeps image `n` the user just pasted into the tab's session (a data URL), until it is sent. */
+  keepPastedImage(id: string, n: number, src: string): boolean {
+    const record = this.terminals.get(id)
+    if (!record || record.info.mode !== 'session') return false
+    record.keptImages.delete(n)
+    record.keptImages.set(n, src)
+    // Pasted and never sent: the oldest go.
+    for (const old of record.keptImages.keys()) {
+      if (record.keptImages.size <= MAX_KEPT_IMAGES) break
+      record.keptImages.delete(old)
+    }
+    return true
+  }
+
+  /** The transcripts of the sessions of the tab's process, read up to now, the current session first. */
+  private async pastedImageTranscripts(id: string): Promise<PastedImageTranscript[]> {
+    const record = this.terminals.get(id)
+    if (!record || record.info.mode !== 'session') return []
+    let projectsDir: string
+    try {
+      projectsDir = this.accounts.paths(record.info.accountId).projectsDir
+    } catch {
+      return []
+    }
+    const transcripts: PastedImageTranscript[] = []
+    for (const sessionId of [...record.sessionIds].reverse()) {
+      let transcript = record.pastedImages.get(sessionId)
+      if (!transcript) {
+        // Before the first prompt there is no transcript yet: looked for again next time.
+        const file = await findTranscript(projectsDir, sessionId, record.info.cwd)
+        if (!file) continue
+        transcript = { file, scan: newPastedImageScan() }
+        record.pastedImages.set(sessionId, transcript)
+      }
+      try {
+        await scanPastedImages(transcript.file, transcript.scan)
+      } catch {
+        // Gone or being rewritten: what was read before still counts.
+      }
+      transcripts.push(transcript)
+    }
+    return transcripts
+  }
+
   disposeAll(): void {
     clearInterval(this.trackTimer)
     if (this.changedTimer) clearTimeout(this.changedTimer)
@@ -634,7 +725,7 @@ export class TerminalService extends TypedEmitter<Events> {
     const live = await readLiveSession(paths.sessionsDir, info.pid, Date.parse(info.createdAt))
     let changed = false
     if (live && live.sessionId !== info.sessionId) {
-      info.sessionId = live.sessionId
+      followSession(record, live.sessionId)
       changed = true
     }
     const transcript = info.sessionId ? await this.readTranscript(record, paths.projectsDir, info.sessionId) : null
@@ -747,7 +838,7 @@ export class TerminalService extends TypedEmitter<Events> {
     let changed = !info.hooks
     info.hooks = true
     if (state.sessionId && state.sessionId !== info.sessionId) {
-      info.sessionId = state.sessionId
+      followSession(record, state.sessionId)
       changed = true
       // A new session (`/clear`): its title, worktree and limit.
       this.trackSoon()
@@ -1002,7 +1093,16 @@ function newRecord(info: TerminalInfo, defaultTitle: string, process: Pty.IPty |
     colorScheme: new ColorSchemeUpdates(),
     viewed: false,
     hooks: null,
+    sessionIds: info.sessionId ? [info.sessionId] : [],
+    pastedImages: new Map(),
+    keptImages: new Map(),
   }
+}
+
+/** The tab's session is now `sessionId`; the sessions the process had before stay known. */
+function followSession(record: TerminalRecord, sessionId: string): void {
+  record.info.sessionId = sessionId
+  if (!record.sessionIds.includes(sessionId)) record.sessionIds.push(sessionId)
 }
 
 /**

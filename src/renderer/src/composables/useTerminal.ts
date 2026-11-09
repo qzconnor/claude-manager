@@ -5,10 +5,11 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal, type ITheme, type ITerminalOptions } from '@xterm/xterm'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
-import type { TerminalSettings } from '@shared/types'
+import type { PastedImage, TerminalSettings } from '@shared/types'
 import { createBackgroundFilter, slotPalette, type SlotTints } from '@/lib/claude-backgrounds'
 import { answerColorQueries } from '@/lib/color-queries'
 import { matchShortcut } from '@shared/shortcuts'
+import { addedImageRef, countImageRefs, pastedImageLinks } from '@/lib/pasted-image-links'
 import { terminalBus } from '@/lib/terminal-bus'
 import { makeSlotsTranslucent, setSlotTints } from '@/lib/translucent-slots'
 import { useAppStore } from '@/stores/app'
@@ -38,6 +39,30 @@ const WEBGL_HIDDEN_MS = 30_000
 const MAX_WEBGL_CONTEXTS = 8
 /** After this many lost contexts (GPU resets) a terminal stays with the DOM renderer. */
 const MAX_WEBGL_LOSSES = 3
+/** The numbers of the pasted images are asked for again after this long: a prompt may have brought new ones (ms). */
+const IMAGE_IDS_MS = 1000
+/**
+ * xterm drops the link under the mouse whenever its row is drawn anew (Claude Code redraws while it
+ * works) and gives it back right after: the preview waits this long before it goes (ms).
+ */
+const PREVIEW_LEAVE_MS = 200
+/** How long Claude Code may take to put a pasted image at the cursor as `[Image #N]` (ms). */
+const PASTE_WAIT_MS = 5000
+/** Rows above the screen where the `[Image #N]` of a pasted image is looked for: a long prompt reaches up there. */
+const PASTE_ROWS_ABOVE = 20
+
+/** A pasted image (`[Image #N]`) the mouse rests on, where the mouse is, and the image once it is loaded. */
+export interface ImagePreview {
+  id: number
+  x: number
+  y: number
+  image: PastedImage | null
+}
+
+/** A pasted image opened in full size. */
+export interface OpenedImage extends PastedImage {
+  id: number
+}
 
 interface WebglHolder {
   shown: () => boolean
@@ -177,8 +202,105 @@ export function useTerminal(options: UseTerminalOptions) {
   let disposed = false
   const cleanups: (() => void)[] = []
 
+  const imagePreview = ref<ImagePreview | null>(null)
+  const openedImage = ref<OpenedImage | null>(null)
+  /** The numbers of the pasted images, as last asked for; `known` once they came. */
+  let imageIds: { at: number; ids: Promise<ReadonlySet<number>>; known: ReadonlySet<number> | null } | null = null
+  /** Counts hovers: an image that loads after the mouse moved on isn't shown. */
+  let imageHover = 0
+  let previewLeaveTimer = 0
+  /** Stops waiting for the `[Image #N]` of an image just pasted. */
+  let stopAwaitingPaste: (() => void) | null = null
+
   function write(data: string): void {
     window.api.terminals.write(terminalId, data)
+  }
+
+  /**
+   * The numbers of the images pasted in the tab's session; asked for once per row the mouse enters, at
+   * most every second. Known from the last second, they come right away.
+   */
+  function pastedImageIds(): ReadonlySet<number> | Promise<ReadonlySet<number>> {
+    if (!imageIds || Date.now() - imageIds.at > IMAGE_IDS_MS) {
+      const asked: NonNullable<typeof imageIds> = { at: Date.now(), ids: Promise.resolve(new Set()), known: null }
+      asked.ids = window.api.terminals.pastedImageIds(terminalId).then((ids) => (asked.known = new Set(ids)))
+      imageIds = asked
+    }
+    return imageIds.known ?? imageIds.ids
+  }
+
+  function showImage(id: number, event: MouseEvent): void {
+    clearTimeout(previewLeaveTimer)
+    const shown = imagePreview.value
+    // The same link back after its row was drawn anew: the preview stays as it is.
+    if (shown?.id === id) {
+      if (shown.x !== event.clientX || shown.y !== event.clientY) imagePreview.value = { ...shown, x: event.clientX, y: event.clientY }
+      return
+    }
+    const hover = ++imageHover
+    imagePreview.value = { id, x: event.clientX, y: event.clientY, image: null }
+    void window.api.terminals.pastedImage(terminalId, id).then(
+      (image) => {
+        if (hover !== imageHover || !imagePreview.value) return
+        imagePreview.value = image ? { ...imagePreview.value, image } : null
+      },
+      () => {
+        if (hover === imageHover) imagePreview.value = null
+      },
+    )
+  }
+
+  function hideImage(): void {
+    clearTimeout(previewLeaveTimer)
+    imageHover++
+    imagePreview.value = null
+  }
+
+  /** The mouse left the link, or xterm dropped it to draw its row anew: the preview goes unless it comes back. */
+  function leaveImage(): void {
+    clearTimeout(previewLeaveTimer)
+    if (imagePreview.value) previewLeaveTimer = window.setTimeout(hideImage, PREVIEW_LEAVE_MS)
+  }
+
+  async function openImage(id: number): Promise<void> {
+    const shown = imagePreview.value
+    hideImage()
+    const image = shown?.id === id && shown.image ? shown.image : await window.api.terminals.pastedImage(terminalId, id).catch(() => null)
+    if (image) openedImage.value = { id, ...image }
+  }
+
+  /** The `[Image #N]` on the screen and a little above, where Claude Code's prompt is. */
+  function screenImageRefs(t: Terminal): Map<number, number> {
+    const buffer = t.buffer.active
+    return countImageRefs(buffer, buffer.baseY - PASTE_ROWS_ABOVE, buffer.baseY + t.rows)
+  }
+
+  /**
+   * An image goes from the clipboard to Claude Code, which puts it at the cursor as `[Image #N]`. Once
+   * that shows, the app keeps a copy of the clipboard under the number: so the image shows before the
+   * prompt is sent, while the transcript doesn't have it yet.
+   */
+  function awaitPastedImage(): void {
+    const t = term
+    if (!t) return
+    stopAwaitingPaste?.()
+    const before = screenImageRefs(t)
+    const subscription = t.onWriteParsed(() => {
+      const id = addedImageRef(before, screenImageRefs(t))
+      if (id === null) return
+      stop()
+      void window.api.terminals.keepPastedImage(terminalId, id).then(
+        () => (imageIds = null),
+        () => undefined,
+      )
+    })
+    const timer = window.setTimeout(() => stop(), PASTE_WAIT_MS)
+    function stop(): void {
+      subscription.dispose()
+      clearTimeout(timer)
+      if (stopAwaitingPaste === stop) stopAwaitingPaste = null
+    }
+    stopAwaitingPaste = stop
   }
 
   async function copySelection(): Promise<boolean> {
@@ -196,6 +318,7 @@ export function useTerminal(options: UseTerminalOptions) {
     // Claude Code takes the image from the clipboard itself and puts an [Image #N] at the cursor:
     // on Alt+V under Windows (Ctrl+V is the terminal's text paste there), elsewhere on Ctrl+V.
     if (claudeSession && (await window.api.app.clipboardHasImage())) {
+      awaitPastedImage()
       write(appStore.info?.platform === 'win32' ? '\x1bv' : '\x16')
     }
   }
@@ -347,6 +470,10 @@ export function useTerminal(options: UseTerminalOptions) {
       void pasteClipboard()
       return false
     }
+    // Claude Code's own key for an image from the clipboard under Windows; it goes on to Claude Code.
+    if (claudeSession && key === 'v' && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && appStore.info?.platform === 'win32') {
+      awaitPastedImage()
+    }
     if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
       // Claude Code inserts a newline on Ctrl+J (line feed) in every terminal.
       e.preventDefault()
@@ -393,6 +520,12 @@ export function useTerminal(options: UseTerminalOptions) {
         void window.api.app.openExternal(uri)
       }),
     )
+    // Images pasted into Claude Code show where it names them, before and after the prompt is sent.
+    if (claudeSession) {
+      term.registerLinkProvider(
+        pastedImageLinks(term, { ids: pastedImageIds, hover: showImage, leave: leaveImage, open: (id) => void openImage(id) }),
+      )
+    }
     term.loadAddon(new Unicode11Addon())
     term.loadAddon(new UnicodeGraphemesAddon())
     term.unicode.activeVersion = s.unicode === 'graphemes' ? '15-graphemes' : '11'
@@ -414,7 +547,11 @@ export function useTerminal(options: UseTerminalOptions) {
       t.onData(forward),
       t.onBinary(forward),
       t.onResize(({ cols, rows }) => window.api.terminals.resize(terminalId, cols, rows)),
-      t.onScroll(() => align()),
+      t.onScroll(() => {
+        align()
+        // The rows move under the mouse: the preview stays only if xterm finds the same link there again.
+        leaveImage()
+      }),
       t.onWriteParsed(() => {
         align()
         forgetCachedLinks(t)
@@ -479,7 +616,10 @@ export function useTerminal(options: UseTerminalOptions) {
   })
 
   watch(active, (isActive) => {
-    if (!isActive) return
+    if (!isActive) {
+      hideImage()
+      return
+    }
     // Before the tab comes on screen, so it doesn't show a frame of the DOM renderer.
     setShown(true)
     void nextTick(() => {
@@ -510,6 +650,8 @@ export function useTerminal(options: UseTerminalOptions) {
 
   onBeforeUnmount(() => {
     disposed = true
+    stopAwaitingPaste?.()
+    clearTimeout(previewLeaveTimer)
     cancelAnimationFrame(fitFrame)
     resizeObserver?.disconnect()
     visibilityObserver?.disconnect()
@@ -522,6 +664,11 @@ export function useTerminal(options: UseTerminalOptions) {
   return {
     ready,
     hasSelection,
+    /** The pasted image under the mouse, shown next to it. */
+    imagePreview,
+    /** The pasted image opened in full size by a click on its `[Image #N]`. */
+    openedImage,
+    closeImage: () => (openedImage.value = null),
     focus,
     fit,
     copySelection,
