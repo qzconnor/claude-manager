@@ -370,7 +370,7 @@ function openFolder() {
           </div>
         </HoverCardTrigger>
       </ContextMenuTrigger>
-      <ContextMenuContent class="w-64" @close-auto-focus="onMenuCloseAutoFocus">
+      <ContextMenuContent class="w-80" @close-auto-focus="onMenuCloseAutoFocus">
         <!-- In a split tab: which of its terminals the menu acts on. -->
         <ContextMenuLabel v-if="split" class="truncate">{{ terminal.title }}</ContextMenuLabel>
         <ContextMenuGroup>

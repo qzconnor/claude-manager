@@ -277,7 +277,7 @@ function openFolder() {
           </div>
         </HoverCardTrigger>
       </ContextMenuTrigger>
-      <ContextMenuContent class="w-64" @close-auto-focus="onMenuCloseAutoFocus">
+      <ContextMenuContent class="w-84" @close-auto-focus="onMenuCloseAutoFocus">
         <ContextMenuGroup>
           <ContextMenuItem @select="startRename">
             <PencilIcon />

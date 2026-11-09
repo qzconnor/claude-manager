@@ -65,6 +65,10 @@ export interface TreeModel {
   searchStale: boolean
   /** What is typed into the tree's search. */
   query: string
+  /** Only the files git sees changed are shown, to review them. */
+  changesOnly: boolean
+  /** Folders closed while only the changes are shown (open is the default there). */
+  collapsedChanges: Set<string>
   /** The selected entry, also the one the keyboard moves from. */
   selected: string | null
   scrollTop: number
@@ -260,6 +264,8 @@ export const useFileTreeStore = defineStore('file-tree', () => {
       searchLoading: false,
       searchStale: false,
       query: '',
+      changesOnly: false,
+      collapsedChanges: reactive(new Set()),
       selected: null,
       scrollTop: 0,
     }) as TreeModel
@@ -367,7 +373,11 @@ export const useFileTreeStore = defineStore('file-tree', () => {
     statusBusy.add(root)
     try {
       const status = await window.api.files.status(root).catch(() => null)
-      if (models.get(root) === model && !sameData(model.git, status)) model.git = status ? Object.freeze(status) : null
+      if (models.get(root) === model && !sameData(model.git, status)) {
+        model.git = status ? Object.freeze(status) : null
+        // Files came or went, maybe in a folder that isn't watched (e.g. in a new one).
+        model.searchStale = true
+      }
     } finally {
       statusBusy.delete(root)
       if (statusAgain.delete(root)) scheduleStatus(model)
@@ -543,6 +553,8 @@ export const useFileTreeStore = defineStore('file-tree', () => {
       const model = models.get(root)
       const path = model ? treePathOf(root, touch.path, window.api.platform === 'win32') : null
       if (!model || !path) continue
+      // A new file in a folder that isn't watched (Linux watches only the open ones) joins the list of files.
+      if (touch.kind === 'write') model.searchStale = true
       const marks = claudeFolders.get(root) ?? new Map<string, number>()
       for (const dir of ancestors(path)) {
         if (!model.expanded.has(dir)) {

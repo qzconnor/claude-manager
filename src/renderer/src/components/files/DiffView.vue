@@ -7,6 +7,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useFileTreeModel } from '@/composables/useFileTreeModel'
 import { buildFontStack, useTerminalAppearance } from '@/composables/useTerminalAppearance'
+import { codeColor } from '@/lib/code-colors'
 import { attempt, errorMessage } from '@/lib/errors'
 import { fileLines, lineColumns, parsePatch, type DiffLine, type ParsedDiff } from '@/lib/file-diff'
 import { fileIcon } from '@/lib/file-icons'
@@ -51,6 +52,11 @@ const error = ref<string | null>(null)
 const loading = ref(false)
 /** The whole file around the changes, not only a few lines of context. */
 const full = ref(false)
+/**
+ * While only the changes show: the diff of the whole file, so they are highlighted in their file
+ * (a line in a Vue file's script is TypeScript). It comes after them, so they show at once.
+ */
+const whole = shallowRef<readonly DiffLine[] | null>(null)
 let request = 0
 /** A file's first answer scrolls to its first change. */
 let fresh = true
@@ -64,6 +70,8 @@ async function load(): Promise<void> {
     if (id !== request) return
     diff.value = Object.freeze(next)
     error.value = null
+    if (next.patch && !next.tooLarge && !full.value && languageOf(path)) void loadWhole(id, root, path)
+    else whole.value = null
   } catch (e) {
     if (id !== request) return
     diff.value = null
@@ -73,11 +81,22 @@ async function load(): Promise<void> {
   }
 }
 
+async function loadWhole(id: number, root: string, path: string): Promise<void> {
+  try {
+    const all = await window.api.files.diff(root, path, true)
+    if (id !== request) return
+    whole.value = all.patch && !all.tooLarge ? Object.freeze(parsePatch(all.patch).lines) : null
+  } catch {
+    if (id === request) whole.value = null
+  }
+}
+
 watch(
   () => [props.root, props.path] as const,
   () => {
     // The last file stays until the next one is there (a moment), so clicking through files doesn't flicker.
     error.value = null
+    whole.value = null
     fresh = true
     void load()
   },
@@ -169,34 +188,43 @@ watch(
 /** The lines as highlighted HTML (escaped by highlight.js); null for plain text. */
 const highlighted = computed(() => {
   void loadedLanguages.value
-  return language.value ? highlightDiff(lines.value, language.value) : null
+  return language.value ? highlightDiff(lines.value, language.value, mode.value === 'diff' && !full.value ? whole.value : null) : null
 })
 
 // ── The theme's colours ──
 
-/** The terminal's palette as variables: the code's colours (`.syntax` in main.css) and the lines' tints. */
+/**
+ * The terminal's palette as variables: the code's colours (`.syntax` in main.css) and the lines' tints,
+ * calmed for code (a terminal's blue can be too loud or too dark to read).
+ */
+const codeColors = computed(() => {
+  const p = palette.value
+  const code = (color: string) => codeColor(color, p.background)
+  return { red: code(p.red), green: code(p.green), yellow: code(p.yellow), blue: code(p.blue), magenta: code(p.magenta), cyan: code(p.cyan) }
+})
 const themeStyle = computed(() => {
   const p = palette.value
+  const c = codeColors.value
   const tint = (color: string, percent: number) => `color-mix(in oklab, ${color} ${percent}%, transparent)`
   return {
     background: containerBackground.value,
     color: p.foreground,
-    '--syn-red': p.red,
-    '--syn-green': p.green,
-    '--syn-yellow': p.yellow,
-    '--syn-blue': p.blue,
-    '--syn-magenta': p.magenta,
-    '--syn-cyan': p.cyan,
+    '--syn-red': c.red,
+    '--syn-green': c.green,
+    '--syn-yellow': c.yellow,
+    '--syn-blue': c.blue,
+    '--syn-magenta': c.magenta,
+    '--syn-cyan': c.cyan,
     '--syn-comment': tint(p.foreground, 50),
     // A new file is all added: only lightly tinted, so it reads like code.
-    '--diff-add': tint(p.green, mode.value === 'new' ? 6 : 15),
-    '--diff-add-gutter': tint(p.green, 24),
-    '--diff-del': tint(p.red, 15),
-    '--diff-del-gutter': tint(p.red, 24),
+    '--diff-add': tint(c.green, mode.value === 'new' ? 6 : 15),
+    '--diff-add-gutter': tint(c.green, 24),
+    '--diff-del': tint(c.red, 15),
+    '--diff-del-gutter': tint(c.red, 24),
     '--diff-hunk': tint(p.foreground, 6),
     '--diff-number': tint(p.foreground, 40),
-    '--diff-add-number': p.green,
-    '--diff-del-number': p.red,
+    '--diff-add-number': c.green,
+    '--diff-del-number': c.red,
   }
 })
 
