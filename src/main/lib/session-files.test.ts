@@ -7,10 +7,13 @@ import {
   assertNoNewerCopy,
   copySession,
   findTranscript,
+  isWorktreeOf,
   liveSessionIds,
+  locateTranscript,
   newTitleScan,
   projectKey,
   readLiveSession,
+  readRelocatedCwd,
   readSessionLimit,
   readSessionTitles,
   readTurnOutcome,
@@ -137,6 +140,47 @@ describe('findTranscript', () => {
   })
 })
 
+// `/cd` moves the transcript into the project folder of the new folder and notes it (`relocated`).
+describe('readRelocatedCwd and locateTranscript', () => {
+  const app = '/home/dev/app'
+  const site = '/home/dev/site'
+  const relocated = (relocatedCwd: string): Entry => ({ type: 'relocated', sessionId: SESSION, relocatedCwd })
+
+  async function transcript(folder: string, ...entries: Entry[]): Promise<string> {
+    await mkdir(join(dir, projectKey(folder)), { recursive: true })
+    const file = join(dir, projectKey(folder), `${SESSION}.jsonl`)
+    await writeFile(file, jsonl(user('Hallo', 1, { cwd: app }), ...entries))
+    return file
+  }
+
+  it('reads where the session was moved to last', async () => {
+    const file = await transcript(site, relocated('/home/dev/first'), assistant([text('Ok')], 2), relocated(site))
+    expect(await readRelocatedCwd(file)).toBe(site)
+    expect(await readRelocatedCwd(await transcript(app))).toBeNull()
+  })
+
+  it('finds a moved session in its new folder, with that folder', async () => {
+    // The old project folder stays, without the transcript.
+    await mkdir(join(dir, projectKey(app)), { recursive: true })
+    const file = await transcript(site, relocated(site))
+    expect(await locateTranscript(dir, SESSION, app)).toEqual({ file, cwd: site })
+    expect(await locateTranscript(dir, SESSION, site)).toEqual({ file, cwd: site })
+  })
+
+  it('keeps the folder of a session that never moved or is in a worktree of it', async () => {
+    const file = await transcript(app)
+    expect(await locateTranscript(dir, SESSION, app)).toEqual({ file, cwd: app })
+    await rm(file)
+    const worktree = `${app}/.claude/worktrees/login-fix`
+    const inWorktree = await transcript(worktree, relocated(worktree))
+    expect(await locateTranscript(dir, SESSION, app)).toEqual({ file: inWorktree, cwd: app })
+  })
+
+  it('is null when nothing has been written yet', async () => {
+    expect(await locateTranscript(dir, SESSION, app)).toBeNull()
+  })
+})
+
 describe('readLiveSession', () => {
   const PID = 4242
   const SINCE = T0
@@ -197,6 +241,20 @@ describe('worktreeAt', () => {
     expect(worktreeAt('C:\\dev\\app\\.claude\\worktrees', 'C:\\dev\\app')).toBeNull()
     expect(worktreeAt('/home/dev/app/.claude/worktrees/demo/src', '/home/dev/app')).toBeNull()
     expect(worktreeAt('/.claude/worktrees/demo', '/')).toBeNull()
+  })
+})
+
+describe('isWorktreeOf', () => {
+  it('tells a worktree of the repository a folder lies in', () => {
+    expect(isWorktreeOf('C:\\dev\\app\\.claude\\worktrees\\login-fix', 'C:\\dev\\app')).toBe(true)
+    expect(isWorktreeOf('C:\\dev\\app\\.claude\\worktrees\\login-fix', 'c:/dev/app/src')).toBe(true)
+    expect(isWorktreeOf('/home/dev/app/.claude/worktrees/demo', '/home/dev/app')).toBe(true)
+  })
+
+  it('is false for other folders and worktrees of other repositories', () => {
+    expect(isWorktreeOf('C:\\dev\\app', 'C:\\dev\\app')).toBe(false)
+    expect(isWorktreeOf('C:\\dev\\site\\.claude\\worktrees\\demo', 'C:\\dev\\app')).toBe(false)
+    expect(isWorktreeOf('C:\\dev\\app-old\\.claude\\worktrees\\demo', 'C:\\dev\\app')).toBe(false)
   })
 })
 

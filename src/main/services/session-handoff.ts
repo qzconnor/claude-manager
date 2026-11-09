@@ -1,6 +1,6 @@
 import type { Account, TerminalCreateOptions, TerminalInfo } from '@shared/types'
 import { canLendCredentials } from '@shared/utils'
-import { assertNoNewerCopy, copySession, findTranscript } from '../lib/session-files'
+import { assertNoNewerCopy, copySession, locateTranscript } from '../lib/session-files'
 import { TypedEmitter } from '../lib/typed-emitter'
 import type { AccountService } from './account-service'
 import type { SessionService } from './session-service'
@@ -60,14 +60,13 @@ export class SessionHandoff extends TypedEmitter<Events> {
     if (this.switching.has(terminalId)) throw new Error('Der Wechsel läuft bereits.')
     this.switching.add(terminalId)
     try {
+      // The session goes on in the folder it is in now (`/cd` may have moved it), or Claude Code won't resume it.
+      const located = await locateTranscript(this.accounts.paths(old.accountId).projectsDir, old.sessionId, old.cwd)
       // A copy that can't be made should not cost the running tab: check before stopping it.
       const copies = !canLendCredentials(target.kind) && target.id !== old.accountId
-      if (copies) {
-        const transcript = await findTranscript(this.accounts.paths(old.accountId).projectsDir, old.sessionId, old.cwd)
-        if (transcript) await assertNoNewerCopy(this.accounts.paths(target.id), old.sessionId, transcript, target.name)
-      }
+      if (copies && located) await assertNoNewerCopy(this.accounts.paths(target.id), old.sessionId, located.file, target.name)
       // Neither should a folder the user doesn't trust for that account.
-      const cwd = await this.terminals.trustedCwd(copies ? target.id : old.accountId, old.cwd)
+      const cwd = await this.terminals.trustedCwd(copies ? target.id : old.accountId, located?.cwd ?? old.cwd)
       if (cwd === null) return null
       // Two processes must never write to the same transcript: the old one ends first.
       await this.terminals.stop(terminalId)
@@ -102,18 +101,20 @@ export class SessionHandoff extends TypedEmitter<Events> {
     return this.terminals.open(options)
   }
 
+  /** `folder`: where the session worked as far as the app knows; it goes on where its transcript says. */
   private async prepare(
     accountId: string,
     sessionId: string,
-    cwd: string | null,
+    folder: string | null,
     target: Account,
   ): Promise<TerminalCreateOptions> {
     const lend = canLendCredentials(target.kind)
-    const transcript = await findTranscript(this.accounts.paths(accountId).projectsDir, sessionId, cwd)
-    if (!transcript) {
+    const located = await locateTranscript(this.accounts.paths(accountId).projectsDir, sessionId, folder)
+    if (!located) {
       // Nothing written yet: a new session with the target account is just as good.
-      return lend ? { accountId, authAccountId: target.id, cwd } : { accountId: target.id, cwd }
+      return lend ? { accountId, authAccountId: target.id, cwd: folder } : { accountId: target.id, cwd: folder }
     }
+    const { file: transcript, cwd } = located
     if (target.id === accountId) return { accountId, cwd, resumeSessionId: sessionId }
     if (lend) return { accountId, authAccountId: target.id, cwd, resumeSessionId: sessionId }
     await copySession(this.accounts.paths(accountId), this.accounts.paths(target.id), sessionId, transcript, target.name)

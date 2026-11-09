@@ -5,6 +5,7 @@ import { userInfo } from 'node:os'
 import { basename, join } from 'node:path'
 import type * as Pty from 'node-pty'
 import { BLANK_PAGE, fallbackTitle, isBrowsableUrl } from '@shared/browser'
+import { folderKey, inFolder } from '@shared/folders'
 import { applyOrder } from '@shared/order'
 import { dropPanes, hasPane, isSplit, ownerOf, paneIds, removePanes, replacePane, splitPane } from '@shared/panes'
 import type {
@@ -28,6 +29,7 @@ import { choosePastedImage, newPastedImageScan, readPastedImage, scanPastedImage
 import { fallbackSessionFolder } from '../lib/session-folder'
 import {
   findTranscript,
+  isWorktreeOf,
   newTitleScan,
   readLiveSession,
   readSessionLimit,
@@ -146,6 +148,10 @@ interface TerminalRecord {
   hooks: HookState | null
   /** The sessions the process had, oldest first: `/clear` starts another one in it. */
   sessionIds: string[]
+  /** The folder Claude Code last named for the session in `sessions/<pid>.json`; null until it did. */
+  liveCwd: string | null
+  /** The folders the tab's session worked in, the current one first: `/cd` moves it to another one. */
+  folders: string[]
   /** The transcripts of these sessions with their pasted images read so far, by session. */
   pastedImages: Map<string, PastedImageTranscript>
   /** Images the user pasted that weren't sent yet, by number: copies of the clipboard (data URLs). */
@@ -628,9 +634,11 @@ export class TerminalService extends TypedEmitter<Events> {
     const transcripts: PastedImageTranscript[] = []
     for (const sessionId of [...record.sessionIds].reverse()) {
       let transcript = record.pastedImages.get(sessionId)
+      // `/cd` took it along into the project folder of the new folder.
+      if (transcript && !(await isFile(transcript.file))) transcript = undefined
       if (!transcript) {
         // Before the first prompt there is no transcript yet: looked for again next time.
-        const file = await findTranscript(projectsDir, sessionId, record.info.cwd)
+        const file = await this.findTabTranscript(projectsDir, record, sessionId)
         if (!file) continue
         transcript = { file, scan: newPastedImageScan() }
         record.pastedImages.set(sessionId, transcript)
@@ -728,6 +736,8 @@ export class TerminalService extends TypedEmitter<Events> {
       followSession(record, live.sessionId)
       changed = true
     }
+    // Before the transcript: after `/cd` it is in the project folder of the new folder.
+    if (live?.cwd && this.followFolder(record, live.cwd)) changed = true
     const transcript = info.sessionId ? await this.readTranscript(record, paths.projectsDir, info.sessionId) : null
     const limit = transcript ? currentLimit(transcript.limit) : null
     if (JSON.stringify(limit) !== JSON.stringify(info.limit)) {
@@ -740,6 +750,44 @@ export class TerminalService extends TypedEmitter<Events> {
       changed = true
     }
     return followTitle(info, this.autoTitle(record)) || changed
+  }
+
+  /**
+   * `/cd` moved the session to another folder, as Claude Code names it in `sessions/<pid>.json` (see
+   * `movedTo`): the tab goes along, with its tree, branch, title, new shells beside it and the folder
+   * it is restored or continued in. True when the tab's folder changed.
+   */
+  private followFolder(record: TerminalRecord, liveCwd: string): boolean {
+    const { info } = record
+    const folder = movedTo(record.liveCwd, liveCwd, info.cwd)
+    record.liveCwd = liveCwd
+    if (!folder) return false
+    info.cwd = folder
+    record.folders = [folder, ...record.folders.filter((f) => folderKey(f) !== folderKey(folder))]
+    // Its transcript went along: looked for again in the new folder.
+    record.transcript = null
+    try {
+      record.defaultTitle = defaultTerminalTitle(info.mode, this.accounts.get(info.authAccountId).name, folder)
+    } catch {
+      // The account is gone: the tab keeps its title.
+    }
+    return true
+  }
+
+  /**
+   * The transcript of a session of the tab's process. It lies in the project folder of the folder
+   * Claude Code works in (a worktree, or where `/cd` moved it); a session from before a `/clear` may
+   * still lie in a folder the tab worked in before.
+   */
+  private async findTabTranscript(projectsDir: string, record: TerminalRecord, sessionId: string): Promise<string | null> {
+    const seen = new Set<string>()
+    for (const folder of [record.liveCwd, ...record.folders]) {
+      if (!folder || seen.has(folderKey(folder))) continue
+      seen.add(folderKey(folder))
+      const file = await findTranscript(projectsDir, sessionId, folder)
+      if (file) return file
+    }
+    return null
   }
 
   /** The session's title as Claude Code shows it; after `/clear` the new session has none yet. */
@@ -756,7 +804,7 @@ export class TerminalService extends TypedEmitter<Events> {
     sessionId: string,
   ): Promise<TrackedTranscript | null> {
     if (record.transcript?.sessionId !== sessionId) {
-      const file = await findTranscript(projectsDir, sessionId, record.info.cwd)
+      const file = await this.findTabTranscript(projectsDir, record, sessionId)
       record.transcript = file ? { sessionId, file, size: -1, mtimeMs: -1, limit: null, titles: newTitleScan() } : null
     }
     const tracked = record.transcript
@@ -1043,6 +1091,12 @@ export class TerminalService extends TypedEmitter<Events> {
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
+const isFile = (path: string) =>
+  stat(path).then(
+    (s) => s.isFile(),
+    () => false,
+  )
+
 function endedLaunch(info: TerminalInfo): EndedLaunch {
   return { pid: info.pid, startedAt: Date.parse(info.createdAt) }
 }
@@ -1054,18 +1108,31 @@ function currentLimit(limit: SessionLimit | null): SessionLimit | null {
 }
 
 /**
- * The worktree a session works in. The transcript knows it with its branch, but only once the first
- * prompt is written; until then the folder from `sessions/<pid>.json` tells it. Without either (e.g.
- * just after `/clear` with an older Claude Code) the tab keeps what it had.
+ * The folder a tab in `tabCwd` moves to when Claude Code names `liveCwd` for its session after
+ * `previousLive`; null when it stays. The first report is where the session started (Claude Code may
+ * spell it differently): only a change after it is a move. Into a worktree of the tab's folder and
+ * back (`--worktree`, EnterWorktree, ExitWorktree) the tab stays, with the worktree beside it.
  */
-function currentWorktree(
+export function movedTo(previousLive: string | null, liveCwd: string, tabCwd: string): string | null {
+  if (previousLive === null || folderKey(previousLive) === folderKey(liveCwd)) return null
+  if (folderKey(liveCwd) === folderKey(tabCwd) || isWorktreeOf(liveCwd, tabCwd)) return null
+  return liveCwd
+}
+
+/**
+ * The worktree a session works in. The transcript knows it with its branch, but only once the first
+ * prompt is written; until then the folder from `sessions/<pid>.json` tells it. That folder also tells
+ * when the session left it with `/cd`, which the transcript doesn't. Without either (e.g. just after
+ * `/clear` with an older Claude Code) the tab keeps what it had.
+ */
+export function currentWorktree(
   scanned: SessionWorktree | null | undefined,
   liveCwd: string | null,
   startCwd: string,
   previous: SessionWorktree | null,
 ): SessionWorktree | null {
+  if (liveCwd) return scanned && inFolder(liveCwd, scanned.path) ? scanned : worktreeAt(liveCwd, startCwd)
   if (scanned) return scanned
-  if (liveCwd) return worktreeAt(liveCwd, startCwd)
   return scanned === undefined ? previous : null
 }
 
@@ -1094,6 +1161,8 @@ function newRecord(info: TerminalInfo, defaultTitle: string, process: Pty.IPty |
     viewed: false,
     hooks: null,
     sessionIds: info.sessionId ? [info.sessionId] : [],
+    liveCwd: null,
+    folders: info.cwd ? [info.cwd] : [],
     pastedImages: new Map(),
     keptImages: new Map(),
   }

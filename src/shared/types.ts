@@ -422,7 +422,7 @@ export interface TerminalInfo {
    * `/resume` (the one Claude gave it), a browser's page title, otherwise a default.
    */
   autoTitle: string
-  /** Empty for a browser, as are the account ids. */
+  /** The folder the session works in: where it started, or where `/cd` moved it. Empty for a browser, as are the account ids. */
   cwd: string
   mode: TerminalMode
   /** The page a browser shows; null for terminals. */
@@ -493,7 +493,7 @@ export interface SessionSummary {
   accountId: string
   /** Encoded project folder name under `<configDir>/projects`. */
   projectKey: string
-  /** Where the session ran; for a session in a worktree, the worktree's folder. */
+  /** Where the session ran, or where `/cd` moved it last; for a session in a worktree, the worktree's folder. */
   cwd: string | null
   /** The latest worktree the session worked in; it belongs with `worktree.originalCwd`. */
   worktree: SessionWorktree | null

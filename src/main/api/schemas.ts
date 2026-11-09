@@ -221,7 +221,7 @@ export const schemas: Record<string, Schema> = {
       type: 'string',
       description: 'Titel der Session wie in /resume (bei Browser-Tabs der Seitentitel), auch wenn der Tab umbenannt ist',
     },
-    cwd: { type: 'string', description: 'Arbeitsordner; leer bei Browser-Tabs' },
+    cwd: { type: 'string', description: 'Arbeitsordner; folgt der Session, wenn /cd sie verschiebt; leer bei Browser-Tabs' },
     mode: { type: 'string', enum: ['session', 'login', 'shell', 'browser'], description: 'browser = Webseite im Browser der App, ohne Prozess' },
     url: { ...nullable(str), description: 'Seite, die ein Browser-Tab zeigt; null bei Terminals' },
     resumeSessionId: nullable(str),

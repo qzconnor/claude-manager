@@ -2,6 +2,7 @@
  * Parsing of Claude Code transcript files (`<configDir>/projects/<project>/<session>.jsonl`).
  * Pure functions — used by the indexer worker thread (`toolSummary` also by the main process).
  */
+import { folderKey, inFolder } from '@shared/folders'
 import type { SessionWorktree, TranscriptMessage, TranscriptToolCall, TranscriptToolDetail } from '@shared/types'
 
 export interface ParsedSummary {
@@ -155,6 +156,8 @@ export interface TranscriptScan {
   firstPrompt: string | null
   lastUserPrompt: string | null
   cwd: string | null
+  /** Where `/cd` (or entering and leaving a worktree) last moved the session. */
+  relocatedCwd: string | null
   gitBranch: string | null
   model: string | null
   version: string | null
@@ -178,6 +181,7 @@ export function newTranscriptScan(withSummary: boolean): TranscriptScan {
     firstPrompt: null,
     lastUserPrompt: null,
     cwd: null,
+    relocatedCwd: null,
     gitBranch: null,
     model: null,
     version: null,
@@ -218,6 +222,9 @@ function scanEntry(scan: TranscriptScan, e: Record<string, unknown>): void {
       break
     case 'last-prompt':
       scan.lastPrompt = str(e.lastPrompt) ?? scan.lastPrompt
+      break
+    case 'relocated':
+      if (withSummary) scan.relocatedCwd = str(e.relocatedCwd) ?? scan.relocatedCwd
       break
     case 'continued-in':
       scan.continuedIn = str(e.continuedInSessionId) ?? scan.continuedIn
@@ -280,6 +287,15 @@ export function scanTranscript(scan: TranscriptScan, buf: Buffer): number {
   return end
 }
 
+/**
+ * The worktree the session works in: the latest one, unless the session was moved out of it with
+ * `/cd` to an unrelated folder (back to the folder the worktree was made from still counts).
+ */
+function currentWorktree(worktree: SessionWorktree | null, relocatedCwd: string | null): SessionWorktree | null {
+  if (!worktree || !relocatedCwd) return worktree
+  return inFolder(relocatedCwd, worktree.path) || folderKey(relocatedCwd) === folderKey(worktree.originalCwd) ? worktree : null
+}
+
 /** The summary and usage of what the scan read. */
 export function scanResult(scan: TranscriptScan, sessionId: string): ParseResult {
   const fallbackPrompt = scan.lastPrompt ?? scan.lastUserPrompt
@@ -287,8 +303,9 @@ export function scanResult(scan: TranscriptScan, sessionId: string): ParseResult
   return {
     summary: {
       id: sessionId,
-      cwd: scan.cwd,
-      worktree: scan.worktree,
+      // The session is resumed where it was moved to last: Claude Code refuses it in another folder.
+      cwd: scan.relocatedCwd ?? scan.cwd,
+      worktree: currentWorktree(scan.worktree, scan.relocatedCwd),
       title: shorten(title, 160),
       firstPrompt: scan.firstPrompt,
       lastPrompt: fallbackPrompt ? shorten(fallbackPrompt, 300) : null,

@@ -37,7 +37,8 @@ interface CacheFile {
 
 // 3: `<synthetic>` replies no longer count as messages; summaries are parsed again once.
 // 4: summaries know the worktree a session worked in.
-const CACHE_VERSION = 4
+// 5: summaries know the folder `/cd` moved a session to.
+const CACHE_VERSION = 5
 const { cacheFile, searchCacheFile } = workerData as { cacheFile: string; searchCacheFile: string }
 let cache: Record<string, CacheEntry> = {}
 let cacheLoaded: Promise<void> | null = null

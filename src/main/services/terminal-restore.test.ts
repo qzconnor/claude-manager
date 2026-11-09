@@ -162,6 +162,19 @@ describe('TerminalRestore on start', () => {
     ])
   })
 
+  it('resumes a session /cd moved after the tab was saved in its new folder', async () => {
+    const project = join(dir, 'project')
+    const moved = join(dir, 'moved')
+    // Claude Code took the transcript along into the project folder of the new folder.
+    await mkdir(join(configDir, 'projects', projectKey(project)), { recursive: true })
+    const folder = join(configDir, 'projects', projectKey(moved))
+    await mkdir(folder, { recursive: true })
+    await writeFile(join(folder, `${S1}.jsonl`), `${JSON.stringify({ type: 'relocated', sessionId: S1, relocatedCwd: moved })}\n`)
+    await writeFile(file, JSON.stringify([{ accountId: 'acc-a', authAccountId: 'acc-a', cwd: project, mode: 'session', sessionId: S1, title: 'T', fixedTitle: false }]))
+    await start().init()
+    expect(create.mock.calls[0]![0]).toMatchObject({ cwd: moved, resumeSessionId: S1 })
+  })
+
   it('leaves out invalid tabs and tabs of removed accounts', async () => {
     const valid = { accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'session', sessionId: null, title: 'T' }
     await writeFile(

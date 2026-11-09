@@ -1,5 +1,6 @@
 import { cp, mkdir, open, readdir, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { folderKey, inFolder } from '@shared/folders'
 import type { SessionLimit, SessionWorktree } from '@shared/types'
 import type { ClaudePaths } from './claude-paths'
 import { toolSummary, toWorktree } from '../workers/transcript-parser'
@@ -66,10 +67,50 @@ export async function findTranscript(projectsDir: string, sessionId: string, cwd
   return null
 }
 
+const RELOCATED_MARKER = '"type":"relocated"'
+
+/**
+ * Where `/cd` (or entering and leaving a worktree) last moved the session, from the end of its
+ * transcript (`relocated`, repeated there with the titles); null for a session that never moved.
+ * Claude Code resumes a session only in that folder: from another one it answers "This conversation
+ * is from a different directory".
+ */
+export async function readRelocatedCwd(file: string): Promise<string | null> {
+  const lines = (await readTail(file)).split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i]!.includes(RELOCATED_MARKER)) continue
+    try {
+      const entry = JSON.parse(lines[i]!) as { type?: unknown; relocatedCwd?: unknown }
+      if (entry.type === 'relocated' && typeof entry.relocatedCwd === 'string' && entry.relocatedCwd) return entry.relocatedCwd
+    } catch {
+      // not a complete entry
+    }
+  }
+  return null
+}
+
+/**
+ * The session's transcript with the folder the session is resumed in. That is `cwd`, unless `/cd`
+ * moved the session (its transcript went along into the project folder of the new one) while the
+ * app didn't follow, e.g. while it was closed. A session in a worktree of `cwd` is resumed from `cwd`:
+ * Claude Code enters the worktree again. Null when nothing has been written yet.
+ */
+export async function locateTranscript(
+  projectsDir: string,
+  sessionId: string,
+  cwd: string | null,
+): Promise<{ file: string; cwd: string | null } | null> {
+  const file = (await findTranscript(projectsDir, sessionId, cwd)) ?? (cwd ? await findTranscript(projectsDir, sessionId) : null)
+  if (!file) return null
+  const moved = await readRelocatedCwd(file).catch(() => null)
+  if (!moved || (cwd && (folderKey(moved) === folderKey(cwd) || isWorktreeOf(moved, cwd)))) return { file, cwd }
+  return { file, cwd: moved }
+}
+
 /**
  * The session Claude Code currently has open in process `pid`, with the folder it works in (e.g. its
  * worktree) when the file names it. Claude Code keeps `<config>/sessions/<pid>.json` up to date, also
- * after `/clear` or `/resume`, and writes it at once, before the transcript.
+ * after `/clear`, `/resume` or `/cd`, and writes it at once, before the transcript.
  * `since` (ms) skips a file left behind by an earlier process with the same pid.
  */
 export async function readLiveSession(
@@ -85,14 +126,23 @@ export async function readLiveSession(
   return { sessionId: data.sessionId, cwd: typeof data.cwd === 'string' && data.cwd ? data.cwd : null }
 }
 
+/** A worktree Claude Code made: `<repository>\.claude\worktrees\<name>`. */
+const WORKTREE_RE = /^(.*)[\\/]\.claude[\\/]worktrees[\\/]([^\\/]+)[\\/]?$/
+
 /**
  * The worktree Claude Code made for a session (`claude --worktree`), told by the folder it works in:
  * `<startCwd>\.claude\worktrees\<name>`. The branch is only known from the transcript.
  */
 export function worktreeAt(cwd: string, startCwd: string): SessionWorktree | null {
-  const match = /^(.*)[\\/]\.claude[\\/]worktrees[\\/]([^\\/]+)[\\/]?$/.exec(cwd)
+  const match = WORKTREE_RE.exec(cwd)
   if (!match || !match[1]) return null
   return { name: match[2]!, branch: null, path: cwd, originalCwd: startCwd }
+}
+
+/** Whether `cwd` is a worktree Claude Code makes for a session in `folder`: one of the repository `folder` lies in. */
+export function isWorktreeOf(cwd: string, folder: string): boolean {
+  const repo = WORKTREE_RE.exec(cwd)?.[1]
+  return !!repo && inFolder(folder, repo)
 }
 
 function isAlive(pid: number): boolean {
