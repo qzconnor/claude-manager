@@ -4,6 +4,7 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import TabSearchList from '@/components/terminal/TabSearchList.vue'
+import { cn } from '@/lib/utils'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import PaletteCommands from './PaletteCommands.vue'
@@ -42,9 +43,19 @@ function onCloseAutoFocus(event: Event) {
 
 <template>
   <Dialog v-model:open="ui.paletteOpen">
+    <!-- One column no wider than the dialog: with an auto column the rows' long paths widened it past
+         the right edge, which cut off the shortcuts and the scrollbar. In groups it hangs under the
+         title bar's search, which is centred in the space left of the caption buttons. The backdrop
+         leaves the title bar out, so the search it opened from stays sharp above it. -->
     <DialogContent
       :show-close-button="false"
-      class="app-no-drag top-[calc(var(--titlebar-height)+0.375rem)] translate-y-0 gap-0 overflow-hidden rounded-xl! p-0 sm:max-w-[38rem]"
+      overlay-class="top-(--titlebar-height)"
+      :class="
+        cn(
+          'app-no-drag top-[calc(var(--titlebar-height)+0.375rem)] translate-y-0 grid-cols-[minmax(0,1fr)] gap-0 overflow-hidden rounded-xl! p-0 sm:max-w-[38rem]',
+          terminals.grouped && 'left-[calc((100%-var(--caption-buttons-width))/2)]',
+        )
+      "
       @close-auto-focus="onCloseAutoFocus"
     >
       <DialogHeader class="sr-only">
