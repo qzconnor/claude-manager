@@ -21,6 +21,7 @@ export type ShortcutAction =
   | 'split-right'
   | 'split-down'
   | 'focus-pane'
+  | 'toggle-file-tree'
   | 'browser-address'
   | 'browser-reload'
   | 'browser-reload-hard'
@@ -89,6 +90,8 @@ function matchAction(e: ShortcutKey): ShortcutAction | null {
     if (key === 'p') return 'command-palette'
     if (key === 'a') return 'tab-search'
     if (key === 'f') return 'find'
+    // Like the Explorer in VS Code.
+    if (key === 'e') return 'toggle-file-tree'
     if (e.key === 'Tab') return 'previous-tab'
     return null
   }

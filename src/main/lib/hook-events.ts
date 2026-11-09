@@ -1,8 +1,9 @@
 import { isAbsolute, resolve } from 'node:path'
-import type { TerminalActivity } from '@shared/types'
+import type { FileTouch, TerminalActivity } from '@shared/types'
 import { isPlainObject } from '@shared/utils'
 import { toolSummary } from '../workers/transcript-parser'
 import { SESSION_ID_RE, waitingDetail } from './session-files'
+import { shellFiles } from './shell-files'
 
 /**
  * The hook events of Claude Code the app listens to. Each one costs a request to the app per event
@@ -113,10 +114,27 @@ function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
+/** What a hook call tells of files, for the file tree; paths are absolute. */
+export interface FileActivity {
+  /** Files a tool reads or writes. */
+  touches?: FileTouch[]
+  /** Paths that count only where they are files: a shell command's arguments, what a search found. */
+  maybe?: FileTouch[]
+  /** A commit was made in this folder. */
+  commit?: string
+  /**
+   * A shell command starts or ended. Files that change in `cwd` meanwhile are what it writes; at its
+   * end so are the `writes` it names, if they changed since it started.
+   */
+  shell?: { id: string; cwd: string; end: boolean; writes: string[] }
+}
+
 /** One hook call: its event and the session it belongs to (also for the events of subagents). */
 export interface HookCall {
   sessionId: string | null
   event: HookEvent
+  /** What the call does with files. */
+  files?: FileActivity
 }
 
 /** The call in the body of a hook request; null for an event the app doesn't know or can't read. */
@@ -125,7 +143,84 @@ export function parseHookCall(body: unknown): HookCall | null {
   const event = parseEvent(body)
   if (!event) return null
   const sessionId = text(body.session_id)
-  return { sessionId: sessionId && SESSION_ID_RE.test(sessionId) ? sessionId : null, event }
+  const files = fileActivity(body)
+  return { sessionId: sessionId && SESSION_ID_RE.test(sessionId) ? sessionId : null, event, ...(files && { files }) }
+}
+
+/** Tools that read a file, and those that write one; the file is in `file_path` (`notebook_path` for notebooks). */
+const READING_TOOLS = new Set(['Read'])
+const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
+const SEARCH_TOOLS = new Set(['Grep', 'Glob'])
+const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
+/** A shell command that commits: `git commit`, also with options between (`git -C repo commit`). */
+const COMMIT_RE = /\bgit\b[^;&|\n]*\scommit\b/
+/** The most files of a search that light up. */
+const MAX_FOUND = 20
+
+/**
+ * What a tool does with files: the file it is about to read or write (PreToolUse); the file a search
+ * looks in, and what it found (PostToolUse); the files a shell command names, while it runs, and the
+ * commit it made.
+ */
+export function fileActivity(body: Record<string, unknown>): FileActivity | null {
+  const tool = text(body.tool_name)
+  const input = isPlainObject(body.tool_input) ? body.tool_input : null
+  const cwd = text(body.cwd)
+  if (!tool || !input) return null
+  const at = (file: string) => (isAbsolute(file) ? file : cwd ? resolve(cwd, file) : null)
+  const event = body.hook_event_name
+  if (event === 'PreToolUse' && (READING_TOOLS.has(tool) || WRITING_TOOLS.has(tool))) {
+    const file = text(input.file_path) ?? text(input.notebook_path)
+    const path = file ? at(file) : null
+    return path ? { touches: [{ path, kind: READING_TOOLS.has(tool) ? 'read' : 'write' }] } : null
+  }
+  if (SEARCH_TOOLS.has(tool)) {
+    if (event === 'PreToolUse') {
+      // Searched in one file; a folder isn't marked.
+      const file = text(input.path)
+      const path = file ? at(file) : null
+      return path ? { maybe: [{ path, kind: 'search' }] } : null
+    }
+    if (event !== 'PostToolUse' || !cwd) return null
+    const found = foundFiles(body.tool_response).flatMap((file) => at(file) ?? [])
+    return found.length ? { maybe: found.map((path) => ({ path, kind: 'search' })) } : null
+  }
+  if (SHELL_TOOLS.has(tool) && cwd && (event === 'PreToolUse' || event === 'PostToolUse' || event === 'PostToolUseFailure')) {
+    const command = text(input.command)
+    if (!command) return null
+    const id = text(body.tool_use_id) ?? tool
+    const files = shellFiles(command, cwd, tool === 'PowerShell')
+    if (event === 'PreToolUse') {
+      const maybe: FileTouch[] = [
+        ...files.reads.map((path) => ({ path, kind: 'read' as const })),
+        ...files.searches.map((path) => ({ path, kind: 'search' as const })),
+      ]
+      return { ...(maybe.length && { maybe }), shell: { id, cwd, end: false, writes: [] } }
+    }
+    const commit = event === 'PostToolUse' && tool === 'Bash' && COMMIT_RE.test(command)
+    return { ...(commit && { commit: cwd }), shell: { id, cwd, end: true, writes: files.writes } }
+  }
+  return null
+}
+
+/**
+ * The files a search (Grep, Glob) found, relative to the folder Claude works in: its `filenames`, or
+ * with Grep's lines the files at their start (`path:12:text`).
+ */
+function foundFiles(response: unknown): string[] {
+  if (!isPlainObject(response)) return []
+  const names = new Set<string>()
+  if (Array.isArray(response.filenames)) {
+    for (const name of response.filenames) if (typeof name === 'string' && name) names.add(name)
+  }
+  if (names.size === 0 && typeof response.content === 'string') {
+    for (const line of response.content.split('\n', 2000)) {
+      const match = /^(.+?)([:-])\d+\2/.exec(line) ?? /^(.+):\d+$/.exec(line)
+      if (match) names.add(match[1]!)
+      if (names.size >= MAX_FOUND) break
+    }
+  }
+  return [...names].slice(0, MAX_FOUND)
 }
 
 /** Tasks a turn leaves running (`background_tasks` of Stop), after which Claude goes on. */

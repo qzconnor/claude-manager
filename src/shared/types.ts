@@ -699,6 +699,9 @@ export type DiffColors = 'theme' | 'original'
  */
 export type TabPosition = 'top' | 'sidebar' | 'groups'
 
+/** The side of a tab's area where its file tree opens; its button sits on the same side of the tab bar. */
+export type FileTreeSide = 'left' | 'right'
+
 export interface AppearanceSettings {
   themeId: string
   material: WindowMaterial
@@ -712,6 +715,7 @@ export interface AppearanceSettings {
   radius: number
   /** In the sidebar the nav icons also get their labels. */
   tabPosition: TabPosition
+  fileTreeSide: FileTreeSide
 }
 
 /** Inner padding of the terminal per side, in px. */
@@ -937,6 +941,98 @@ export type WorktreeCheck =
       existing: string[]
     }
   | { ok: false; reason: string }
+
+// ---------------------------------------------------------------------------
+// File tree
+// ---------------------------------------------------------------------------
+
+/** An entry of a folder in the file tree. */
+export interface FileEntry {
+  name: string
+  /** A folder, also behind a link. */
+  dir: boolean
+  /** A symbolic link or junction. */
+  link: boolean
+  /** A link whose target is missing. */
+  broken: boolean
+}
+
+/** A folder's entries, folders first, each part sorted by name like the Explorer does. */
+export interface FileListing {
+  entries: FileEntry[]
+  /** Entries left out because the folder has too many. */
+  omitted: number
+}
+
+/** The files of a tree's folder, for the search across folders that are not open. */
+export interface FileSearchList {
+  /** Paths relative to the folder, `/`-separated. In a repository without the ones git ignores. */
+  paths: string[]
+  /** More files than were listed. */
+  truncated: boolean
+}
+
+/** How git sees a file of the tree. */
+export type GitFileStatus = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflict'
+
+export interface GitFileState {
+  status: GitFileStatus
+  /** The change is staged, at least partly. */
+  staged: boolean
+  /** Lines added and removed since the last commit; null for binary and untracked files and before the first commit. */
+  added: number | null
+  removed: number | null
+}
+
+/** Git's view of a tree's folder: the branch and the changed and ignored files in it. */
+export interface GitTreeStatus {
+  /** The checked-out branch; null with a detached HEAD. */
+  branch: string | null
+  /** Short hash of HEAD; null before the first commit. */
+  commit: string | null
+  /** The branch the checked-out one follows, e.g. `origin/main`. */
+  upstream: string | null
+  /** Commits ahead of and behind the upstream. */
+  ahead: number
+  behind: number
+  /** Changed files by their path relative to the tree's folder (`/`-separated); untracked folders end with `/`. */
+  files: Record<string, GitFileState>
+  /** Ignored files and folders (ending with `/`), relative to the tree's folder. */
+  ignored: string[]
+  /** More changes or ignored paths than were sent. */
+  truncated: boolean
+}
+
+/** A file's changes since the last commit, or the file itself when there are none to show. */
+export interface FileDiff {
+  /** `git diff HEAD` of the file, staged and unstaged changes together; '' without changes or outside a repository. */
+  patch: string
+  /** The file as it is when there is no patch: unchanged, not yet known to git, or outside a repository. */
+  text: string | null
+  /** The folder is a git repository with a commit to compare with. */
+  repo: boolean
+  binary: boolean
+  /** Too big to show. */
+  tooLarge: boolean
+  /** The file isn't there (deleted, or not yet written). */
+  missing: boolean
+}
+
+/** What Claude does with a file: reads it, searches it (or a search found it), writes it, or commits it. */
+export type FileTouchKind = 'read' | 'search' | 'write' | 'commit'
+
+/** A file Claude touched, by its absolute path. */
+export interface FileTouch {
+  path: string
+  kind: FileTouchKind
+}
+
+/** A tree whose folders the main process watches: its folder, and (Linux) the open subfolders. */
+export interface FileTreeWatch {
+  root: string
+  /** Open folders relative to `root` (`/`-separated); on Windows and macOS the whole folder is watched anyway. */
+  dirs: string[]
+}
 
 /** An in-app message box. The main process requests these too instead of native dialogs. */
 export interface DialogOptions {

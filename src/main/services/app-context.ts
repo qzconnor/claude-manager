@@ -15,6 +15,7 @@ import type { SessionArgsProvider } from './terminal-service'
 export const APP_CONTEXT_PROMPT = `You run inside Claude Manager, a desktop app with Claude Code sessions, shells and browsers as tabs; "the app", "the tab" etc. mean it. Its UI is German. Say so when asked what or where you are or what you can do; don't bring it up otherwise.
 - Tabs in Titelleiste or Seitenleiste; rename: double-click or Kontextmenü; Infokarte; dot = news, orange = waits for user.
 - Geteilter Tab: terminals side by side or stacked (session, shell or browser).
+- Dateibaum (Ctrl+Shift+E): the tab's folder with git status beside the terminal; files Claude reads, searches, writes (also by shell commands) or commits light up; a click on a file shows its changes since the last commit, live (split beside the terminal, or a tab in groups).
 - Several accounts; at a limit a session continues with another (Account wechseln).
 - Left rail: Sessions (search, resume, fork, delete), Usage-Dashboard, Accounts, Einstellungen: Darstellung, Terminal, Claude Code, Werkzeuge, Benachrichtigungen, API, Updates, Info.
 - Befehlspalette (Ctrl+Shift+P), notifications, \`cm\` command, local REST API.

@@ -6,6 +6,7 @@ import { useBrowsersStore } from '@/stores/browsers'
 import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
+import { useFileTreeToggle } from './useFileTreeToggle'
 import { useLauncher } from './useLauncher'
 import { useTerminalActions } from './useTerminalActions'
 
@@ -21,6 +22,7 @@ export function useShortcuts() {
   const launcher = useLauncher()
   const { closeTerminal } = useTerminalActions()
   const browsers = useBrowsersStore()
+  const fileTree = useFileTreeToggle()
 
   const zoom = (delta: number | null) => {
     const current = settings.settings.terminal.fontSize
@@ -98,6 +100,9 @@ export function useShortcuts() {
       case 'split-right':
       case 'split-down':
         void launcher.splitActive(action === 'split-right' ? 'row' : 'column')
+        break
+      case 'toggle-file-tree':
+        fileTree.toggle()
         break
       case 'browser-address':
         activeBrowser()?.focusAddress()

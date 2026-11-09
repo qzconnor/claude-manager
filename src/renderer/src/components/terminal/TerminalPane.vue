@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { CircleStopIcon, FileInputIcon, RotateCwIcon, XIcon } from '@lucide/vue'
-import { computed, nextTick, ref, toRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, toRef, watch } from 'vue'
 import type { TerminalInfo } from '@shared/types'
 import { Button } from '@/components/ui/button'
 import { useClock } from '@/composables/useClock'
@@ -8,6 +8,8 @@ import { useTerminal } from '@/composables/useTerminal'
 import { useTerminalActions } from '@/composables/useTerminalActions'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
 import { formatArgs } from '@/lib/args'
+import { FILE_TREE_DRAG_TYPE } from '@/lib/file-tree'
+import { terminalBus } from '@/lib/terminal-bus'
 import { cn } from '@/lib/utils'
 import { useBrowsersStore } from '@/stores/browsers'
 import { useSettingsStore } from '@/stores/settings'
@@ -43,12 +45,16 @@ const { closeTerminal, restartTerminal } = useTerminalActions()
 const paddingBottom = computed(() => `${settings.settings.terminal.padding.bottom}px`)
 const exited = computed(() => props.terminal.status === 'exited')
 
+// Text from elsewhere in the window, e.g. a file the file tree mentions to Claude.
+onBeforeUnmount(terminalBus.onPaste(props.terminal.id, (text) => term.paste(text)))
+
 // Files dropped on the terminal: their paths are pasted, like in Windows Terminal. Claude Code
-// attaches pasted image paths as images.
+// attaches pasted image paths as images. Entries of the file tree come the same way.
 const dragging = ref(false)
 /** dragenter/dragleave also fire for every child element. */
 let dragDepth = 0
-const carriesFiles = (event: DragEvent) => !exited.value && !!event.dataTransfer?.types.includes('Files')
+const carriesFiles = (event: DragEvent) =>
+  !exited.value && !!event.dataTransfer && (event.dataTransfer.types.includes('Files') || event.dataTransfer.types.includes(FILE_TREE_DRAG_TYPE))
 
 function onDragEnter(event: DragEvent) {
   if (!carriesFiles(event)) return
@@ -70,7 +76,8 @@ function onDrop(event: DragEvent) {
   dragging.value = false
   if (!carriesFiles(event)) return
   event.preventDefault()
-  const paths = [...event.dataTransfer!.files].map((file) => window.api.app.pathForFile(file)).filter(Boolean)
+  const fromTree = event.dataTransfer!.getData(FILE_TREE_DRAG_TYPE)
+  const paths = fromTree ? [fromTree] : [...event.dataTransfer!.files].map((file) => window.api.app.pathForFile(file)).filter(Boolean)
   if (paths.length) term.paste(formatArgs(paths))
 }
 

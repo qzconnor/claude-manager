@@ -1,26 +1,96 @@
 <script setup lang="ts">
 import { useElementBounding } from '@vueuse/core'
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import DiffView from '@/components/files/DiffView.vue'
+import FileTreePanel from '@/components/files/FileTreePanel.vue'
 import TerminalWorkspace from '@/components/terminal/TerminalWorkspace.vue'
 import { cn } from '@/lib/utils'
 import { useBrowsersStore } from '@/stores/browsers'
+import { MAX_TREE_SHARE, useFileTreeStore } from '@/stores/file-tree'
+import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import NavRail from './NavRail.vue'
 import TitleBar from './TitleBar.vue'
 
-/** The window with the tabs in one tab bar (title bar or sidebar), the pages beside the nav rail. */
+/**
+ * The window with the tabs in one tab bar (title bar or sidebar), the pages beside the nav rail. The
+ * file tree of the session with the keyboard takes the left or right edge of the terminals, and the
+ * changes of a file clicked in it split the tab: they sit between the tree and the terminals.
+ */
 const route = useRoute()
 const terminals = useTerminalsStore()
 const browsers = useBrowsersStore()
+const fileTree = useFileTreeStore()
+const settings = useSettingsStore()
 const ui = useUiStore()
 const onTerminals = computed(() => route.name === 'terminals')
 /** On another page the terminals stay drawn, unseen, while Claude drives a browser (see TerminalWorkspace). */
 const drawnUnseen = computed(() => !onTerminals.value && browsers.anyActive)
 
 const main = ref<HTMLElement | null>(null)
-const { left: mainLeft } = useElementBounding(main)
+const { left: mainLeft, width: mainWidth } = useElementBounding(main)
+
+const treeSide = computed(() => settings.settings.appearance.fileTreeSide)
+/** The tree of the session the window works in (for a browser, the session beside it). */
+const target = computed(() => fileTree.targetOf(terminals.workingTerminal))
+/** Its tree, if it is open. */
+const tree = computed(() => {
+  if (!target.value || !fileTree.isOpen(target.value.id)) return null
+  const max = Math.floor(mainWidth.value * MAX_TREE_SHARE)
+  return max > 0 ? { target: target.value, width: Math.min(fileTree.width, max), max } : null
+})
+/** The file whose changes the tab shows beside its terminals, and how wide they are (px). */
+const split = computed(() => {
+  const file = fileTree.splitDiffOf(target.value?.id)
+  if (!target.value || !file) return null
+  const rest = Math.max(0, mainWidth.value - (tree.value?.width ?? 0))
+  return { target: target.value, file, width: Math.round(rest * fileTree.diffShare) }
+})
+/** The file of the tree whose changes are shown, selected in the tree. */
+const current = computed(() => (split.value && split.value.file.root === tree.value?.target.root ? split.value.file.path : null))
+
+/** The terminals keep their size on other pages too, so they don't fit themselves anew for nothing. */
+const workspaceStyle = computed(() => {
+  const beside = (tree.value?.width ?? 0) + (split.value?.width ?? 0)
+  // An explicit width: the workspace is `size-full`, which would keep it as wide as the page.
+  return beside ? { [treeSide.value]: `${beside}px`, width: `calc(100% - ${beside}px)` } : undefined
+})
+/** The changes lie between the tree and the terminals. */
+const diffStyle = computed(() => ({ [treeSide.value]: `${tree.value?.width ?? 0}px`, width: `${split.value?.width ?? 0}px` }))
+
+// The line between the changes and the terminals is dragged to share the tab between them.
+const resizingSplit = ref(false)
+let endSplitResize: (() => void) | null = null
+function onSplitResizeStart(event: PointerEvent) {
+  if (event.button !== 0 || !main.value) return
+  event.preventDefault()
+  const handle = event.currentTarget as HTMLElement
+  handle.setPointerCapture(event.pointerId)
+  const bounds = main.value.getBoundingClientRect()
+  const treeWidth = tree.value?.width ?? 0
+  const rest = Math.max(1, bounds.width - treeWidth)
+  resizingSplit.value = true
+  document.documentElement.dataset.resizing = 'col'
+  const move = (e: PointerEvent) => {
+    const width = treeSide.value === 'left' ? e.clientX - bounds.left - treeWidth : bounds.right - treeWidth - e.clientX
+    fileTree.setDiffShare(width / rest)
+  }
+  const end = () => {
+    handle.removeEventListener('pointermove', move)
+    handle.removeEventListener('pointerup', end)
+    handle.removeEventListener('pointercancel', end)
+    resizingSplit.value = false
+    delete document.documentElement.dataset.resizing
+    endSplitResize = null
+  }
+  handle.addEventListener('pointermove', move)
+  handle.addEventListener('pointerup', end)
+  handle.addEventListener('pointercancel', end)
+  endSplitResize = end
+}
+onBeforeUnmount(() => endSplitResize?.())
 
 /**
  * The part of the page's top border below the selected tab in the title bar (px from the page's
@@ -72,9 +142,56 @@ watch(
         <TerminalWorkspace
           v-show="onTerminals || drawnUnseen"
           :class="cn('absolute inset-0', drawnUnseen && 'pointer-events-none -z-10 opacity-0')"
+          :style="workspaceStyle"
           :aria-hidden="drawnUnseen || undefined"
           :visible="onTerminals"
         />
+        <!-- Keyed by the tab, which comes back to its own place in the tree. -->
+        <FileTreePanel
+          v-if="tree"
+          v-show="onTerminals"
+          :key="tree.target.id"
+          class="absolute inset-y-0"
+          :style="{ [treeSide]: 0, width: `${tree.width}px` }"
+          :target="tree.target"
+          :side="treeSide"
+          :max-width="tree.max"
+          :current="current"
+        />
+        <!-- The changes of a file of the tree, a split of the tab; keyed by the tab like the tree. -->
+        <div
+          v-if="split"
+          v-show="onTerminals"
+          :key="`diff-${split.target.id}`"
+          :class="cn('absolute inset-y-0 flex', treeSide === 'left' ? 'border-r' : 'border-l')"
+          :style="diffStyle"
+        >
+          <DiffView
+            class="min-w-0 flex-1"
+            :root="split.file.root"
+            :path="split.file.path"
+            closable
+            @close="fileTree.closeSplitDiff(split.target.id)"
+          />
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Breite der Änderungen ändern"
+            :aria-valuenow="Math.round(fileTree.diffShare * 100)"
+            :class="cn('group/handle absolute inset-y-0 z-20 w-[9px] cursor-col-resize', treeSide === 'left' ? '-right-[5px]' : '-left-[5px]')"
+            @pointerdown="onSplitResizeStart"
+            @dblclick="fileTree.setDiffShare(0.5)"
+          >
+            <div
+              :class="
+                cn(
+                  'absolute inset-y-0 left-[4px] w-px transition-colors group-hover/handle:bg-primary/60',
+                  resizingSplit && 'bg-primary/60',
+                )
+              "
+            />
+          </div>
+        </div>
         <!-- No v-if on the child: the compiler would give every route the same key and
              KeepAlive would mix up the cached pages. The terminals route renders an empty view. -->
         <RouterView v-slot="{ Component }">

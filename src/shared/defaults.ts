@@ -66,6 +66,7 @@ export function createDefaultSettings(platform = 'win32'): AppSettings {
       uiFontSize: 14,
       radius: 0.625,
       tabPosition: 'top',
+      fileTreeSide: 'left',
     },
     terminal: {
       fontFamily: platform === 'win32' ? 'Cascadia Mono' : 'Geist Mono Variable',

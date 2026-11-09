@@ -24,6 +24,7 @@ describe('matchShortcut', () => {
     expect(matchShortcut(press({ key: 'P', shift: true }))).toEqual({ action: 'command-palette' })
     expect(matchShortcut(press({ key: 'A', shift: true }))).toEqual({ action: 'tab-search' })
     expect(matchShortcut(press({ key: 'F', shift: true }))).toEqual({ action: 'find' })
+    expect(matchShortcut(press({ key: 'E', shift: true }))).toEqual({ action: 'toggle-file-tree' })
     expect(matchShortcut(press({ key: 'Tab', shift: true }))).toEqual({ action: 'previous-tab' })
   })
 

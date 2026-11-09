@@ -5,6 +5,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { layoutPanes } from '@shared/panes'
 import type { SplitDirection } from '@shared/types'
 import GitBranchChip from '@/components/common/GitBranchChip.vue'
+import FileTreeButton from '@/components/files/FileTreeButton.vue'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,20 +20,27 @@ import { useTabDrag } from '@/composables/useTabDrag'
 import { useTerminalActions } from '@/composables/useTerminalActions'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
 import { groupDropSpot, TAB_BAR_HEIGHT } from '@/lib/workspace'
+import { useFileTreeStore } from '@/stores/file-tree'
+import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore, type GroupView } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import NewTerminalMenu from './NewTerminalMenu.vue'
+import DiffTab from '@/components/files/DiffTab.vue'
 import PageTab from './PageTab.vue'
 import GroupTerminalTab from './GroupTerminalTab.vue'
 
 /**
  * The tab bar of a group, like an editor group's in VS Code: its tabs, a button for a new session in
- * it, and on the right the branch of the shown tab, the split button and the group's menu. Tabs are dragged within the bar to
- * reorder them, onto another group's bar to move them there, or onto a group's content to split it.
+ * it, and on the right the branch of the shown tab, the split button and the group's menu. The button
+ * of the file tree sits on the side the tree opens: before the tabs, or after the menu. Tabs are dragged
+ * within the bar to reorder them, onto another group's bar to move them there, or onto a group's content
+ * to split it.
  */
 const props = defineProps<{ group: GroupView; focused: boolean }>()
 
 const terminals = useTerminalsStore()
+const settings = useSettingsStore()
+const treeSide = computed(() => settings.settings.appearance.fileTreeSide)
 const ui = useUiStore()
 const launcher = useLauncher()
 const { closeGroup } = useTerminalActions()
@@ -44,7 +52,8 @@ const { containerBackground } = useTerminalAppearance()
 // The same object while the colour stays, so the tabs don't render again for it.
 const joined = computed<Record<string, string>>((previous) => {
   const shown = props.group.tabs.find((t) => t.id === props.group.active)
-  const background = shown?.terminal
+  // A file's changes are drawn on the terminal's background too.
+  const background = shown?.terminal || shown?.diff
     ? `linear-gradient(${containerBackground.value}, ${containerBackground.value}), var(--surface)`
     : 'var(--surface)'
   return previous?.background === background ? previous : { background }
@@ -56,6 +65,9 @@ function select(id: string) {
 
 /** The terminal the group shows, which a split starts like. */
 const shownTerminal = computed(() => props.group.tabs.find((t) => t.id === props.group.active)?.terminal ?? null)
+/** The tree the group shows beside its tab; for a file's changes that of a tab in its folder. */
+const fileTree = useFileTreeStore()
+const treeTarget = computed(() => fileTree.targetOfGroup(props.group))
 
 /** A new session beside the group; with a page shown, an empty group takes it. */
 async function split(direction: SplitDirection) {
@@ -74,7 +86,7 @@ async function split(direction: SplitDirection) {
  */
 const branchDir = computed(() => {
   const terminal = terminals.workingTerminalOf(shownTerminal.value)
-  return terminal?.worktree?.path || terminal?.cwd || null
+  return terminal?.worktree?.path || terminal?.cwd || treeTarget.value?.root || null
 })
 
 /** A browser always belongs to a session: the one the group shows, or the session of the browser it shows. */
@@ -160,6 +172,9 @@ const iconButton =
     :style="{ height: `${TAB_BAR_HEIGHT}px` }"
     @pointerdown.capture="!focused && terminals.focusGroup(group.id)"
   >
+    <div v-if="treeSide === 'left'" class="flex shrink-0 items-center border-b pl-1.5">
+      <FileTreeButton :target="treeTarget" variant="group" />
+    </div>
     <div class="w-1.5 shrink-0 border-b" />
     <div ref="strip" role="tablist" class="no-scrollbar flex min-w-0 overflow-x-auto">
       <template v-for="tab in group.tabs" :key="tab.id">
@@ -172,8 +187,17 @@ const iconButton =
           :joined="joined"
           @select="select"
         />
+        <DiffTab
+          v-else-if="tab.diff"
+          :file="tab.diff"
+          :group-id="group.id"
+          :selected="tab.id === group.active"
+          :focused="focused && tab.id === group.active"
+          :joined="joined"
+          @select="select"
+        />
         <PageTab
-          v-else
+          v-else-if="tab.page"
           :page="tab.page"
           :group-id="group.id"
           :selected="tab.id === group.active"
@@ -225,6 +249,7 @@ const iconButton =
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      <FileTreeButton v-if="treeSide === 'right'" :target="treeTarget" variant="group" />
     </div>
   </div>
 </template>

@@ -21,6 +21,7 @@ import { AccountService } from './services/account-service'
 import { AppContextPrompt } from './services/app-context'
 import { ClaudeCli } from './services/claude-cli'
 import { CswapImport } from './services/cswap-import'
+import { FileTreeService } from './services/file-tree-service'
 import { GitService } from './services/git-service'
 import { IndexerClient } from './services/indexer-client'
 import { NotificationService } from './services/notification-service'
@@ -90,8 +91,15 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   const browserMcp = new BrowserMcpServer(sessionServer, userDataDir, settings, new BrowserTools(browser), app.getVersion())
   browserMcp.init()
   terminals.addSessionArgs(browserMcp)
-  // Sessions tell their state through Claude Code's hooks (setting `hookState`).
-  const sessionHooks = new SessionHooks(sessionServer, userDataDir, settings, (id, call) => terminals.applyHook(id, call))
+  const files = new FileTreeService()
+  // Sessions tell their state through Claude Code's hooks (setting `hookState`), and which files Claude touches.
+  const sessionHooks = new SessionHooks(sessionServer, userDataDir, settings, (id, call) => {
+    terminals.applyHook(id, call)
+    // A new turn, or the end of one, ends the shell commands still taken for running (Esc ends one silently).
+    const event = call.event
+    if (event.kind === 'prompt' || event.kind === 'failure' || (event.kind === 'stop' && !event.background)) files.endShells(id)
+    if (call.files) files.activity(id, call.files)
+  })
   sessionHooks.init()
   terminals.addSessionArgs(sessionHooks)
   const sessions = new SessionService(accounts, indexer, terminals)
@@ -137,6 +145,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     usage,
     notifications,
     git,
+    files,
     command,
     updates,
     async appInfo(): Promise<AppInfo> {
@@ -342,6 +351,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     sessionServer.dispose()
     usage.dispose()
     git.dispose()
+    files.dispose()
     sessions.dispose()
     accounts.dispose()
     indexer.dispose()

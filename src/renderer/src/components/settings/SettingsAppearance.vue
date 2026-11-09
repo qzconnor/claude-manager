@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { TabPosition, WindowMaterial } from '@shared/types'
+import type { FileTreeSide, TabPosition, WindowMaterial } from '@shared/types'
 import { Switch } from '@/components/ui/switch'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useSetting } from '@/composables/useSetting'
@@ -42,6 +42,16 @@ const tabPosition = useSetting(
   (tabPosition) => ({ appearance: { tabPosition } }),
 )
 
+const fileTreeSide = useSetting(
+  (s) => s.appearance.fileTreeSide,
+  (fileTreeSide) => ({ appearance: { fileTreeSide } }),
+)
+
+const FILE_TREE_SIDES: { value: FileTreeSide; label: string }[] = [
+  { value: 'left', label: 'Links' },
+  { value: 'right', label: 'Rechts' },
+]
+
 const TAB_POSITIONS: { value: TabPosition; label: string }[] = [
   { value: 'top', label: 'Oben' },
   { value: 'sidebar', label: 'Seitenleiste' },
@@ -74,6 +84,16 @@ function onMaterial(value: unknown) {
         description="Oben in der Titelleiste oder untereinander in der Seitenleiste. Dort bekommen auch die Symbole der Navigation eine Beschriftung. In Gruppen wie in VS Code hat jeder Teil des Fensters seine eigene Tableiste, und Sessions, Usage, Accounts und Einstellungen öffnen sich auch als Tabs."
       >
         <SegmentedControl v-model="tabPosition" :options="TAB_POSITIONS" aria-label="Position der Tabs" />
+      </SettingField>
+    </SettingsSection>
+
+    <SettingsSection anchor="appearance.fileTree" title="Dateibaum" description="Die Dateien des Ordners, in dem ein Tab arbeitet.">
+      <SettingField
+        anchor="appearance.fileTreeSide"
+        label="Seite"
+        description="Der Baum öffnet sich neben dem Terminal auf dieser Seite, sein Knopf steht passend dazu: links vor den Tabs, rechts hinter dem Menü. Jeder Tab merkt sich, ob sein Baum offen ist. Strg+Umschalt+E blendet ihn ein und aus."
+      >
+        <SegmentedControl v-model="fileTreeSide" :options="FILE_TREE_SIDES" aria-label="Seite des Dateibaums" />
       </SettingField>
     </SettingsSection>
 

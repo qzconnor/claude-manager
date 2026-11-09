@@ -4,8 +4,9 @@ import type { PaneNode } from '@shared/types'
 
 /**
  * The window as in VS Code: its space is shared by groups (a tree of splits like the parts of a tab
- * used to be), and every group has a tab bar of its own. A tab is a terminal (by its id) or one of
- * the app's pages (`page:settings`). Like `@shared/panes`, nothing is changed in place.
+ * used to be), and every group has a tab bar of its own. A tab is a terminal (by its id), one of the
+ * app's pages (`page:settings`) or a file's changes from the file tree (`diff:[root, path]`). Like
+ * `@shared/panes`, nothing is changed in place.
  */
 
 export const PAGES = ['sessions', 'dashboard', 'accounts', 'settings'] as const
@@ -20,6 +21,31 @@ export function pageOfTab(tab: string | null | undefined): PageName | null {
   const page = tab.slice(PAGE_PREFIX.length)
   return isPage(page) ? page : null
 }
+
+const DIFF_PREFIX = 'diff:'
+
+/** A file whose changes a tab shows: the folder of its tree and the file in it (`/`-separated). */
+export interface DiffFile {
+  root: string
+  path: string
+}
+
+export const diffTab = (file: DiffFile) => `${DIFF_PREFIX}${JSON.stringify([file.root, file.path])}`
+export function diffOfTab(tab: string | null | undefined): DiffFile | null {
+  if (!tab?.startsWith(DIFF_PREFIX)) return null
+  try {
+    const value = JSON.parse(tab.slice(DIFF_PREFIX.length)) as unknown
+    if (Array.isArray(value) && value.length === 2 && typeof value[0] === 'string' && typeof value[1] === 'string' && value[0] && value[1]) {
+      return { root: value[0], path: value[1] }
+    }
+  } catch {
+    // Not one of ours.
+  }
+  return null
+}
+
+/** A tab without a terminal: a page or a file's changes. */
+export const isViewTab = (tab: string) => pageOfTab(tab) !== null || diffOfTab(tab) !== null
 
 /** A part of the window with tabs of its own. */
 export interface TabGroup {

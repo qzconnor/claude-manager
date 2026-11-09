@@ -265,6 +265,166 @@
   }
 }
 
+/* Files Claude touches in the file tree, as in the claude-code-filetree plugin: purple while it reads,
+   blue while it searches, orange while it writes, green for the files of its commit. The row takes on the colour with a light
+   sweeping across it, a light runs across the name too. Outside a layer, so it
+   wins over the colour of the file's git mark. */
+:root {
+  --touch-read: oklch(0.55 0.2 300);
+  --touch-search: oklch(0.56 0.14 235);
+  --touch-write: oklch(0.63 0.17 50);
+  --touch-commit: oklch(0.56 0.15 150);
+}
+.dark {
+  --touch-read: oklch(0.74 0.15 300);
+  --touch-search: oklch(0.76 0.12 230);
+  --touch-write: oklch(0.77 0.15 60);
+  --touch-commit: oklch(0.76 0.16 150);
+}
+[data-touch='read'] {
+  --touch: var(--touch-read);
+}
+[data-touch='search'] {
+  --touch: var(--touch-search);
+}
+[data-touch='write'] {
+  --touch: var(--touch-write);
+}
+[data-touch='commit'] {
+  --touch: var(--touch-commit);
+}
+.file-tree-touch {
+  background: linear-gradient(
+      90deg,
+      var(--touch) 35%,
+      color-mix(in oklab, var(--touch) 30%, var(--foreground)) 50%,
+      var(--touch) 65%
+    )
+    0 0 / 250% 100%;
+  background-clip: text;
+  color: transparent;
+  font-weight: 500;
+  animation: text-shimmer 1.3s linear infinite;
+}
+/* Images over the row's own background, so a selected row stays selected. */
+.file-tree-touch-row {
+  --touch-tint: color-mix(in oklab, var(--touch) 16%, transparent);
+  background-image:
+    linear-gradient(90deg, transparent, color-mix(in oklab, var(--touch) 32%, transparent), transparent),
+    linear-gradient(var(--touch-tint), var(--touch-tint));
+  background-size:
+    45% 100%,
+    100% 100%;
+  background-repeat: no-repeat;
+  animation: file-tree-sweep 1.6s ease-in-out infinite;
+}
+@keyframes file-tree-sweep {
+  from {
+    background-position:
+      -90% 0,
+      0 0;
+  }
+  to {
+    background-position:
+      190% 0,
+      0 0;
+  }
+}
+.file-tree-touch-icon,
+.file-tree-touch-folder {
+  color: var(--touch);
+}
+/* A closed folder with a touched file inside. */
+.file-tree-touch-dot {
+  background: var(--touch);
+}
+@media (prefers-reduced-motion: reduce) {
+  .file-tree-touch {
+    animation: none;
+    background: none;
+    color: var(--touch);
+  }
+  .file-tree-touch-row {
+    animation: none;
+    background-image: linear-gradient(var(--touch-tint), var(--touch-tint));
+  }
+}
+
+/* Code in a file's diff (highlight.js), in the colours of the terminal's theme: the view sets
+   `--syn-*` from its palette, so every theme (light ones too) brings its own. */
+.syntax .hljs-keyword,
+.syntax .hljs-doctag,
+.syntax .hljs-meta .hljs-keyword,
+.syntax .hljs-template-tag,
+.syntax .hljs-selector-pseudo {
+  color: var(--syn-magenta);
+}
+.syntax .hljs-string,
+.syntax .hljs-meta .hljs-string,
+.syntax .hljs-addition,
+.syntax .hljs-code,
+.syntax .hljs-char.escape_ {
+  color: var(--syn-green);
+}
+.syntax .hljs-number,
+.syntax .hljs-literal,
+.syntax .hljs-bullet,
+.syntax .hljs-selector-class,
+.syntax .hljs-title.class_,
+.syntax .hljs-title.class_.inherited__ {
+  color: var(--syn-yellow);
+}
+.syntax .hljs-title,
+.syntax .hljs-title.function_,
+.syntax .hljs-section,
+.syntax .hljs-selector-id {
+  color: var(--syn-blue);
+}
+.syntax .hljs-built_in,
+.syntax .hljs-type,
+.syntax .hljs-meta,
+.syntax .hljs-regexp,
+.syntax .hljs-symbol,
+.syntax .hljs-link,
+.syntax .hljs-selector-attr,
+.syntax .hljs-variable.constant_ {
+  color: var(--syn-cyan);
+}
+.syntax .hljs-attr,
+.syntax .hljs-attribute,
+.syntax .hljs-property,
+.syntax .hljs-name,
+.syntax .hljs-selector-tag,
+.syntax .hljs-variable.language_,
+.syntax .hljs-template-variable,
+.syntax .hljs-deletion {
+  color: var(--syn-red);
+}
+.syntax .hljs-comment,
+.syntax .hljs-quote {
+  color: var(--syn-comment);
+  font-style: italic;
+}
+.syntax .hljs-emphasis {
+  font-style: italic;
+}
+.syntax .hljs-strong,
+.syntax .hljs-section {
+  font-weight: 600;
+}
+.syntax .hljs-link {
+  text-decoration: underline;
+}
+
+/* While a panel's width is dragged, the cursor stays the resize arrow everywhere and nothing gets selected. */
+:root[data-resizing] {
+  cursor: col-resize;
+  user-select: none;
+}
+:root[data-resizing] webview {
+  pointer-events: none;
+}
+
 /* Slim, theme-aware scrollbars everywhere */
 ::-webkit-scrollbar {
   width: 10px;
