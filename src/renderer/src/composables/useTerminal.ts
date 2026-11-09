@@ -1,7 +1,6 @@
 import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { UnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes'
-import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal, type ITheme, type ITerminalOptions } from '@xterm/xterm'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
@@ -12,6 +11,7 @@ import { matchShortcut } from '@shared/shortcuts'
 import { addedImageRef, countImageRefs, pastedImageLinks } from '@/lib/pasted-image-links'
 import { terminalBus } from '@/lib/terminal-bus'
 import { makeSlotsTranslucent, setSlotTints } from '@/lib/translucent-slots'
+import { urlLinks } from '@/lib/url-links'
 import { useAppStore } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
@@ -514,12 +514,7 @@ export function useTerminal(options: UseTerminalOptions) {
     })
     searchAddon = new SearchAddon()
     term.loadAddon(searchAddon)
-    term.loadAddon(
-      new WebLinksAddon((event, uri) => {
-        event.preventDefault()
-        void window.api.app.openExternal(uri)
-      }),
-    )
+    term.registerLinkProvider(urlLinks(term, { open: (url) => void window.api.app.openExternal(url) }))
     // Images pasted into Claude Code show where it names them, before and after the prompt is sent.
     if (claudeSession) {
       term.registerLinkProvider(
