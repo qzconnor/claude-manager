@@ -755,6 +755,26 @@ export const useTerminalsStore = defineStore('terminals', () => {
     activateTab(tab)
   }
 
+  /**
+   * With the tabs in groups, shows a file's changes as a tab that stays in the group right of `beside`'s
+   * group, in a new group there if there is none; the tab is shown and its group gets the keyboard.
+   * Open already in another group, it is shown there; in `beside`'s own group, it moves to the right.
+   */
+  function openDiffBeside(file: DiffFile, beside: string): void {
+    let ws = workspace.value
+    const own = groupOfTab(ws, beside)
+    if (!own) return
+    const tab = diffTab(file)
+    const open = groupOfTab(ws, tab)
+    if (!open || open.id === own.id) {
+      if (open) ws = removeTab(ws, tab)
+      const right = neighbourPane(ws.layout, own.id, 'right')
+      workspace.value = right ? addTab(ws, right, tab) : splitGroup(ws, own.id, 'right', newGroupId(), [tab])
+    }
+    previewTabs.delete(tab)
+    activateTab(tab)
+  }
+
   /** A previewing file tab stays from now on. */
   function keepDiff(tab: string): void {
     previewTabs.delete(tab)
@@ -1119,6 +1139,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     closePage,
     previewTabs,
     openDiff,
+    openDiffBeside,
     keepDiff,
     closeDiff,
     close,

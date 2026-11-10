@@ -304,12 +304,14 @@ export const useFileTreeStore = defineStore('file-tree', () => {
 
   /**
    * Shows all changes of a session's folder, as the knob of its tree does: `/diff` was typed in the
-   * session (setting `claude.diffCommand`). In groups as a tab of the session's group that stays.
+   * session (setting `claude.diffCommand`). In groups as a tab that stays in the group right of the
+   * session's, so the session stays in view; otherwise beside the session's terminal.
    */
   function showAllChanges(id: string): void {
     const target = targetOf(terminals.terminals.find((t) => t.id === id))
     if (!target) return
-    showDiff(target, '', { groupId: terminals.grouped ? (terminals.groupOf(id)?.id ?? null) : null, keep: true })
+    if (terminals.grouped) terminals.openDiffBeside({ root: target.root, path: '' }, id)
+    else showDiff(target, '')
   }
 
   // ── Trees by folder ──
