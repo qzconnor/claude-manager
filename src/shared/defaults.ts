@@ -107,6 +107,7 @@ export function createDefaultSettings(platform = 'win32'): AppSettings {
       claudeInChromeHintDismissed: false,
       appContext: true,
       hookState: true,
+      diffCommand: true,
       limitsTool: true,
       sessionsTool: true,
       themesTool: true,

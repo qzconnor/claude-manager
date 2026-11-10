@@ -207,6 +207,8 @@ export const IpcEvent = {
   terminalExit: 'event:terminal-exit',
   /** Ask the window to show a terminal tab (e.g. opened through the local API). */
   terminalActivate: 'event:terminal-activate',
+  /** `/diff` was typed in a session: the window shows all changes of its folder (setting `claude.diffCommand`). */
+  terminalShowChanges: 'event:terminal-show-changes',
   /** A tab was replaced by one that continues its session with another account; before the old one closes. */
   terminalReplaced: 'event:terminal-replaced',
   /** A session at a limit went on with another account by itself, or that failed. */
@@ -374,6 +376,8 @@ export interface ManagerApi {
     onData(cb: (id: string, data: string, offset: number) => void): Unsubscribe
     onExit(cb: (id: string, exitCode: number) => void): Unsubscribe
     onActivate(cb: (id: string) => void): Unsubscribe
+    /** `/diff` was typed in the session: show all changes of its folder. */
+    onShowChanges(cb: (id: string) => void): Unsubscribe
     /** The new tab takes the place of the old one, which closes right after. */
     onReplaced(cb: (oldId: string, info: TerminalInfo) => void): Unsubscribe
     onAutoSwitch(cb: (event: AutoSwitchEvent) => void): Unsubscribe

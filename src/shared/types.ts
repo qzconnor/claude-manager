@@ -820,6 +820,12 @@ export interface ClaudeSettings {
    * to the app): the end of a turn and waits for the user right away, the tool that runs, subagents.
    */
   hookState: boolean
+  /**
+   * `/diff` in the sessions the app starts shows all changes of the session's folder in the app, not
+   * Claude Code's diff panel: a skill `diff` (`--add-dir`) takes the built-in command's place, and the
+   * app's hook stops the prompt before Claude sees it. Needs `hookState`.
+   */
+  diffCommand: boolean
   /** Sessions the app starts can read the limits of the account they run on (tool `limits`). */
   limitsTool: boolean
   /** Sessions the app starts can search and read the transcripts of earlier sessions (`sessions_search`, `session_read`). */

@@ -1,7 +1,17 @@
 import { mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
-import { hookSettings, mergeHookSettings, parseHookCall, readUserSettings, userSettingsValue, type HookCall } from '../lib/hook-events'
+import {
+  DIFF_COMMAND_ANSWER,
+  hookSettings,
+  isDiffCommand,
+  mergeHookSettings,
+  parseHookCall,
+  readUserSettings,
+  userSettingsValue,
+  withoutDiffPanel,
+  type HookCall,
+} from '../lib/hook-events'
 import type { SessionServer } from './session-server'
 import type { SettingsService } from './settings-service'
 import type { SessionArgsProvider } from './terminal-service'
@@ -14,30 +24,64 @@ const PATH = '/hooks'
 const MAX_BODY_BYTES = 16 * 1024 * 1024
 
 /**
+ * The skill that takes the place of Claude Code's `/diff` (setting `claude.diffCommand`). A skill of a
+ * folder given with `--add-dir` counts as one of the project's, and those replace a built-in command
+ * of the same name; a plugin's would only be `/<plugin>:diff`. The built-in `/diff` runs no hooks, the
+ * skill does: `UserPromptSubmit` brings the prompt `/diff`, the app shows the changes and stops it
+ * there, so the text below never reaches Claude. It does only if the app doesn't answer in time.
+ * `disable-model-invocation`: Claude can't call it itself (that would run no hook) and doesn't see it.
+ */
+const DIFF_SKILL = `---
+name: diff
+description: Alle Änderungen in Claude Manager ansehen
+disable-model-invocation: true
+---
+Claude Manager hat die Ansicht „Alle Änderungen“ nicht geöffnet. Sag dem Nutzer in einem Satz, dass er
+sie im Dateibaum des Tabs über den Knopf „Alle Änderungen ansehen“ öffnen kann. Benutze keine Werkzeuge.
+`
+
+/**
  * Claude Code's hooks for the sessions the app starts (setting `claude.hookState`): each session gets
  * a settings file (`--settings`) whose hooks send every event the app needs to route `/hooks` of the
  * SessionServer, with a token of its own. Claude Code runs them besides the user's own hooks; nothing
  * is written to the user's settings. A `--settings` of the user's own is merged into the file, since
- * Claude Code takes only the last one.
+ * Claude Code takes only the last one. With `claude.diffCommand` the session's `/diff` shows its changes
+ * in the app (see DIFF_SKILL).
  */
 export class SessionHooks implements SessionArgsProvider {
-  /** Token and settings file by session terminal. */
-  private readonly grants = new Map<string, { token: string; file: string }>()
+  /** Token and settings file by session terminal; `diff`: the session has the skill for `/diff`. */
+  private readonly grants = new Map<string, { token: string; file: string; diff: boolean }>()
   private readonly dir: string
+  /** The folder whose `.claude/skills` has the skill for `/diff` (`--add-dir`). */
+  private readonly commandsDir: string
+  /** The skill for `/diff` was written. */
+  private diffSkill = false
 
   constructor(
     private readonly server: SessionServer,
     userDataDir: string,
     private readonly settings: SettingsService,
     private readonly receive: (terminalId: string, call: HookCall) => void,
+    /** `/diff` was typed in the session: the window shows all changes of its folder. */
+    private readonly showChanges: (terminalId: string) => void,
   ) {
     this.dir = join(userDataDir, 'session-hooks')
+    this.commandsDir = join(userDataDir, 'session-commands')
   }
 
   init(): void {
     // Files of the last run: their tokens are gone with it.
     rmSync(this.dir, { recursive: true, force: true })
     mkdirSync(this.dir, { recursive: true })
+    // Written at every start, so the skill is the one of this version of the app.
+    const skillDir = join(this.commandsDir, '.claude', 'skills', 'diff')
+    try {
+      mkdirSync(skillDir, { recursive: true })
+      writeFileSync(join(skillDir, 'SKILL.md'), DIFF_SKILL)
+      this.diffSkill = true
+    } catch (error) {
+      console.error('[session-hooks] the skill for /diff could not be written', error)
+    }
     this.server.route(PATH, (req, res, terminalId) => this.handle(req, res, terminalId))
   }
 
@@ -45,7 +89,11 @@ export class SessionHooks implements SessionArgsProvider {
     return []
   }
 
-  /** After the user's own options: of two `--settings`, Claude Code takes the last. */
+  /**
+   * After the user's own options: of two `--settings`, Claude Code takes the last, and `--add-dir` takes
+   * all the folders after it, so nothing of the user's may follow. The skill for `/diff` only comes
+   * with the hooks, which keep its text from Claude.
+   */
   lastArgs(terminalId: string, extra: readonly string[], cwd: string): string[] {
     if (!this.settings.get().claude.hookState || !this.server.running) return []
     const own = userSettingsValue(extra)
@@ -62,6 +110,8 @@ export class SessionHooks implements SessionArgsProvider {
       }
       settings = mergeHookSettings(user, settings as ReturnType<typeof hookSettings>)
     }
+    const diff = this.diffSkill && this.settings.get().claude.diffCommand
+    if (diff) settings = withoutDiffPanel(settings)
     const file = join(this.dir, `${terminalId}.json`)
     try {
       writeFileSync(file, JSON.stringify(settings), { mode: 0o600 })
@@ -70,8 +120,8 @@ export class SessionHooks implements SessionArgsProvider {
       this.server.revoke(token)
       return []
     }
-    this.grants.set(terminalId, { token, file })
-    return [`--settings=${file}`]
+    this.grants.set(terminalId, { token, file, diff })
+    return diff ? [`--settings=${file}`, `--add-dir=${this.commandsDir}`] : [`--settings=${file}`]
   }
 
   /** The session ended: its token stops working. */
@@ -98,6 +148,14 @@ export class SessionHooks implements SessionArgsProvider {
       return
     }
     const body = await readJsonBody(req)
+    // `/diff` of a session with the skill for it: Claude Code stops before Claude sees the prompt. No
+    // turn starts, so the prompt isn't passed on as one.
+    if (this.grants.get(terminalId)?.diff && isDiffCommand(body)) {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+      res.end(JSON.stringify(DIFF_COMMAND_ANSWER))
+      this.showChanges(terminalId)
+      return
+    }
     // Answered first: Claude Code waits for it (PreToolUse before every tool). An empty answer
     // decides nothing and adds nothing to Claude's context.
     res.writeHead(204, { 'Cache-Control': 'no-store' })

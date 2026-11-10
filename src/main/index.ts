@@ -99,14 +99,23 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   browserMcp.init()
   terminals.addSessionArgs(browserMcp)
   const files = new FileTreeService()
-  // Sessions tell their state through Claude Code's hooks (setting `hookState`), and which files Claude touches.
-  const sessionHooks = new SessionHooks(sessionServer, userDataDir, settings, (id, call) => {
-    terminals.applyHook(id, call)
-    // A new turn, or the end of one, ends the shell commands still taken for running (Esc ends one silently).
-    const event = call.event
-    if (event.kind === 'prompt' || event.kind === 'failure' || (event.kind === 'stop' && !event.background)) files.endShells(id)
-    if (call.files) files.activity(id, call.files)
-  })
+  // Sessions tell their state through Claude Code's hooks (setting `hookState`), and which files Claude
+  // touches; their `/diff` shows all changes in the window (setting `diffCommand`).
+  const sessionHooks = new SessionHooks(
+    sessionServer,
+    userDataDir,
+    settings,
+    (id, call) => {
+      terminals.applyHook(id, call)
+      // A new turn, or the end of one, ends the shell commands still taken for running (Esc ends one silently).
+      const event = call.event
+      if (event.kind === 'prompt' || event.kind === 'failure' || (event.kind === 'stop' && !event.background)) files.endShells(id)
+      if (call.files) files.activity(id, call.files)
+    },
+    (id) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IpcEvent.terminalShowChanges, id)
+    },
+  )
   sessionHooks.init()
   terminals.addSessionArgs(sessionHooks)
   const sessions = new SessionService(accounts, indexer, terminals)
