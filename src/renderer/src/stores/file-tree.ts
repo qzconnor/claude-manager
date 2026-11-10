@@ -1,9 +1,18 @@
 import { defineStore } from 'pinia'
 import { reactive, ref, shallowReactive, shallowRef, watch } from 'vue'
-import type { FileListing, FileSearchList, FileTouch, FileTouchKind, FileTreeWatch, GitTreeStatus, TerminalInfo } from '@shared/types'
+import type {
+  FileListing,
+  FileSearchList,
+  FileTouch,
+  FileTouchKind,
+  FileTreeWatch,
+  GitFileStatus,
+  GitTreeStatus,
+  TerminalInfo,
+} from '@shared/types'
 import { sameData } from '@shared/utils'
 import { errorMessage } from '@/lib/errors'
-import { absolutePath, ancestors, treePathOf } from '@/lib/file-tree'
+import { absolutePath, ancestors, GIT_STATUSES, recordTouch, TOUCH_KINDS, treePathOf, type TouchRecord } from '@/lib/file-tree'
 import type { DiffFile } from '@/lib/workspace'
 import { useAppStore } from './app'
 import { useTerminalsStore, type GroupView } from './terminals'
@@ -35,8 +44,18 @@ const REVEAL_LIMIT: Record<FileTouchKind, number> = { read: 30, write: 30, commi
 const DEFAULT_DIFF_SHARE = 0.5
 const MIN_DIFF_SHARE = 0.2
 const MAX_DIFF_SHARE = 0.8
+/** The most files a session's activity keeps; the ones Claude left alone the longest go first. */
+const MAX_ACTIVITY = 2000
 
 export const SEPARATOR = window.api.platform === 'win32' ? '\\' : '/'
+
+/** Which files the trees show: with neither, all of them; with both, the files of either. */
+export interface TreeFilters {
+  /** The files git sees changed. */
+  changes: boolean
+  /** The files Claude touched in the tab's session. */
+  activity: boolean
+}
 
 interface Saved {
   width: number
@@ -46,6 +65,20 @@ interface Saved {
   expanded: Record<string, string[]>
   showIgnored: boolean
   diffShare: number
+  filters: TreeFilters
+  /** The filters' settings are unfolded. */
+  filtersOpen: boolean
+  /** Git's states the changes filter leaves out. */
+  hiddenStatuses: GitFileStatus[]
+  /** Kinds of touch the activity filter leaves out. */
+  hiddenKinds: FileTouchKind[]
+  /** Long lines of the review of all changes wrap. */
+  diffWrap: boolean
+}
+
+/** The values of a saved list that are among `known`. */
+function knownValues<T extends string>(list: unknown, known: readonly T[]): T[] {
+  return Array.isArray(list) ? list.filter((value): value is T => known.includes(value as T)) : []
 }
 
 /** A tree of a folder, shared by every tab that works in it. */
@@ -65,10 +98,8 @@ export interface TreeModel {
   searchStale: boolean
   /** What is typed into the tree's search. */
   query: string
-  /** Only the files git sees changed are shown, to review them. */
-  changesOnly: boolean
-  /** Folders closed while only the changes are shown (open is the default there). */
-  collapsedChanges: Set<string>
+  /** Folders closed while the tree is filtered (open is the default there). */
+  collapsedFiltered: Set<string>
   /** The selected entry, also the one the keyboard moves from. */
   selected: string | null
   scrollTop: number
@@ -114,6 +145,18 @@ export const useFileTreeStore = defineStore('file-tree', () => {
   const width = ref(clampWidth(typeof saved.width === 'number' ? saved.width : DEFAULT_TREE_WIDTH))
   const showIgnored = ref(saved.showIgnored !== false)
   const diffShare = ref(clampShare(typeof saved.diffShare === 'number' ? saved.diffShare : DEFAULT_DIFF_SHARE))
+  /** The filters hold for every tree, like a view setting of VS Code's Explorer. */
+  const filters = reactive<TreeFilters>({ changes: saved.filters?.changes === true, activity: saved.filters?.activity === true })
+  const filtersOpen = ref(saved.filtersOpen === true)
+  /** Long lines of the review of all changes wrap (the default), or scroll sideways. */
+  const diffWrap = ref(saved.diffWrap !== false)
+  const hiddenStatuses = reactive(new Set(knownValues(saved.hiddenStatuses, GIT_STATUSES)))
+  const hiddenKinds = reactive(new Set(knownValues(saved.hiddenKinds, TOUCH_KINDS)))
+  /**
+   * Every file Claude touched in a session while the app runs, by session (terminal id) and absolute
+   * path, the most recently touched last: what the activity filter shows.
+   */
+  const activity = shallowRef(new Map<string, ReadonlyMap<string, TouchRecord>>())
   /**
    * With the tabs in one tab bar: the file whose changes a tab shows beside its terminal, by the tab
    * whose tree it came from. With the tabs in groups a file gets a tab of its own instead.
@@ -148,6 +191,9 @@ export const useFileTreeStore = defineStore('file-tree', () => {
       const ids = new Set(list.map((t) => t.id))
       for (const id of open) if (!ids.has(id)) open.delete(id)
       for (const id of splitDiffs.keys()) if (!ids.has(id)) splitDiffs.delete(id)
+      if ([...activity.value.keys()].some((id) => !ids.has(id))) {
+        activity.value = new Map([...activity.value].filter(([id]) => ids.has(id)))
+      }
     },
   )
   terminals.onReplaced((oldId, newId) => {
@@ -157,18 +203,37 @@ export const useFileTreeStore = defineStore('file-tree', () => {
       splitDiffs.delete(oldId)
       splitDiffs.set(newId, diff)
     }
+    // The session goes on in the new terminal, and so does what Claude did in it.
+    const recorded = activity.value.get(oldId)
+    if (recorded) {
+      const next = new Map(activity.value)
+      next.delete(oldId)
+      next.set(newId, recorded)
+      activity.value = next
+    }
   })
 
   function save(): void {
     if (!ready) return
     try {
-      const data: Saved = { width: width.value, open: [...open], expanded: remembered, showIgnored: showIgnored.value, diffShare: diffShare.value }
+      const data: Saved = {
+        width: width.value,
+        open: [...open],
+        expanded: remembered,
+        showIgnored: showIgnored.value,
+        diffShare: diffShare.value,
+        filters: { ...filters },
+        filtersOpen: filtersOpen.value,
+        hiddenStatuses: [...hiddenStatuses],
+        hiddenKinds: [...hiddenKinds],
+        diffWrap: diffWrap.value,
+      }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
     } catch {
       // Storage full or blocked: the trees are just not remembered.
     }
   }
-  watch([width, showIgnored, diffShare, () => [...open].join('\n')], save)
+  watch([width, showIgnored, diffShare, filtersOpen, diffWrap, filters, hiddenStatuses, hiddenKinds, () => [...open].join('\n')], save)
 
   /**
    * The tree of a tab: its folder is the one its session works in (a worktree's folder for a session in
@@ -264,8 +329,7 @@ export const useFileTreeStore = defineStore('file-tree', () => {
       searchLoading: false,
       searchStale: false,
       query: '',
-      changesOnly: false,
-      collapsedChanges: reactive(new Set()),
+      collapsedFiltered: reactive(new Set()),
       selected: null,
       scrollTop: 0,
     }) as TreeModel
@@ -514,6 +578,7 @@ export const useFileTreeStore = defineStore('file-tree', () => {
     next.set(terminalId, mine)
     touches.value = next
     scheduleTouchExpiry()
+    record(terminalId, list, now)
     // A commit opens folders too: its files were mostly written a while ago, their folders closed since.
     const revealed: Partial<Record<FileTouchKind, number>> = {}
     for (const touch of list) {
@@ -546,6 +611,43 @@ export const useFileTreeStore = defineStore('file-tree', () => {
   }
 
   const touchesOf = (id: string | null | undefined): ReadonlyMap<string, Touch> | null => (id ? (touches.value.get(id) ?? null) : null)
+
+  /** Adds touches to the session's activity, as its most recent. */
+  function record(terminalId: string, list: readonly FileTouch[], now: number): void {
+    const mine = new Map(activity.value.get(terminalId))
+    for (const touch of list) {
+      const before = mine.get(touch.path)
+      mine.delete(touch.path)
+      mine.set(touch.path, recordTouch(before, touch.kind, now))
+    }
+    if (mine.size > MAX_ACTIVITY) for (const path of [...mine.keys()].slice(0, mine.size - MAX_ACTIVITY)) mine.delete(path)
+    const next = new Map(activity.value)
+    next.set(terminalId, mine)
+    activity.value = next
+  }
+
+  const activityOf = (id: string | null | undefined): ReadonlyMap<string, TouchRecord> | null =>
+    id ? (activity.value.get(id) ?? null) : null
+
+  // ── Reviewing the changes ──
+
+  /**
+   * Files marked as seen while reviewing a folder's changes, by folder and file, with the fingerprint
+   * of their diff then: a file that changes after is to be looked at again. Kept while the app runs.
+   */
+  const seen = reactive(new Map<string, Map<string, string>>())
+
+  const seenOf = (root: string, path: string): string | undefined => seen.get(root)?.get(path)
+
+  /** Marks a file as seen with its diff's fingerprint, or (null) as not seen. */
+  function setSeen(root: string, path: string, hash: string | null): void {
+    if (hash === null) {
+      seen.get(root)?.delete(path)
+      return
+    }
+    if (!seen.has(root)) seen.set(root, new Map())
+    seen.get(root)!.set(path, hash)
+  }
 
   /** The trees on screen open the folders a file Claude touches lies in, as the plugin does. */
   function revealForClaude(touch: FileTouch, now: number): void {
@@ -599,6 +701,11 @@ export const useFileTreeStore = defineStore('file-tree', () => {
     width,
     showIgnored,
     diffShare,
+    filters,
+    filtersOpen,
+    diffWrap,
+    hiddenStatuses,
+    hiddenKinds,
     targetOf,
     targetOfGroup,
     isOpen,
@@ -610,6 +717,9 @@ export const useFileTreeStore = defineStore('file-tree', () => {
     splitDiffOf,
     closeSplitDiff,
     touchesOf,
+    activityOf,
+    seenOf,
+    setSeen,
     hold,
     pinDir,
     release,

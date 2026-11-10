@@ -5,6 +5,7 @@ import { computed, useId } from 'vue'
 import type { FileTouchKind } from '@shared/types'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useFileTreeToggle } from '@/composables/useFileTreeToggle'
+import { TOUCH_RANK } from '@/lib/file-tree'
 import { cn } from '@/lib/utils'
 import { useFileTreeStore, type TreeTarget } from '@/stores/file-tree'
 
@@ -29,12 +30,11 @@ const tooltip = computed(() => (props.target ? `${label.value} (Strg+Umschalt+E)
  * The strongest of what Claude does in the session's files right now, as in the tree; only while the
  * tree is closed, an open one shows it itself.
  */
-const RANK: Record<FileTouchKind, number> = { search: 0, read: 1, commit: 2, write: 3 }
 const activity = computed<FileTouchKind | null>(() => {
   if (pressed.value) return null
   let strongest: FileTouchKind | null = null
   for (const touch of fileTree.touchesOf(props.target?.session.id)?.values() ?? []) {
-    if (!strongest || RANK[touch.kind] > RANK[strongest]) strongest = touch.kind
+    if (!strongest || TOUCH_RANK[touch.kind] > TOUCH_RANK[strongest]) strongest = touch.kind
   }
   return strongest
 })

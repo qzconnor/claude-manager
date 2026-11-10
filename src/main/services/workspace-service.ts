@@ -1,9 +1,9 @@
 import { existsSync, readFileSync, watch, type FSWatcher } from 'node:fs'
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, join } from 'node:path'
-import { folderKey, TRAILING_SEPARATORS, windowsPath } from '@shared/folders'
+import { folderKey, inFolder, movedPath, TRAILING_SEPARATORS, windowsPath } from '@shared/folders'
 import type { Workspace, WorkspaceCreateInput } from '@shared/types'
-import { WORKSPACE_PROMPT_FILE, workspaceNameError, workspacesContaining } from '@shared/workspaces'
+import { WORKSPACE_PROMPT_FILE, workspaceNameError, workspaceOf, workspacesContaining } from '@shared/workspaces'
 import { readJsonSync, writeJsonAtomic } from '../lib/json-file'
 import { TypedEmitter } from '../lib/typed-emitter'
 
@@ -16,6 +16,27 @@ export interface WorkspacePrompt {
 
 interface WorkspaceFile {
   folders: string[]
+  /**
+   * The workspaces and the folders in them as last seen, with their identity on disk (device and
+   * file id): a folder that is gone while one with its identity came is the same one, moved.
+   */
+  seen?: [path: string, id: string][]
+}
+
+/** A folder seen in or as a workspace. `id` is empty where the disk gives folders none (some network drives). */
+interface SeenFolder {
+  path: string
+  id: string
+}
+
+/** The folder `from` was moved to `to` outside the app; awaited before the list is read again. */
+export type MoveFollower = (from: string, to: string) => Promise<void>
+
+/** Where `move` put the folder. */
+export interface FolderMove {
+  path: string
+  /** Moved to another drive: copied, but not all of the old folder could be deleted. */
+  leftover: boolean
 }
 
 type Events = {
@@ -38,6 +59,11 @@ export class WorkspaceService extends TypedEmitter<Events> {
   private folders: string[] = []
   private readonly watchers = new Map<string, FSWatcher>()
   private changeTimer: ReturnType<typeof setTimeout> | null = null
+  /** By `folderKey`. */
+  private seen = new Map<string, SeenFolder>()
+  private follower: MoveFollower | null = null
+  /** Looking for moved folders and moving one, one after the other. */
+  private queue: Promise<unknown> = Promise.resolve()
 
   constructor(userDataDir: string) {
     super()
@@ -48,7 +74,30 @@ export class WorkspaceService extends TypedEmitter<Events> {
     const data = readJsonSync<Partial<WorkspaceFile>>(this.file)
     const folders = Array.isArray(data?.folders) ? data.folders : []
     this.folders = unique(folders.filter((f): f is string => typeof f === 'string' && isAbsolute(f)).map(clean))
+    const seen = Array.isArray(data?.seen) ? data.seen : []
+    for (const entry of seen) {
+      if (!Array.isArray(entry) || typeof entry[0] !== 'string' || typeof entry[1] !== 'string' || !isAbsolute(entry[0])) continue
+      this.seen.set(folderKey(entry[0]), { path: entry[0], id: entry[1] })
+    }
     this.syncWatchers()
+  }
+
+  /**
+   * Folders moved outside the app (in Explorer, also while the app was closed) are followed with
+   * `follower`, e.g. their sessions go along. Looks for such moves right away.
+   */
+  follow(follower: MoveFollower): void {
+    this.follower = follower
+    void this.detectMoves()
+  }
+
+  /**
+   * Compares the folders in and of the workspaces with how they were last seen: one that is gone,
+   * while one with its identity came, was moved there. A moved workspace keeps being one, at its new
+   * place; then the follower runs for each move.
+   */
+  detectMoves(): Promise<void> {
+    return this.serially(() => this.detectNow())
   }
 
   dispose(): void {
@@ -62,8 +111,64 @@ export class WorkspaceService extends TypedEmitter<Events> {
     return [...this.folders]
   }
 
+  /** Also follows folders moved meanwhile, so the list shows them where they are. */
   async list(): Promise<Workspace[]> {
+    await this.detectMoves()
     return Promise.all(this.folders.map((path) => this.describe(path)))
+  }
+
+  /**
+   * Moves the folder `from` into the folder `into`, keeping its name; workspaces in it move along.
+   * To another drive it is copied and then deleted. The caller moves the sessions along.
+   */
+  async move(from: string, into: string): Promise<FolderMove> {
+    const source = clean(from)
+    const parent = clean(into)
+    const name = basename(source)
+    const info = await stat(source).catch(() => null)
+    if (!info?.isDirectory()) throw new Error(`Den Ordner „${source}“ gibt es nicht.`)
+    if (!(await stat(parent).catch(() => null))?.isDirectory()) throw new Error(`Den Ordner „${parent}“ gibt es nicht.`)
+    if (inFolder(parent, source)) throw new Error(`„${name}“ kann nicht in sich selbst verschoben werden.`)
+    const target = join(parent, name)
+    if (folderKey(target) === folderKey(source)) throw new Error(`„${name}“ liegt schon in „${basename(parent) || parent}“.`)
+    if (existsSync(target)) throw new Error(`In „${basename(parent) || parent}“ gibt es schon einen Ordner „${name}“.`)
+
+    // In the queue, so looking for moves doesn't take this one for one made outside the app.
+    const renamed = await this.serially(async () => {
+      this.release(source)
+      try {
+        await rename(source, target)
+        await this.moved(source, target)
+        return true
+      } catch (error) {
+        this.syncWatchers()
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'EXDEV') return false
+        if (code === 'EPERM' || code === 'EBUSY' || code === 'EACCES') {
+          throw new Error(`„${name}“ ist gerade in Benutzung, etwa von einer Shell, einem Editor oder dem Explorer. Schließe sie und versuche es noch einmal.`)
+        }
+        throw error
+      }
+    })
+    if (renamed) return { path: target, leftover: false }
+
+    // Another drive: copied, it is a new folder there, which looking for moves can't mistake for the old one.
+    try {
+      await cp(source, target, { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true })
+    } catch (error) {
+      await rm(target, { recursive: true, force: true }).catch(() => undefined)
+      throw error
+    }
+    let leftover = false
+    try {
+      this.release(source)
+      await rm(source, { recursive: true, force: true, maxRetries: 2 })
+    } catch (error) {
+      console.warn(`[workspaces] the old folder ${source} could not be deleted completely`, error)
+      leftover = existsSync(source)
+    }
+    await this.serially(() => this.moved(source, target))
+    return { path: target, leftover }
   }
 
   /** Makes the folder `parent\name` with a `cm_prompts.md` and lists it as a workspace. */
@@ -162,10 +267,11 @@ export class WorkspaceService extends TypedEmitter<Events> {
     return path
   }
 
+  /** Lists the folder: last, or in a workspace right below it and the others in it. */
   private async add(path: string): Promise<Workspace> {
     const key = folderKey(path)
     if (!this.folders.some((f) => folderKey(f) === key)) {
-      this.folders = [...this.folders, path]
+      this.folders = placeIn(this.folders, path)
       await this.save()
     } else {
       this.changedSoon()
@@ -176,7 +282,97 @@ export class WorkspaceService extends TypedEmitter<Events> {
   private async save(): Promise<void> {
     this.syncWatchers()
     this.emit('changed')
-    await writeJsonAtomic(this.file, { folders: this.folders } satisfies WorkspaceFile)
+    await this.write()
+  }
+
+  private async write(): Promise<void> {
+    const seen = [...this.seen.values()].map((f): [string, string] => [f.path, f.id])
+    await writeJsonAtomic(this.file, { folders: this.folders, seen } satisfies WorkspaceFile)
+  }
+
+  private serially<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(task)
+    this.queue = run.catch(() => undefined)
+    return run
+  }
+
+  /** Stops watching the folder and the workspaces in it: a watched folder can't be moved or deleted. */
+  private release(folder: string): void {
+    for (const [key, watcher] of this.watchers) {
+      if (!inFolder(key, folder)) continue
+      watcher.close()
+      this.watchers.delete(key)
+    }
+  }
+
+  /** The folder `from` is now `to`: what lies in it, as workspace or as seen, is there now too. */
+  private async moved(from: string, to: string): Promise<void> {
+    const seen = new Map<string, SeenFolder>()
+    for (const entry of this.seen.values()) {
+      const path = movedPath(entry.path, from, to) ?? entry.path
+      seen.set(folderKey(path), { path, id: entry.id })
+    }
+    this.seen = seen
+    const moving = this.folders.filter((f) => inFolder(f, from))
+    if (moving.length > 0) {
+      // In a workspace now: below it, like a new one; otherwise where it was.
+      let folders = this.folders.map((f) => movedPath(f, from, to) ?? f)
+      for (const path of moving.map((f) => movedPath(f, from, to)!)) {
+        const rest = folders.filter((f) => f !== path)
+        if (workspaceOf(path, rest)) folders = placeIn(rest, path)
+      }
+      this.folders = unique(folders)
+    }
+    // The workspaces it went from and to show it at once; also the moved ones are watched again.
+    await this.save()
+  }
+
+  /** The workspaces and the folders in them (not hidden ones), with their identity. */
+  private async scan(): Promise<Map<string, SeenFolder>> {
+    const found = new Map<string, SeenFolder>()
+    const add = async (path: string) => {
+      const info = await stat(path, { bigint: true }).catch(() => null)
+      if (!info?.isDirectory()) return
+      found.set(folderKey(path), { path, id: info.ino > 0n ? `${info.dev}:${info.ino}` : '' })
+    }
+    await Promise.all(
+      this.folders.map(async (folder) => {
+        await add(folder)
+        const entries = await readdir(folder, { withFileTypes: true }).catch(() => [])
+        await Promise.all(entries.filter((e) => e.isDirectory() && !e.name.startsWith('.')).map((e) => add(join(folder, e.name))))
+      }),
+    )
+    return found
+  }
+
+  private async detectNow(): Promise<void> {
+    if (!this.follower) return
+    const found = await this.scan()
+    const came = new Map<string, string>()
+    for (const [key, folder] of found) if (folder.id && !this.seen.has(key)) came.set(folder.id, folder.path)
+    const moves: [from: string, to: string][] = []
+    for (const [key, folder] of this.seen) {
+      if (!folder.id || found.has(key)) continue
+      const to = came.get(folder.id)
+      // Not seen any more, but still there: its workspace was taken off the list.
+      if (to && !existsSync(folder.path)) moves.push([folder.path, to])
+    }
+    const changed = found.size !== this.seen.size || [...found].some(([key, f]) => this.seen.get(key)?.id !== f.id)
+    this.seen = found
+    if (moves.length === 0) {
+      if (changed) await this.write().catch((error) => console.warn('[workspaces] could not be saved', error))
+      return
+    }
+    // What lies in a moved folder went along: only the outermost move counts.
+    const outermost = moves.filter(([from]) => !moves.some(([other]) => other !== from && inFolder(from, other)))
+    for (const [from, to] of outermost) await this.moved(from, to)
+    // The moved workspaces' folders are seen now too.
+    for (const [key, folder] of await this.scan()) if (!this.seen.has(key)) this.seen.set(key, folder)
+    await this.write().catch((error) => console.warn('[workspaces] could not be saved', error))
+    for (const [from, to] of outermost) {
+      console.info(`[workspaces] ${from} was moved to ${to}`)
+      await this.follower(from, to).catch((error) => console.warn(`[workspaces] could not follow ${from} to ${to}`, error))
+    }
   }
 
   private async describe(path: string): Promise<Workspace> {
@@ -222,7 +418,10 @@ export class WorkspaceService extends TypedEmitter<Events> {
     if (this.changeTimer) clearTimeout(this.changeTimer)
     this.changeTimer = setTimeout(() => {
       this.changeTimer = null
-      this.emit('changed')
+      // A folder that went and one that came may be one moved: followed before the list is read again.
+      void this.detectMoves()
+        .catch((error) => console.warn('[workspaces] could not look for moved folders', error))
+        .finally(() => this.emit('changed'))
     }, CHANGE_DELAY_MS)
   }
 }
@@ -231,6 +430,13 @@ export class WorkspaceService extends TypedEmitter<Events> {
 function clean(path: string): string {
   const trimmed = path.trim().replace(TRAILING_SEPARATORS, '')
   return process.platform === 'win32' ? windowsPath(trimmed) : trimmed
+}
+
+/** `folders` with `path` added: last, or in a workspace right below it and the others in it. */
+function placeIn(folders: readonly string[], path: string): string[] {
+  const outer = workspaceOf(path, folders)
+  const at = outer ? folders.findLastIndex((f) => inFolder(f, outer)) + 1 : folders.length
+  return [...folders.slice(0, at), path, ...folders.slice(at)]
 }
 
 function unique(paths: string[]): string[] {

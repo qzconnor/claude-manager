@@ -30,7 +30,10 @@ export function pageOfTab(tab: string | null | undefined): PageName | null {
 
 const DIFF_PREFIX = 'diff:'
 
-/** A file whose changes a tab shows: the folder of its tree and the file in it (`/`-separated). */
+/**
+ * A file whose changes a tab shows: the folder of its tree and the file in it (`/`-separated); the
+ * folder itself (`''`) for all its changes, one below the other.
+ */
 export interface DiffFile {
   root: string
   path: string
@@ -41,7 +44,7 @@ export function diffOfTab(tab: string | null | undefined): DiffFile | null {
   if (!tab?.startsWith(DIFF_PREFIX)) return null
   try {
     const value = JSON.parse(tab.slice(DIFF_PREFIX.length)) as unknown
-    if (Array.isArray(value) && value.length === 2 && typeof value[0] === 'string' && typeof value[1] === 'string' && value[0] && value[1]) {
+    if (Array.isArray(value) && value.length === 2 && typeof value[0] === 'string' && typeof value[1] === 'string' && value[0]) {
       return { root: value[0], path: value[1] }
     }
   } catch {

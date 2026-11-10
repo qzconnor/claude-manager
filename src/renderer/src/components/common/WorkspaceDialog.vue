@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
-import { WORKSPACE_PROMPT_FILE, workspaceNameError } from '@shared/workspaces'
+import { folderKey } from '@shared/folders'
+import { WORKSPACE_PROMPT_FILE, workspaceNameError, workspaceOf } from '@shared/workspaces'
 import DirectoryInput from '@/components/common/DirectoryInput.vue'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -9,6 +10,7 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/c
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
+import { useFolderMove } from '@/composables/useFolderMove'
 import { toastError } from '@/lib/errors'
 import { shortenPath } from '@/lib/format'
 import { splitFolder } from '@/lib/recent-folders'
@@ -23,6 +25,7 @@ import { useWorkspacesStore } from '@/stores/workspaces'
 const ui = useUiStore()
 const app = useAppStore()
 const workspaces = useWorkspacesStore()
+const folderMove = useFolderMove()
 
 /** Where the last workspace was made, as the place for the next one. */
 const PARENT_KEY = 'claude-manager.workspaceParent'
@@ -42,6 +45,17 @@ const prompt = ref('')
 const loadingPrompt = ref(false)
 const saving = ref(false)
 const touched = ref(false)
+/** Moves into the new workspace once it is made. */
+const moving = ref<{ path: string; sessions: number } | null>(null)
+
+/** The workspace the folder lies in (not the folder itself): its prompt still applies, before this one. */
+const outer = computed(() => {
+  if (mode.value === 'create' || !path.value) return null
+  const key = folderKey(path.value)
+  const others = workspaces.workspaces.filter((w) => folderKey(w.path) !== key)
+  const found = workspaceOf(path.value, others.map((w) => w.path))
+  return others.find((w) => w.path === found) ?? null
+})
 
 function rememberedParent(): string {
   try {
@@ -61,6 +75,7 @@ watch(
     saving.value = false
     touched.value = false
     prompt.value = ''
+    moving.value = next.mode === 'create' ? (next.move ?? null) : null
     if (next.mode === 'create') {
       path.value = ''
       name.value = ''
@@ -116,6 +131,13 @@ async function save() {
       } catch {
         // Only a convenience for the next time.
       }
+      const move = moving.value
+      if (move) {
+        // Asked already: choosing a new workspace for it was the question.
+        ui.workspaceRequest = null
+        await folderMove.move(move.path, created.path, move.sessions, false)
+        return
+      }
       toast.success(`Workspace „${created.name}“ angelegt`)
       ui.folderToShow = { path: created.path }
     } else if (mode.value === 'adopt') {
@@ -151,6 +173,13 @@ async function save() {
         <DialogDescription v-else>
           Jeder Unterordner {{ mode === 'adopt' ? 'des Ordners' : 'des Workspaces' }} ist ein Projekt. Was im Prompt steht,
           bekommt jede Session darin zusätzlich als System-Prompt, egal mit welchem Account.
+        </DialogDescription>
+        <DialogDescription v-if="outer">
+          Er liegt im Workspace „{{ outer.name }}“: Sessions darin bekommen erst dessen Prompt, dann diesen.
+          <template v-if="mode === 'adopt'">In der Session-Übersicht steht er dann als eigener Workspace.</template>
+        </DialogDescription>
+        <DialogDescription v-if="mode === 'create' && moving">
+          „{{ splitFolder(moving.path).name }}“ zieht danach hinein{{ moving.sessions > 0 ? ', mit seinen Sessions' : '' }}.
         </DialogDescription>
       </DialogHeader>
 

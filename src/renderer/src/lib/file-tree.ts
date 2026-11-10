@@ -1,4 +1,4 @@
-import type { FileEntry, FileListing, GitFileState, GitFileStatus, GitTreeStatus } from '@shared/types'
+import type { FileEntry, FileListing, FileTouchKind, GitFileState, GitFileStatus, GitTreeStatus } from '@shared/types'
 
 /**
  * The file tree of a tab, without Vue: paths, the rows it shows, git's marks and the search. A path in
@@ -106,6 +106,35 @@ export function flattenTree(source: TreeSource): TreeRow[] {
 /** Order of the marks, the strongest first: a folder shows the strongest of the files in it. */
 const PRIORITY: GitFileStatus[] = ['conflict', 'deleted', 'modified', 'renamed', 'added', 'untracked']
 
+/** Git's states in the order the tree lists them, e.g. in the count of the changes. */
+export const GIT_STATUSES: readonly GitFileStatus[] = ['conflict', 'modified', 'added', 'renamed', 'deleted', 'untracked']
+
+// ── What Claude does with files ──
+
+/** The kinds of touch in the order the tree lists them: read, searched, written, committed. */
+export const TOUCH_KINDS: readonly FileTouchKind[] = ['read', 'search', 'write', 'commit']
+
+/** Which kind shows when a file (or the files in a folder) was touched in several ways: the highest. */
+export const TOUCH_RANK: Record<FileTouchKind, number> = { search: 0, read: 1, commit: 2, write: 3 }
+
+/** What Claude did with a file in a session: when it last did each kind of touch (ms since the epoch). */
+export type TouchRecord = Partial<Record<FileTouchKind, number>>
+
+/** The strongest kind of touch in a record, leaving out the `hidden` ones; null when none is left. */
+export function recordKind(record: TouchRecord, hidden?: ReadonlySet<FileTouchKind>): FileTouchKind | null {
+  let strongest: FileTouchKind | null = null
+  for (const kind of TOUCH_KINDS) {
+    if (record[kind] === undefined || hidden?.has(kind)) continue
+    if (!strongest || TOUCH_RANK[kind] > TOUCH_RANK[strongest]) strongest = kind
+  }
+  return strongest
+}
+
+/** The record with a touch of `kind` at `at`. */
+export function recordTouch(record: TouchRecord | undefined, kind: FileTouchKind, at: number): TouchRecord {
+  return Object.freeze({ ...record, [kind]: at })
+}
+
 export const STATUS_LETTER: Record<GitFileStatus, string> = {
   modified: 'M',
   added: 'A',
@@ -182,6 +211,29 @@ export function gitDecorations(status: GitTreeStatus | null): GitDecorations {
   }
 }
 
+/** Folders git reports as new as a whole (`dir/`): their files aren't listed one by one. */
+export function untrackedFolders(status: GitTreeStatus | null): string[] {
+  return Object.keys(status?.files ?? {}).filter((key) => key.endsWith('/'))
+}
+
+/**
+ * The files git sees changed, deleted ones too, and those in folders new as a whole, taken from
+ * `listed` (the list of all files) once it is there.
+ */
+export function changedFiles(status: GitTreeStatus | null, listed: readonly string[] | null | undefined): string[] {
+  const paths = Object.keys(status?.files ?? {}).filter((key) => !key.endsWith('/'))
+  const dirs = untrackedFolders(status)
+  if (dirs.length > 0) {
+    for (const path of listed ?? []) if (dirs.some((dir) => path.startsWith(dir))) paths.push(path)
+  }
+  return paths
+}
+
+/** Files in the order the tree shows them: folder by folder, folders before files, by name. */
+export function treeOrder(paths: readonly string[]): string[] {
+  return filesTree(paths, new Set()).flatMap((row) => (row.kind === 'entry' && !row.entry.dir ? [row.path] : []))
+}
+
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
 
 /** The folders of a list of files, cached per list: the search looks at them for every key. */
@@ -237,8 +289,11 @@ export function searchTree(paths: readonly string[], query: string, limit = 400)
   return { rows, matches: hits.length }
 }
 
-/** The files git sees changed (`paths`) as a tree with the folders they lie in; those in `collapsed` are closed. */
-export function changesTree(paths: readonly string[], collapsed: ReadonlySet<string>): TreeRow[] {
+/**
+ * The files a filter lets through (`paths`: the changed ones, those Claude touched) as a tree with the
+ * folders they lie in; those in `collapsed` are closed.
+ */
+export function filesTree(paths: readonly string[], collapsed: ReadonlySet<string>): TreeRow[] {
   return treeRows(
     paths.map((path) => ({ path, dir: false })),
     collapsed,

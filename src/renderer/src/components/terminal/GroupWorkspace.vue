@@ -2,6 +2,7 @@
 import { useElementSize } from '@vueuse/core'
 import { computed, ref, watch, type Component } from 'vue'
 import { layoutPanes, type PaneDivider, type PaneRect } from '@shared/panes'
+import ChangesView from '@/components/files/ChangesView.vue'
 import DiffView from '@/components/files/DiffView.vue'
 import FileTreePanel from '@/components/files/FileTreePanel.vue'
 import { PAGE_INFO } from '@/lib/pages'
@@ -225,7 +226,9 @@ const dockPreview = computed(() => {
   const title = page
     ? PAGE_INFO[page].label
     : diff
-      ? baseName(diff.path)
+      ? diff.path
+        ? baseName(diff.path)
+        : 'Alle Änderungen'
       : dock.tabId === BROWSER_TAB
         ? 'Browser'
         : (terminals.terminals.find((t) => t.id === dock.tabId)?.title ?? '')
@@ -300,15 +303,26 @@ const dockPreview = computed(() => {
 
     <!-- The changes of files, as tabs; drawn while shown, they load again when they come back. -->
     <template v-for="diff in openDiffs" :key="diff.id">
-      <DiffView
-        v-if="isShown(diff.id)"
-        class="absolute overflow-hidden"
-        :style="contentOf(diff.id)"
-        :root="diff.file.root"
-        :path="diff.file.path"
-        @pointerdown.capture="focusTab(diff.id)"
-        @focusin="focusTab(diff.id)"
-      />
+      <template v-if="isShown(diff.id)">
+        <!-- All changes of the folder, one below the other. -->
+        <ChangesView
+          v-if="diff.file.path === ''"
+          class="absolute overflow-hidden"
+          :style="contentOf(diff.id)"
+          :root="diff.file.root"
+          @pointerdown.capture="focusTab(diff.id)"
+          @focusin="focusTab(diff.id)"
+        />
+        <DiffView
+          v-else
+          class="absolute overflow-hidden"
+          :style="contentOf(diff.id)"
+          :root="diff.file.root"
+          :path="diff.file.path"
+          @pointerdown.capture="focusTab(diff.id)"
+          @focusin="focusTab(diff.id)"
+        />
+      </template>
     </template>
 
     <!-- Pages open as tabs; KeepAlive keeps a hidden one with its state (and calls onActivated when shown). -->

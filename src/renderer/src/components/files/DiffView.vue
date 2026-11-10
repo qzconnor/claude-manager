@@ -5,17 +5,16 @@ import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue
 import type { FileDiff } from '@shared/types'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useDiffStyle } from '@/composables/useDiffStyle'
 import { useFileTreeModel } from '@/composables/useFileTreeModel'
-import { buildFontStack, useTerminalAppearance } from '@/composables/useTerminalAppearance'
-import { codeColor } from '@/lib/code-colors'
 import { attempt, errorMessage } from '@/lib/errors'
-import { fileLines, lineColumns, parsePatch, type DiffLine, type ParsedDiff } from '@/lib/file-diff'
+import { DIFF_TAB_SIZE, diffColumns, diffLines, diffMode, numberDigits, parsePatch, type DiffLine, type ParsedDiff } from '@/lib/file-diff'
 import { fileIcon } from '@/lib/file-icons'
 import { absolutePath, baseName, gitDecorations, parentPath, STATUS_CLASS, STATUS_LABEL, STATUS_LETTER } from '@/lib/file-tree'
 import { hasLanguage, highlightDiff, languageOf, loadLanguage } from '@/lib/syntax'
 import { cn } from '@/lib/utils'
 import { SEPARATOR, useFileTreeStore } from '@/stores/file-tree'
-import { useSettingsStore } from '@/stores/settings'
+import DiffLineRow from './DiffLineRow.vue'
 
 /**
  * The changes of a file since the last commit, as `git diff HEAD` sees them (staged and not), drawn
@@ -34,8 +33,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>()
 
 const fileTree = useFileTreeStore()
-const settings = useSettingsStore()
-const { palette, containerBackground } = useTerminalAppearance()
+const { colors, fontSize, rowHeight, fontFamily } = useDiffStyle()
 // The tree of the folder: git's state for the file's mark, and the folders watched for changes.
 const model = useFileTreeModel(() => props.root)
 
@@ -131,29 +129,10 @@ onBeforeUnmount(() => {
 
 // ── What it shows ──
 
-type Mode = 'diff' | 'new' | 'unchanged' | 'plain' | 'binary' | 'tooLarge' | 'missing'
-
-const mode = computed<Mode | null>(() => {
-  const d = diff.value
-  if (!d) return null
-  if (d.tooLarge) return 'tooLarge'
-  if (d.binary) return 'binary'
-  if (d.patch) return 'diff'
-  if (d.missing || d.text === null) return 'missing'
-  if (!d.repo) return 'plain'
-  return state.value?.status === 'untracked' || state.value?.status === 'added' ? 'new' : 'unchanged'
-})
+const mode = computed(() => (diff.value ? diffMode(diff.value, state.value?.status) : null))
 
 const EMPTY: ParsedDiff = { lines: [], added: 0, removed: 0 }
-const parsed = computed<ParsedDiff>(() => {
-  const d = diff.value
-  if (!d) return EMPTY
-  if (mode.value === 'diff') return parsePatch(d.patch)
-  if (d.text !== null && (mode.value === 'new' || mode.value === 'unchanged' || mode.value === 'plain')) {
-    return fileLines(d.text, mode.value === 'new' ? 'add' : 'context')
-  }
-  return EMPTY
-})
+const parsed = computed<ParsedDiff>(() => (diff.value && mode.value ? diffLines(diff.value, mode.value) : EMPTY))
 const lines = computed(() => parsed.value.lines)
 
 const notice = computed(() => {
@@ -193,64 +172,17 @@ const highlighted = computed(() => {
 
 // ── The theme's colours ──
 
-/**
- * The terminal's palette as variables: the code's colours (`.syntax` in main.css) and the lines' tints,
- * calmed for code (a terminal's blue can be too loud or too dark to read).
- */
-const codeColors = computed(() => {
-  const p = palette.value
-  const code = (color: string) => codeColor(color, p.background)
-  return { red: code(p.red), green: code(p.green), yellow: code(p.yellow), blue: code(p.blue), magenta: code(p.magenta), cyan: code(p.cyan) }
-})
-const themeStyle = computed(() => {
-  const p = palette.value
-  const c = codeColors.value
-  const tint = (color: string, percent: number) => `color-mix(in oklab, ${color} ${percent}%, transparent)`
-  return {
-    background: containerBackground.value,
-    color: p.foreground,
-    '--syn-red': c.red,
-    '--syn-green': c.green,
-    '--syn-yellow': c.yellow,
-    '--syn-blue': c.blue,
-    '--syn-magenta': c.magenta,
-    '--syn-cyan': c.cyan,
-    '--syn-comment': tint(p.foreground, 50),
-    // A new file is all added: only lightly tinted, so it reads like code.
-    '--diff-add': tint(c.green, mode.value === 'new' ? 6 : 15),
-    '--diff-add-gutter': tint(c.green, 24),
-    '--diff-del': tint(c.red, 15),
-    '--diff-del-gutter': tint(c.red, 24),
-    '--diff-hunk': tint(p.foreground, 6),
-    '--diff-number': tint(p.foreground, 40),
-    '--diff-add-number': c.green,
-    '--diff-del-number': c.red,
-  }
-})
+// A new file is all added: only lightly tinted, so it reads like code.
+const themeStyle = computed(() => (mode.value === 'new' ? { ...colors.value, '--diff-add': 'var(--diff-add-new)' } : colors.value))
 
 // ── Drawing only the visible lines ──
 
-const TAB_SIZE = 4
-/** Longer lines are cut, so one minified line doesn't make the view thousands of screens wide. */
-const MAX_COLUMNS = 2000
-
-const fontSize = computed(() => Math.max(10, Math.round(settings.settings.appearance.uiFontSize * 0.93)))
-const rowHeight = computed(() => Math.round(fontSize.value * 1.55))
-const fontFamily = computed(() => buildFontStack(settings.settings.terminal.fontFamily))
 const OVERSCAN = 12
 
 /** One number per line: a removed one its number in the old file, the others theirs in the new; a sign for a diff and a new file. */
 const withSign = computed(() => mode.value === 'diff' || mode.value === 'new')
-const numberWidth = computed(() => {
-  let most = 1
-  for (const line of lines.value) most = Math.max(most, line.old ?? 0, line.new ?? 0)
-  return String(most).length
-})
-const columns = computed(() => {
-  let most = 0
-  for (const line of lines.value) most = Math.max(most, lineColumns(line.text, TAB_SIZE))
-  return Math.min(most, MAX_COLUMNS)
-})
+const numberWidth = computed(() => numberDigits(lines.value))
+const columns = computed(() => diffColumns(lines.value))
 /** The numbers, the sign and the gaps between them and at both ends (ch). */
 const gutterWidth = computed(() => numberWidth.value + (withSign.value ? 2 : 0) + 2)
 
@@ -272,7 +204,6 @@ function onScroll() {
 interface LineView {
   line: DiffLine
   index: number
-  text: string
   html: string | null
 }
 
@@ -281,15 +212,7 @@ const visibleLines = computed<LineView[]>(() => {
   const first = Math.max(0, Math.floor(scrollTop.value / height) - OVERSCAN)
   const last = Math.min(lines.value.length, Math.ceil((scrollTop.value + viewHeight.value) / height) + OVERSCAN)
   const html = highlighted.value
-  return lines.value.slice(first, last).map((line, i) => {
-    const long = line.text.length > MAX_COLUMNS
-    return {
-      line,
-      index: first + i,
-      text: long ? `${line.text.slice(0, MAX_COLUMNS)} …` : line.text,
-      html: long ? null : (html?.[first + i] ?? null),
-    }
-  })
+  return lines.value.slice(first, last).map((line, i) => ({ line, index: first + i, html: html?.[first + i] ?? null }))
 })
 
 // A new file, or the whole file asked for: its first change comes into view, a third down.
@@ -306,20 +229,6 @@ watch(lines, (list) => {
     onScroll()
   })
 })
-
-const ROW_CLASS: Record<DiffLine['kind'], string> = {
-  context: '',
-  add: 'bg-(--diff-add)',
-  del: 'bg-(--diff-del)',
-  hunk: 'bg-(--diff-hunk) text-(--syn-comment) italic',
-}
-const GUTTER_CLASS: Record<DiffLine['kind'], string> = {
-  context: 'text-(--diff-number)',
-  add: 'bg-(--diff-add-gutter) text-(--diff-add-number)',
-  del: 'bg-(--diff-del-gutter) text-(--diff-del-number)',
-  hunk: 'bg-(--diff-hunk) text-(--diff-number)',
-}
-const SIGN: Record<DiffLine['kind'], string> = { context: ' ', add: '+', del: '−', hunk: ' ' }
 
 function openFile() {
   void attempt(() => window.api.app.openPath(absolute.value), 'Datei konnte nicht geöffnet werden')
@@ -409,39 +318,24 @@ const iconButton =
       <div
         ref="scroller"
         class="syntax relative min-h-0 flex-1 overflow-auto select-text"
-        :style="{ fontFamily, fontSize: `${fontSize}px`, tabSize: TAB_SIZE }"
+        :style="{ fontFamily, fontSize: `${fontSize}px`, tabSize: DIFF_TAB_SIZE }"
         @scroll.passive="onScroll"
       >
         <div
           class="relative min-w-full"
           :style="{ height: `${lines.length * rowHeight}px`, width: `calc(${gutterWidth + columns}ch + 24px)` }"
         >
-          <div
+          <DiffLineRow
             v-for="view in visibleLines"
             :key="view.index"
-            class="absolute inset-x-0 top-0 flex whitespace-pre"
-            :style="{ transform: `translateY(${view.index * rowHeight}px)`, height: `${rowHeight}px`, lineHeight: `${rowHeight}px` }"
-          >
-            <span
-              :class="cn('sticky left-0 z-10 flex shrink-0 justify-end gap-[1ch] px-[1ch] tabular-nums select-none', GUTTER_CLASS[view.line.kind])"
-              :style="{ width: `${gutterWidth}ch` }"
-            >
-              <span v-if="view.line.kind === 'hunk'" class="flex-1 text-left">⋯</span>
-              <template v-else>
-                <span class="text-right" :style="{ width: `${numberWidth}ch` }">{{ view.line.new ?? view.line.old ?? '' }}</span>
-                <span v-if="withSign" class="w-[1ch]">{{ SIGN[view.line.kind] }}</span>
-              </template>
-            </span>
-            <!-- Cut off where it passes below the numbers (see onScroll). -->
-            <span
-              v-if="view.html !== null"
-              :class="cn('flex-1 pl-[1ch] [clip-path:inset(0_0_0_var(--scroll-left,0px))]', ROW_CLASS[view.line.kind])"
-              v-html="view.html"
-            />
-            <span v-else :class="cn('flex-1 pl-[1ch] [clip-path:inset(0_0_0_var(--scroll-left,0px))]', ROW_CLASS[view.line.kind])">{{
-              view.text
-            }}</span>
-          </div>
+            :line="view.line"
+            :html="view.html"
+            :top="view.index * rowHeight"
+            :height="rowHeight"
+            :gutter-width="gutterWidth"
+            :number-width="numberWidth"
+            :with-sign="withSign"
+          />
         </div>
         <p v-if="lines.length === 0" class="px-4 pt-3 text-center text-xs text-muted-foreground">Die Datei ist leer.</p>
       </div>

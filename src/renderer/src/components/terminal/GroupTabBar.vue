@@ -190,7 +190,13 @@ const iconButton =
       <FileTreeButton :target="treeTarget" variant="group" />
     </div>
     <div class="w-1.5 shrink-0 border-b" />
-    <div ref="strip" role="tablist" class="no-scrollbar flex min-w-0 overflow-x-auto">
+    <!-- A small gap between the tabs. Each tab draws its piece of the bar's bottom line, so it carries
+         it on through the gap to its right; a line under the whole strip would shine through the selected tab. -->
+    <div
+      ref="strip"
+      role="tablist"
+      class="no-scrollbar flex min-w-0 gap-[3px] overflow-x-auto *:not-last:after:absolute *:not-last:after:-bottom-px *:not-last:after:left-[calc(100%+1px)] *:not-last:after:h-px *:not-last:after:w-[3px] *:not-last:after:bg-border"
+    >
       <template v-for="tab in group.tabs" :key="tab.id">
         <GroupTerminalTab
           v-if="tab.terminal"

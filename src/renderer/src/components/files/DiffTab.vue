@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { PanelBottomIcon, PanelRightIcon, PinIcon, XIcon } from '@lucide/vue'
+import { FileDiffIcon, PanelBottomIcon, PanelRightIcon, PinIcon, XIcon } from '@lucide/vue'
 import { computed } from 'vue'
 import {
   ContextMenu,
@@ -20,17 +20,21 @@ import { useTerminalsStore } from '@/stores/terminals'
 /**
  * The changes of a file as a tab of a group, as VS Code shows a file opened from its explorer: one
  * opened by a click previews (its name in italics) and the next click takes its place; a double click
- * on the file or on the tab keeps it.
+ * on the file or on the tab keeps it. The folder itself (`''`): all its changes, one below the other.
  */
 const props = defineProps<{ file: DiffFile; groupId: string; selected: boolean; focused: boolean; joined: Record<string, string> }>()
 const emit = defineEmits<{ select: [id: string] }>()
 
 const terminals = useTerminalsStore()
 const id = computed(() => diffTab(props.file))
-const name = computed(() => baseName(props.file.path))
-const icon = computed(() => fileIcon(props.file.path, { dir: false, link: false, broken: false }))
+/** All changes of the folder, not those of one file. */
+const all = computed(() => props.file.path === '')
+const name = computed(() => (all.value ? 'Alle Änderungen' : baseName(props.file.path)))
+const icon = computed(() =>
+  all.value ? { icon: FileDiffIcon, class: 'text-muted-foreground' } : fileIcon(props.file.path, { dir: false, link: false, broken: false }),
+)
 const preview = computed(() => terminals.previewTabs.has(id.value))
-const fullPath = computed(() => `${props.file.root}${SEPARATOR}${props.file.path.replaceAll('/', SEPARATOR)}`)
+const fullPath = computed(() => (all.value ? props.file.root : `${props.file.root}${SEPARATOR}${props.file.path.replaceAll('/', SEPARATOR)}`))
 const alone = computed(() => (terminals.groups.find((g) => g.id === props.groupId)?.tabs.length ?? 0) < 2)
 
 function onMouseDown(event: MouseEvent) {
@@ -81,7 +85,7 @@ function onMouseDown(event: MouseEvent) {
         </TooltipTrigger>
       </ContextMenuTrigger>
       <TooltipContent side="bottom" class="max-w-[min(36rem,80vw)] break-all">
-        Änderungen: {{ fullPath }}<span v-if="preview" class="text-muted-foreground"> · Vorschau</span>
+        {{ all ? 'Alle Änderungen' : 'Änderungen' }}: {{ fullPath }}<span v-if="preview" class="text-muted-foreground"> · Vorschau</span>
       </TooltipContent>
     </Tooltip>
     <ContextMenuContent class="w-60">

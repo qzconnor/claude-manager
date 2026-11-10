@@ -25,7 +25,11 @@ export interface GroupDock {
  * What `WorkspaceDialog` asks for: a new workspace (in `parent`), making an existing folder one, or
  * the prompt of a workspace.
  */
-export type WorkspaceRequest = { mode: 'create'; parent?: string | null } | { mode: 'adopt'; path: string } | { mode: 'edit'; path: string }
+export type WorkspaceRequest =
+  /** `move`: a folder that moves into the new workspace once it is made, with how many sessions the list shows in it. */
+  | { mode: 'create'; parent?: string | null; move?: { path: string; sessions: number } }
+  | { mode: 'adopt'; path: string }
+  | { mode: 'edit'; path: string }
 
 /** Transient UI state shared across components (dialogs, palette, search requests). */
 export const useUiStore = defineStore('ui', () => {

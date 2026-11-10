@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { fileLines, lineColumns, parsePatch } from './file-diff'
+import type { FileDiff } from '@shared/types'
+import {
+  diffColumns,
+  diffHash,
+  diffLines,
+  diffMode,
+  fileLines,
+  lineAtRow,
+  lineColumns,
+  MAX_DIFF_COLUMNS,
+  numberDigits,
+  parsePatch,
+  shownText,
+  wrapOffsets,
+  wrappedRows,
+  type DiffLine,
+} from './file-diff'
 
 const PATCH = [
   'diff --git a/src/a.ts b/src/a.ts',
@@ -68,5 +84,75 @@ describe('lineColumns', () => {
     expect(lineColumns('ab', 4)).toBe(2)
     expect(lineColumns('\tx', 4)).toBe(5)
     expect(lineColumns('ab\tx', 4)).toBe(5)
+  })
+})
+
+const diff = (over: Partial<FileDiff>): FileDiff => ({ patch: '', text: null, repo: true, binary: false, tooLarge: false, missing: false, ...over })
+
+describe('diffMode', () => {
+  it('tells what a file shows', () => {
+    expect(diffMode(diff({ patch: PATCH }), 'modified')).toBe('diff')
+    expect(diffMode(diff({ text: 'x' }), 'untracked')).toBe('new')
+    expect(diffMode(diff({ text: 'x' }), 'added')).toBe('new')
+    expect(diffMode(diff({ text: 'x' }), null)).toBe('unchanged')
+    expect(diffMode(diff({ text: 'x', repo: false }), null)).toBe('plain')
+    expect(diffMode(diff({ missing: true }), 'deleted')).toBe('missing')
+    expect(diffMode(diff({ binary: true, patch: PATCH }), 'modified')).toBe('binary')
+    expect(diffMode(diff({ tooLarge: true, binary: true }), 'modified')).toBe('tooLarge')
+  })
+
+  it('gives the lines of each mode', () => {
+    expect(diffLines(diff({ patch: PATCH }), 'diff')).toMatchObject({ added: 3, removed: 2 })
+    expect(diffLines(diff({ text: 'a\nb\n' }), 'new')).toMatchObject({ added: 2, removed: 0 })
+    expect(diffLines(diff({ text: 'a\nb\n' }), 'unchanged').lines.map((l) => l.kind)).toEqual(['context', 'context'])
+    expect(diffLines(diff({ binary: true }), 'binary').lines).toEqual([])
+  })
+
+  it('measures the widest line and the highest number', () => {
+    const { lines } = diffLines(diff({ patch: PATCH }), 'diff')
+    expect(numberDigits(lines)).toBe(2)
+    expect(diffColumns(lines)).toBe(Math.max(...lines.map((l) => l.text.length)))
+    expect(diffColumns([{ kind: 'add', text: 'x'.repeat(MAX_DIFF_COLUMNS * 2), old: null, new: 1 }])).toBe(MAX_DIFF_COLUMNS)
+    expect(numberDigits([])).toBe(1)
+  })
+})
+
+describe('diffHash', () => {
+  it('is the same for the same changes and differs once they change', () => {
+    expect(diffHash(diff({ patch: PATCH }))).toBe(diffHash(diff({ patch: PATCH })))
+    expect(diffHash(diff({ patch: PATCH }))).not.toBe(diffHash(diff({ patch: PATCH.replace('TWO', 'Two') })))
+    expect(diffHash(diff({ text: 'a' }))).not.toBe(diffHash(diff({ patch: 'a' })))
+    expect(diffHash(diff({ missing: true }))).not.toBe(diffHash(diff({})))
+  })
+})
+
+describe('wrapping', () => {
+  it('counts the rows a line takes', () => {
+    expect(wrappedRows('', 10)).toBe(1)
+    expect(wrappedRows('abcdefghij', 10)).toBe(1)
+    expect(wrappedRows('abcdefghijk', 10)).toBe(2)
+    expect(wrappedRows('a'.repeat(25), 10)).toBe(3)
+    expect(wrappedRows('a'.repeat(25), 0)).toBe(1)
+  })
+
+  it('takes tabs up to their stop, a whole one at the start of a row', () => {
+    // Tab to 4, then 6 letters: 10 columns.
+    expect(wrappedRows('\tabcdef', 10)).toBe(1)
+    expect(wrappedRows('\tabcdefg', 10)).toBe(2)
+    // 9 letters, then a tab that doesn't fit: it starts the next row.
+    expect(wrappedRows('abcdefghi\tx', 10)).toBe(2)
+  })
+
+  it('cuts very long lines as they are shown', () => {
+    expect(shownText('x')).toBe('x')
+    expect(shownText('x'.repeat(MAX_DIFF_COLUMNS + 5))).toHaveLength(MAX_DIFF_COLUMNS + 2)
+  })
+
+  it('finds the line of a row', () => {
+    const line = (text: string): DiffLine => ({ kind: 'context', text, old: 1, new: 1 })
+    const offsets = wrapOffsets([line('short'), line('a'.repeat(25)), line('')], 10)
+    expect([...offsets]).toEqual([0, 1, 4, 5])
+    expect([0, 1, 2, 3, 4, 9].map((row) => lineAtRow(offsets, row))).toEqual([0, 1, 1, 1, 2, 2])
+    expect(lineAtRow(new Uint32Array([0]), 3)).toBe(0)
   })
 })

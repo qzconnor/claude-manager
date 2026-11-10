@@ -3,13 +3,18 @@ import type { FileEntry, FileListing, GitTreeStatus } from '@shared/types'
 import {
   absolutePath,
   ancestors,
-  changesTree,
+  changedFiles,
+  filesTree,
   flattenTree,
   folderName,
   gitDecorations,
   parentPath,
+  recordKind,
+  recordTouch,
   searchTree,
+  treeOrder,
   treePathOf,
+  untrackedFolders,
 } from './file-tree'
 
 const file = (name: string): FileEntry => ({ name, dir: false, link: false, broken: false })
@@ -165,11 +170,11 @@ describe('searchTree', () => {
   })
 })
 
-describe('changesTree', () => {
+describe('filesTree', () => {
   const paths = ['src/b.ts', 'README.md', 'src/deep/a.ts', 'docs/x.md']
 
-  it('shows the changed files with their folders open, folders first', () => {
-    expect(changesTree(paths, new Set()).map((r) => `${r.depth}:${r.path}`)).toEqual([
+  it('shows the files with their folders open, folders first', () => {
+    expect(filesTree(paths, new Set()).map((r) => `${r.depth}:${r.path}`)).toEqual([
       '0:docs',
       '1:docs/x.md',
       '0:src',
@@ -181,9 +186,45 @@ describe('changesTree', () => {
   })
 
   it('leaves the collapsed folders closed', () => {
-    const rows = changesTree(paths, new Set(['src/deep', 'docs']))
+    const rows = filesTree(paths, new Set(['src/deep', 'docs']))
     expect(rows.map((r) => r.path)).toEqual(['docs', 'src', 'src/deep', 'src/b.ts', 'README.md'])
     expect(rows.find((r) => r.path === 'src/deep')).toMatchObject({ expanded: false, entry: { dir: true } })
     expect(rows.find((r) => r.path === 'src')).toMatchObject({ expanded: true, match: null })
+  })
+})
+
+describe('changed files', () => {
+  const changed = status({
+    'src/a.ts': { status: 'modified', staged: false, added: 1, removed: 0 },
+    'old.ts': { status: 'deleted', staged: true, added: 0, removed: 3 },
+    'new/': { status: 'untracked', staged: false, added: null, removed: null },
+  })
+
+  it('takes the files of folders new as a whole from the list of all files', () => {
+    expect(untrackedFolders(changed)).toEqual(['new/'])
+    expect(changedFiles(changed, null)).toEqual(['src/a.ts', 'old.ts'])
+    expect(changedFiles(changed, ['src/a.ts', 'new/x.ts', 'new/deep/y.ts', 'newer.ts'])).toEqual(['src/a.ts', 'old.ts', 'new/x.ts', 'new/deep/y.ts'])
+    expect(changedFiles(null, ['a.ts'])).toEqual([])
+  })
+
+  it('orders them as the tree shows them', () => {
+    expect(treeOrder(['src/b.ts', 'README.md', 'src/deep/a.ts', 'docs/x.md'])).toEqual(['docs/x.md', 'src/deep/a.ts', 'src/b.ts', 'README.md'])
+  })
+})
+
+describe('touch records', () => {
+  it('keeps when Claude last did each kind', () => {
+    const first = recordTouch(undefined, 'read', 1)
+    const second = recordTouch(first, 'write', 2)
+    expect(recordTouch(second, 'read', 3)).toEqual({ read: 3, write: 2 })
+    expect(first).toEqual({ read: 1 })
+  })
+
+  it('shows the strongest kind that is not hidden', () => {
+    const record = { search: 1, read: 2, write: 3 }
+    expect(recordKind(record)).toBe('write')
+    expect(recordKind(record, new Set(['write'] as const))).toBe('read')
+    expect(recordKind({ search: 1 }, new Set(['search'] as const))).toBeNull()
+    expect(recordKind({ commit: 1, read: 2 })).toBe('commit')
   })
 })

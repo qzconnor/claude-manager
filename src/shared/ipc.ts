@@ -41,6 +41,8 @@ import type {
   SessionSearchHit,
   SettingsImportResult,
   TerminalCreateOptions,
+  FolderMovedEvent,
+  FolderMoveResult,
   Workspace,
   WorkspaceCreateInput,
   TerminalInfo,
@@ -59,6 +61,7 @@ export const IpcInvoke = {
   appOpenPath: 'app:open-path',
   appShowItem: 'app:show-item',
   appPickDirectory: 'app:pick-directory',
+  appMissingFolders: 'app:missing-folders',
   appListFonts: 'app:list-fonts',
   appClipboardHasImage: 'app:clipboard-has-image',
 
@@ -130,6 +133,8 @@ export const IpcInvoke = {
   workspacesCreateProject: 'workspaces:create-project',
   workspacesReadPrompt: 'workspaces:read-prompt',
   workspacesWritePrompt: 'workspaces:write-prompt',
+  workspacesMove: 'workspaces:move',
+  workspacesRelocate: 'workspaces:relocate',
 
   usageGet: 'usage:get',
   usageRefresh: 'usage:refresh',
@@ -228,6 +233,8 @@ export const IpcEvent = {
   sessionsChanged: 'event:sessions-changed',
   /** Workspaces came or went, or the folders in one of them changed. */
   workspacesChanged: 'event:workspaces-changed',
+  /** A folder of a workspace was moved outside the app, and its sessions went along. */
+  workspacesMoved: 'event:workspaces-moved',
   apiStatusChanged: 'event:api-status-changed',
   updatesChanged: 'event:updates-changed',
   /** The update notification was clicked. */
@@ -251,6 +258,8 @@ export interface ManagerApi {
     /** Shows the file or folder selected in the Explorer (the file manager). */
     showItem(path: string): Promise<void>
     pickDirectory(defaultPath?: string | null): Promise<string | null>
+    /** Those of the folders that aren't there (any more). */
+    missingFolders(paths: string[]): Promise<string[]>
     listFonts(): Promise<string[]>
     /** Whether the clipboard holds an image, e.g. a screenshot. */
     clipboardHasImage(): Promise<boolean>
@@ -439,7 +448,16 @@ export interface ManagerApi {
     readPrompt(path: string): Promise<string>
     /** Counts for the sessions that start from now on. */
     writePrompt(path: string, text: string): Promise<void>
+    /**
+     * Moves the folder `from` into the folder `into` (e.g. a project into another workspace); its
+     * sessions of every account go along and continue there. Not while tabs are open in it.
+     */
+    move(from: string, into: string): Promise<FolderMoveResult>
+    /** The folder `from` is gone, it is now `to`: its sessions of every account go there. Resolves to how many. */
+    relocate(from: string, to: string): Promise<number>
     onChanged(cb: () => void): Unsubscribe
+    /** A folder of a workspace was moved outside the app (e.g. in Explorer), its sessions went along. */
+    onMoved(cb: (move: FolderMovedEvent) => void): Unsubscribe
   }
   notifications: {
     /** Shows an example notification with the current settings. */

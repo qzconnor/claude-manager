@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Notification, net } from 'electron'
 import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
+import { splitNoteItems } from '@shared/release-notes'
 import type { ReleaseNote, ReleaseReference, UpdateState } from '@shared/types'
 import { linuxPackage } from '../lib/linux'
 import { TypedEmitter } from '../lib/typed-emitter'
@@ -7,7 +8,7 @@ import { openAppWindows, revealWindow } from '../window/main-window'
 
 /**
  * Updates come from the GitHub releases of the repository (published by semantic-release, see
- * `.releaserc.json`). The publish settings in `electron-builder.yml` tell electron-updater where.
+ * `release.config.mjs`). The publish settings in `electron-builder.yml` tell electron-updater where.
  */
 const REPO = 'qzconnor/claude-manager'
 const FIRST_CHECK_DELAY_MS = 10_000
@@ -207,7 +208,8 @@ export class UpdateService extends TypedEmitter<Events> {
       .map((release) => ({
         version: release.tag_name.replace(/^v/, ''),
         date: release.published_at ?? '',
-        html: release.body_html ?? '',
+        // One line per change, also in releases whose title named several.
+        html: splitNoteItems(release.body_html ?? ''),
         url: release.html_url,
         references: references(release.body_html ?? ''),
       }))
@@ -226,7 +228,7 @@ export class UpdateService extends TypedEmitter<Events> {
     const feed = await response.text()
     return [...feed.matchAll(/<entry>([\s\S]*?)<\/entry>/g)].map(([, entry]) => {
       const text = (tag: string) => unescapeXml(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`).exec(entry)?.[1] ?? '')
-      const html = text('content')
+      const html = splitNoteItems(text('content'))
       return {
         // The id ends with the tag, e.g. `tag:github.com,2008:Repository/123456789/v1.2.3`.
         version: (text('id').split('/').pop() ?? '').replace(/^v/, ''),
