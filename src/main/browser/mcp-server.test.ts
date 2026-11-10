@@ -26,11 +26,18 @@ describe('allowedToolNames', () => {
   const browser = ['browser_navigate', 'browser_click']
 
   it('allows the browser and the reading tools of the app by default, not the shells', () => {
-    expect(allowedToolNames(claude(), browser, true)).toEqual(['browser_navigate', 'browser_click', 'limits', 'sessions_search', 'session_read'])
+    expect(allowedToolNames(claude(), browser, true)).toEqual([
+      'browser_navigate',
+      'browser_click',
+      'limits',
+      'sessions_search',
+      'session_read',
+      'themes_list',
+    ])
   })
 
   it('leaves the browser to ask when the settings say so, or when it is off', () => {
-    expect(allowedToolNames(claude({ browserToolsAllowed: false }), browser, true)).toEqual(['limits', 'sessions_search', 'session_read'])
+    expect(allowedToolNames(claude({ browserToolsAllowed: false }), browser, true)).toEqual(['limits', 'sessions_search', 'session_read', 'themes_list'])
     expect(allowedToolNames(claude({ browserTools: false }), browser, true)).not.toContain('browser_click')
   })
 
@@ -43,7 +50,7 @@ describe('allowedToolNames', () => {
   })
 
   it('leaves out switched off tools of the app, and all of them before the app has them', () => {
-    expect(allowedToolNames(claude({ limitsTool: false, sessionsTool: false }), [], true)).toEqual([])
+    expect(allowedToolNames(claude({ limitsTool: false, sessionsTool: false, themesTool: false }), [], true)).toEqual([])
     expect(allowedToolNames(claude(), browser, false)).toEqual(browser)
   })
 })

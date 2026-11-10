@@ -43,6 +43,10 @@ const sessionsTool = useSetting(
   (s) => s.claude.sessionsTool,
   (sessionsTool) => ({ claude: { sessionsTool } }),
 )
+const themesTool = useSetting(
+  (s) => s.claude.themesTool,
+  (themesTool) => ({ claude: { themesTool } }),
+)
 const shellTools = useSetting(
   (s) => s.claude.shellTools,
   (shellTools) => ({ claude: { shellTools } }),
@@ -159,6 +163,14 @@ async function clearBrowserData() {
         description="Claude durchsucht den Verlauf früherer Sessions aller Accounts und liest einzelne nach, etwa um nachzusehen, wie etwas schon einmal gelöst wurde."
       >
         <Switch id="sessions-tool" v-model="sessionsTool" />
+      </SettingField>
+      <SettingField
+        anchor="claude.themesTool"
+        for="themes-tool"
+        label="Themes erstellen"
+        description="Claude erstellt und ändert eigene Themes und wechselt das Theme der App, aber nur, wenn du darum bittest. Vor jeder Änderung fragt Claude Code um Erlaubnis. Die Themes landen im Theme-Ordner wie die aus dem Theme-Editor."
+      >
+        <Switch id="themes-tool" v-model="themesTool" />
       </SettingField>
       <SettingField
         anchor="claude.shellTools"

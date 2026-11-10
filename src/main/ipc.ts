@@ -499,6 +499,7 @@ export function registerIpc(ctx: AppContext): void {
     if (error) throw new Error(error)
   })
   ctx.themes.on('changed', () => broadcast(IpcEvent.themesChanged))
+  ctx.themes.on('saved', (entry) => broadcast(IpcEvent.themesSaved, entry))
   // Moved outside the app, e.g. in Explorer: the sessions go along, and the window learns of it.
   ctx.workspaces.follow(async (from, to) => {
     const sessions = await followMove(from, to)

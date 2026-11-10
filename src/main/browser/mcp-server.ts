@@ -5,7 +5,7 @@ import type { ClaudeSettings } from '@shared/types'
 import { BodyTooLarge, readBody, sendJson, sendPlain, type SessionServer } from '../services/session-server'
 import type { SettingsService } from '../services/settings-service'
 import type { SessionArgsProvider } from '../services/terminal-service'
-import { allowedAppGroups, appInstructions, appToolGroup, appToolNames, enabledAppGroups, type AppTools } from './app-tools'
+import { allowedAppToolNames, appInstructions, appToolGroup, enabledAppGroups, type AppTools } from './app-tools'
 import type { BrowserTools } from './browser-tools'
 import { BROWSER_INSTRUCTIONS } from './browser-tools'
 import { handleRpc, isRequest, PARSE_ERROR, rpcError, type McpServerSpec } from './mcp-protocol'
@@ -33,12 +33,13 @@ export function mcpLaunchArgs(configFile: string, allowedTools: string[], noChro
 
 /**
  * The tools a session may use without asking: the browser's when the settings allow it, the app's
- * reading tools whenever they are on, its shell tools only when allowed too.
+ * reading tools whenever they are on, its shell tools only when allowed too; the theme tools that
+ * change something always ask.
  */
 export function allowedToolNames(claude: ClaudeSettings, browserToolNames: string[], appTools: boolean): string[] {
   return [
     ...(claude.browserTools && claude.browserToolsAllowed ? browserToolNames : []),
-    ...(appTools ? appToolNames(allowedAppGroups(claude)) : []),
+    ...(appTools ? allowedAppToolNames(claude) : []),
   ]
 }
 

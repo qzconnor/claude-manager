@@ -11,7 +11,7 @@ import {
 } from '@lucide/vue'
 import { computed, nextTick, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
-import { contrastRatio, luminance, parseColor } from '@shared/themes/colors'
+import { contrastIssue, suggestedMode } from '@shared/themes/checks'
 import { MAX_THEME_NAME_LENGTH, THEME_COLOR_KEYS, themeColor, themeContent, themeToFile, withThemeColor, type ThemeColorKey } from '@shared/themes/file'
 import type { ThemeContent } from '@shared/themes/types'
 import { searchTerms } from '@shared/utils'
@@ -36,7 +36,7 @@ import { containsTerms, searchText } from '@/lib/search'
 import { useSettingsStore } from '@/stores/settings'
 import { useThemesStore } from '@/stores/themes'
 import { useUiStore } from '@/stores/ui'
-import { COLOR_SECTIONS, CONTRAST_PAIRS } from '@/themes/color-info'
+import { COLOR_SECTIONS } from '@/themes/color-info'
 import ThemeColorRow from './ThemeColorRow.vue'
 import ThemePreview from './ThemePreview.vue'
 import ThemeSwatch from './ThemeSwatch.vue'
@@ -159,13 +159,7 @@ function setColor(key: ThemeColorKey, value: string) {
 }
 
 function contrastOf(key: ThemeColorKey): { ratio: number; label: string } | null {
-  const pair = CONTRAST_PAIRS[key]
-  if (!pair) return null
-  const text = parseColor(themeColor(draft.value, key))
-  const back = parseColor(themeColor(draft.value, pair.against))
-  if (!text || !back) return null
-  const ratio = contrastRatio(text, back)
-  return ratio < pair.min ? { ratio, label: pair.label } : null
+  return contrastIssue(draft.value, key)
 }
 
 const MODES = [
@@ -174,13 +168,7 @@ const MODES = [
 ] as const
 
 /** Text lighter than the background belongs to a dark theme; the mode says otherwise. */
-const modeMismatch = computed(() => {
-  const back = parseColor(draft.value.colors.background)
-  const text = parseColor(draft.value.colors.foreground)
-  if (!back || !text) return null
-  const suggested = luminance(text) > luminance(back) ? 'dark' : 'light'
-  return suggested === draft.value.mode ? null : suggested
-})
+const modeMismatch = computed(() => suggestedMode(draft.value))
 
 const nameError = computed(() => {
   const name = draft.value.name.trim()

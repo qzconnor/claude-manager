@@ -3,6 +3,7 @@ import type { AccountService } from '../../services/account-service'
 import type { SessionService } from '../../services/session-service'
 import type { SettingsService } from '../../services/settings-service'
 import type { TerminalService } from '../../services/terminal-service'
+import type { ThemeService } from '../../services/theme-service'
 import type { UsageService } from '../../services/usage-service'
 import type { Args } from '../tool-args'
 import type { Shells } from './shells'
@@ -10,7 +11,7 @@ import type { Shells } from './shells'
 /** How an app tool is made, what it works with, and how times read in its answers. */
 
 /** The switches of the settings the tools belong to. */
-export type AppToolGroup = 'limits' | 'sessions' | 'shell'
+export type AppToolGroup = 'limits' | 'sessions' | 'themes' | 'shell'
 
 export interface AppToolDefinition<P> {
   name: string
@@ -21,6 +22,8 @@ export interface AppToolDefinition<P> {
   group: AppToolGroup
   readOnly?: boolean
   destructive?: boolean
+  /** Claude Code asks the user before each call, whatever the settings allow (not in `--allowedTools`). */
+  askFirst?: boolean
   parse(args: Args): P
   run(app: AppToolContext, session: TerminalInfo, params: P): Promise<string>
 }
@@ -35,6 +38,7 @@ export interface AppToolsDeps {
   sessions: SessionService
   accounts: AccountService
   settings: SettingsService
+  themes: ThemeService
 }
 
 /** What a tool works with: the app's services and the shells the sessions opened. */

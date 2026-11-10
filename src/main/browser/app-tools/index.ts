@@ -4,19 +4,21 @@ import { type Args, ToolError } from '../tool-args'
 import { limitsTools } from './limits'
 import { sessionTools } from './sessions'
 import { Shells, shellTools } from './shells'
+import { themeTools } from './themes'
 import type { AppToolContext, AppToolDefinition, AppToolGroup, AppToolsDeps } from './tool'
 
 /**
  * Tools of the app's MCP server for Claude Manager itself (next to the browser's): a session reads
- * the limits of its account, searches and reads earlier sessions, and drives shell tabs it opened.
- * Each group has a switch in the settings (tab "Werkzeuge"); the shells are off by default, since
- * what runs in them is outside Claude Code's permissions. The tools of each group are in the files
- * next to this one.
+ * the limits of its account, searches and reads earlier sessions, creates color themes when the
+ * user asks for one, and drives shell tabs it opened. Each group has a switch in the settings (tab
+ * "Werkzeuge"); the shells are off by default, since what runs in them is outside Claude Code's
+ * permissions. The tools of each group are in the files next to this one.
  */
 
 const SETTING_LABELS: Record<AppToolGroup, string> = {
   limits: 'Eigene Limits lesen',
   sessions: 'Sessions durchsuchen',
+  themes: 'Themes erstellen',
   shell: 'Shell-Tabs steuern',
 }
 
@@ -25,15 +27,19 @@ export function enabledAppGroups(claude: ClaudeSettings): Set<AppToolGroup> {
   const groups = new Set<AppToolGroup>()
   if (claude.limitsTool) groups.add('limits')
   if (claude.sessionsTool) groups.add('sessions')
+  if (claude.themesTool) groups.add('themes')
   if (claude.shellTools) groups.add('shell')
   return groups
 }
 
-/** The groups whose tools Claude Code may use without asking (`--allowedTools`): reading always, shells when allowed. */
-export function allowedAppGroups(claude: ClaudeSettings): Set<AppToolGroup> {
+/**
+ * The tools Claude Code may use without asking (`--allowedTools`): those of the groups that are on,
+ * the shells only when allowed, and never those that change themes (`askFirst`).
+ */
+export function allowedAppToolNames(claude: ClaudeSettings): string[] {
   const groups = enabledAppGroups(claude)
   if (!claude.shellToolsAllowed) groups.delete('shell')
-  return groups
+  return TOOLS.filter((t) => groups.has(t.group) && !t.askFirst).map((t) => t.name)
 }
 
 /** What the server tells Claude about the tools of these groups. */
@@ -43,6 +49,11 @@ export function appInstructions(groups: ReadonlySet<AppToolGroup>): string {
   if (groups.has('sessions')) {
     lines.push('- sessions_search and session_read: earlier Claude Code sessions of the user, e.g. to look up how something was solved or decided before.')
   }
+  if (groups.has('themes')) {
+    lines.push(
+      "- themes_list, theme_create, theme_update, theme_apply: the app's color themes. Create, change or switch a theme only when the user asks for it, never on your own (not to try something out, not as a finishing touch).",
+    )
+  }
   if (groups.has('shell')) {
     lines.push(
       '- shell_open, shell_input, shell_output, shell_list, shell_close: shell tabs next to this session that the user sees. Use them for processes that keep running (dev servers, watchers) and read their output later; for one-off commands keep using your own shell tool.',
@@ -51,7 +62,7 @@ export function appInstructions(groups: ReadonlySet<AppToolGroup>): string {
   return lines.join('\n')
 }
 
-const TOOLS: AppToolDefinition<never>[] = [...limitsTools, ...sessionTools, ...shellTools]
+const TOOLS: AppToolDefinition<never>[] = [...limitsTools, ...sessionTools, ...themeTools, ...shellTools]
 
 /** The names of the tools of these groups. */
 export function appToolNames(groups: ReadonlySet<AppToolGroup>): string[] {

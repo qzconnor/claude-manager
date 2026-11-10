@@ -114,8 +114,8 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   const handoff = new SessionHandoff(accounts, sessions, terminals, settings)
   const usage = new UsageService(accounts, settings, indexer, userDataDir, userAgent)
   await usage.init()
-  // The server's tools for the app itself (limits, earlier sessions, shells), before the tabs are restored.
-  browserMcp.setAppTools(new AppTools({ terminals, usage, sessions, accounts, settings }))
+  // The server's tools for the app itself (limits, earlier sessions, themes, shells), before the tabs are restored.
+  browserMcp.setAppTools(new AppTools({ terminals, usage, sessions, accounts, settings, themes }))
   const autoSwitch = new AutoSwitch(accounts, terminals, usage, settings, handoff)
   autoSwitch.init()
   const git = new GitService()

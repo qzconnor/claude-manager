@@ -823,6 +823,12 @@ export interface ClaudeSettings {
   /** Sessions the app starts can search and read the transcripts of earlier sessions (`sessions_search`, `session_read`). */
   sessionsTool: boolean
   /**
+   * Sessions the app starts can create, change and switch the app's color themes when the user asks
+   * for it (`themes_list`, `theme_create`, `theme_update`, `theme_apply`). Claude Code asks before
+   * each change, whatever the settings allow.
+   */
+  themesTool: boolean
+  /**
    * Sessions the app starts can open shell tabs next to themselves, run commands in them and read
    * their output (`shell_*`). The commands run outside Claude Code's permissions.
    */

@@ -21,6 +21,11 @@ import { TypedEmitter } from '../lib/typed-emitter'
 type Events = {
   /** A theme file came, went or changed, also by hand (an editor, Explorer): `list` has news. */
   changed: []
+  /**
+   * The app wrote this theme (the window or Claude's theme tools). Comes at once, so the window knows
+   * the theme before a setting that picks it; `changed` follows from the folder's watcher.
+   */
+  saved: [entry: CustomThemeEntry]
 }
 
 /** Editors save in bursts (a temp file, then a rename): one look once it is quiet. */
@@ -161,7 +166,9 @@ export class ThemeService extends TypedEmitter<Events> {
     const file = this.fileOf(stem)
     await writeJsonAtomic(file, themeToFile(theme))
     const id = customThemeId(stem)
-    return { id, file, theme: { ...theme, id }, error: null }
+    const entry: CustomThemeEntry = { id, file, theme: { ...theme, id }, error: null }
+    this.emit('saved', entry)
+    return entry
   }
 
   /** Watches the folder; made anew when it is gone (deleted by hand), and watched again. */

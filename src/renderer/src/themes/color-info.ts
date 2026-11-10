@@ -176,15 +176,3 @@ export const COLOR_SECTIONS: ColorSection[] = [
     ],
   },
 ]
-
-/**
- * Text colors and the color they are read on, for the editor's hint about too little contrast:
- * `min` as WCAG asks of normal text (4.5), and of text that may be weaker (3: hints, labels on
- * buttons).
- */
-export const CONTRAST_PAIRS: Partial<Record<ThemeColorKey, { against: ThemeColorKey; label: string; min: number }>> = {
-  'app.foreground': { against: 'app.background', label: 'Hintergrund', min: 4.5 },
-  'app.mutedForeground': { against: 'app.background', label: 'Hintergrund', min: 3 },
-  'app.primaryForeground': { against: 'app.primary', label: 'Akzent', min: 3 },
-  'terminal.foreground': { against: 'terminal.background', label: 'Hintergrund', min: 4.5 },
-}

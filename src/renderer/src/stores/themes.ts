@@ -94,6 +94,8 @@ export const useThemesStore = defineStore('themes', () => {
   window.api.themes.onChanged(() => {
     void load().catch((error) => console.error('[themes] list could not be read', error))
   })
+  // Also themes Claude writes: shown before a setting that picks one arrives, so the default doesn't flash up.
+  window.api.themes.onSaved((saved) => put(saved))
 
   return {
     entries,
