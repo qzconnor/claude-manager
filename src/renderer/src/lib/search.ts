@@ -15,6 +15,40 @@ export interface TextPart {
   match: boolean
 }
 
+/** Lower case and without accents, a character for a character, so positions stay those of `text`. */
+function foldAccents(text: string): string {
+  let folded = ''
+  for (const char of foldCase(text)) {
+    const base = char.normalize('NFD').replace(/\p{M}+/gu, '')
+    folded += base.length === char.length ? base : char
+  }
+  return folded
+}
+
+/**
+ * Where the terms occur in `text` as `[start, end)`, sorted and merged; case and accents don't
+ * count, like in the command palette's filter ("offnen" finds "öffnen").
+ */
+export function matchSpans(text: string, terms: string[]): [number, number][] {
+  const folded = foldAccents(text)
+  if (folded.length !== text.length) return []
+  const marked = new Uint8Array(text.length)
+  for (const term of terms.map(foldAccents)) {
+    if (!term) continue
+    for (let at = folded.indexOf(term); at !== -1; at = folded.indexOf(term, at + term.length)) {
+      marked.fill(1, at, at + term.length)
+    }
+  }
+  const spans: [number, number][] = []
+  for (let i = 0; i < text.length; i++) {
+    if (!marked[i]) continue
+    const start = i
+    while (i < text.length && marked[i]) i++
+    spans.push([start, i])
+  }
+  return spans
+}
+
 /** Splits `text` where the terms occur, to highlight them. */
 export function highlightParts(text: string, terms: string[]): TextPart[] {
   const folded = foldCase(text)

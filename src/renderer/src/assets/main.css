@@ -153,6 +153,11 @@
   --surface-strong: oklch(0.2 0 0 / 85%);
 }
 
+/* What was searched for in the options of the quick open, as in VS Code (useMatchHighlight). */
+::highlight(search-match) {
+  color: var(--primary);
+}
+
 /* Claude's click in a browser page: a soft ripple that widens from the pointer's tip and fades. */
 @keyframes browser-click {
   from {
