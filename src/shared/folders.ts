@@ -4,6 +4,23 @@ export const TRAILING_SEPARATORS = /(?<=[^\\/:])[\\/]+$/
 /** Drive letters and UNC paths: Windows compares them without regard to case and slash. */
 const WINDOWS_PATH = /^(?:[a-z]:|\\\\|\/\/)/i
 
+/** `/f/Projekte` (Git Bash) and `/cygdrive/f/Projekte` (Cygwin): how some sessions write a folder on Windows. */
+const POSIX_DRIVE = /^\/(?:cygdrive\/)?([a-z])(?=\/|$)/i
+const DRIVE = /^[a-z]:/i
+
+/**
+ * A folder as Windows writes it: `F:\Projekte` also for `f:/Projekte`, `/f/Projekte` (Git Bash) or
+ * `/cygdrive/f/Projekte`, every drive letter upper case. Other paths (UNC, relative) stay as they are.
+ * Only for folders on Windows: elsewhere `/f/Projekte` is a folder of its own.
+ */
+export function windowsPath(path: string): string {
+  const trimmed = path.trim()
+  const posix = POSIX_DRIVE.exec(trimmed)
+  const drive = posix ? `${posix[1]}:${trimmed.slice(posix[0].length) || '\\'}` : trimmed
+  if (!DRIVE.test(drive)) return path
+  return drive.charAt(0).toUpperCase() + drive.slice(1).replaceAll('/', '\\')
+}
+
 /** What a folder is compared by, so `F:\Code\` and `f:/code` count as one. */
 export function folderKey(path: string): string {
   const trimmed = path.trim().replace(TRAILING_SEPARATORS, '')

@@ -17,6 +17,7 @@ function tab(id: string, authAccountId: string, extra: Partial<TerminalInfo> = {
     mode: 'session',
     status: 'running',
     limit: null,
+    context: null,
     title: id,
     muted: false,
     ...extra,

@@ -54,6 +54,30 @@ export class WorkspaceTrust {
     return target.cwd
   }
 
+  /**
+   * Trusts a folder the user just made in the app, for every account, so no question comes up there.
+   * A folder in a git repository stays a question, as the trust would cover the whole repository; so
+   * does the home folder. What can't be saved is asked when the session starts.
+   */
+  grant(cwd: string): Promise<void> {
+    const run = this.queue.then(() => this.grantNow(cwd))
+    this.queue = run.catch(() => undefined)
+    return run
+  }
+
+  private async grantNow(cwd: string): Promise<void> {
+    for (const account of this.accounts.list()) {
+      const configFile = this.accounts.paths(account.id).globalConfigFile
+      try {
+        const target = await trustTarget(configFile, cwd)
+        if (target.trusted || target.folder !== target.cwd || isHomeFolder(target.folder, homedir())) continue
+        await trustFolder(configFile, target)
+      } catch (error) {
+        console.warn('[trust] could not be saved, the app asks when the session starts', error)
+      }
+    }
+  }
+
   private question(accountId: string, target: TrustTarget): DialogOptions {
     const paragraphs = [
       'Claude Code kann in diesem Ordner Dateien lesen, bearbeiten und ausführen. Vertraue nur eigenen Projekten, Code aus deinem Team oder bekannten Open-Source-Projekten.',

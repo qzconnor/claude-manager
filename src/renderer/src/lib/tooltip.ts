@@ -31,10 +31,17 @@ interface State {
 }
 const states = new WeakMap<HTMLElement, State>()
 let closedAt = 0
+let suppressed = false
+
+/** While something is dragged no tooltip comes (the dragged element keeps the pointer): it would only be in the way. */
+export function suppressTooltips(on: boolean): void {
+  suppressed = on
+  if (on) hideTooltip()
+}
 
 function show(el: HTMLElement, animated: boolean): void {
   const state = states.get(el)
-  if (!state?.text) return
+  if (suppressed || !state?.text) return
   tooltip.animated = animated && tooltip.el === null
   tooltip.el = el
   tooltip.text = state.text

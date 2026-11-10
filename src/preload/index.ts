@@ -125,6 +125,17 @@ const api: ManagerApi = {
     remove: (sessions) => invoke(IpcInvoke.sessionsRemove, sessions),
     onChanged: (cb) => subscribe(IpcEvent.sessionsChanged, cb),
   },
+  workspaces: {
+    list: () => invoke(IpcInvoke.workspacesList),
+    create: (input) => invoke(IpcInvoke.workspacesCreate, input),
+    adopt: (path, prompt) => invoke(IpcInvoke.workspacesAdopt, path, prompt),
+    remove: (path) => invoke(IpcInvoke.workspacesRemove, path),
+    reorder: (paths) => invoke(IpcInvoke.workspacesReorder, paths),
+    createProject: (workspace, name) => invoke(IpcInvoke.workspacesCreateProject, workspace, name),
+    readPrompt: (path) => invoke(IpcInvoke.workspacesReadPrompt, path),
+    writePrompt: (path, text) => invoke(IpcInvoke.workspacesWritePrompt, path, text),
+    onChanged: (cb) => subscribe(IpcEvent.workspacesChanged, cb),
+  },
   notifications: {
     test: () => invoke(IpcInvoke.notificationsTest),
   },

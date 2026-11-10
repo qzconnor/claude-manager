@@ -15,6 +15,7 @@ function terminal(id: string, mode: TerminalMode = 'session'): TerminalInfo {
     authAccountId: 'a',
     sessionId: null,
     limit: null,
+    context: null,
     busy: false,
     attention: null,
     muted: false,

@@ -10,6 +10,7 @@ import type {
   SessionSummary,
   TranscriptToolDetail,
 } from '@shared/types'
+import { windowsPath } from '@shared/folders'
 import { liveSessionIds, sessionFiles } from '../lib/session-files'
 import { TypedEmitter } from '../lib/typed-emitter'
 import type { ConversationResult, IndexedSession, TranscriptSearchHit } from '../workers/indexer-protocol'
@@ -25,6 +26,12 @@ const MAX_SEARCH_HITS = 200
 const TOOL_USE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 /** Files moved to the recycle bin at the same time. */
 const TRASH_CONCURRENCY = 6
+
+/**
+ * A session's folder as the app shows, groups and resumes it: on Windows `F:\Projekte` also when the
+ * session wrote `/f/Projekte` (Claude Code in Git Bash) or `f:\Projekte`.
+ */
+const localPath = process.platform === 'win32' ? windowsPath : (path: string) => path
 
 export class SessionService extends TypedEmitter<Events> {
   private readonly watchers = new Map<string, { dir: string; watcher: FSWatcher }>()
@@ -179,8 +186,8 @@ export class SessionService extends TypedEmitter<Events> {
       id: s.id,
       accountId,
       projectKey: s.projectKey,
-      cwd: s.cwd,
-      worktree: s.worktree ?? null,
+      cwd: s.cwd && localPath(s.cwd),
+      worktree: s.worktree ? { ...s.worktree, path: localPath(s.worktree.path), originalCwd: localPath(s.worktree.originalCwd) } : null,
       title: s.title,
       firstPrompt: s.firstPrompt,
       lastPrompt: s.lastPrompt,

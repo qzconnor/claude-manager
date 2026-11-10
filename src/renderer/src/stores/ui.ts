@@ -21,6 +21,12 @@ export interface GroupDock {
   side: DropSide
 }
 
+/**
+ * What `WorkspaceDialog` asks for: a new workspace (in `parent`), making an existing folder one, or
+ * the prompt of a workspace.
+ */
+export type WorkspaceRequest = { mode: 'create'; parent?: string | null } | { mode: 'adopt'; path: string } | { mode: 'edit'; path: string }
+
 /** Transient UI state shared across components (dialogs, palette, search requests). */
 export const useUiStore = defineStore('ui', () => {
   /**
@@ -47,8 +53,14 @@ export const useUiStore = defineStore('ui', () => {
   const focusTerminalRequest = ref(0)
   /** A session the sessions page should select, with the search that found it. */
   const sessionToShow = ref<(SessionRef & { query: string }) | null>(null)
-  /** A folder of an account the sessions page should open and scroll to. */
-  const folderToShow = ref<{ accountId: string; path: string | null; projectKey: string } | null>(null)
+  /**
+   * A folder (or workspace) the sessions page should open and scroll to; `accountId`: the account
+   * whose sessions it is about, so a hidden standard account shows.
+   */
+  const folderToShow = ref<{ accountId?: string; path: string | null; projectKey?: string } | null>(null)
+  const workspaceRequest = ref<WorkspaceRequest | null>(null)
+  /** Asks for the name of a new project in a workspace (`ProjectDialog`), then starts a session in it. */
+  const projectRequest = ref<{ workspace: string; name: string } | null>(null)
   /** Asks for a worktree name before a session starts in one (`WorktreeDialog`); `cwd` null asks for the folder too. */
   const worktreeRequest = ref<{ accountId: string; cwd: string | null } | null>(null)
   /**
@@ -92,6 +104,8 @@ export const useUiStore = defineStore('ui', () => {
     sessionToShow,
     folderToShow,
     worktreeRequest,
+    workspaceRequest,
+    projectRequest,
     selectedTabEdges,
     hoveredTab,
     draggingTab,

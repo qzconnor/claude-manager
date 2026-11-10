@@ -27,16 +27,19 @@ import { colorFgBg, colorSchemeReport, ColorSchemeUpdates } from '../lib/color-s
 import { applyHookCall, newHookState, type HookCall, type HookState, type HookTurnEnd } from '../lib/hook-events'
 import { choosePastedImage, newPastedImageScan, readPastedImage, scanPastedImages, type PastedImageScan } from '../lib/pasted-images'
 import { fallbackSessionFolder } from '../lib/session-folder'
+import { readCompactLimit } from '../lib/auto-compact'
 import {
   findTranscript,
   isWorktreeOf,
   newTitleScan,
+  readContextUsage,
   readLiveSession,
   readSessionLimit,
   readSessionTitles,
   readTurnOutcome,
   scannedTitle,
   SESSION_ID_RE,
+  type ContextReading,
   type TitleScan,
   worktreeAt,
 } from '../lib/session-files'
@@ -103,6 +106,8 @@ interface TrackedTranscript {
   size: number
   mtimeMs: number
   limit: SessionLimit | null
+  /** The context after the latest answer; kept while the end of the transcript has none. */
+  context: ContextReading | null
   titles: TitleScan
 }
 
@@ -165,8 +170,8 @@ interface PastedImageTranscript {
 
 /** Options other parts of the app give every session they start, e.g. the browser's MCP server. */
 export interface SessionArgsProvider {
-  /** `extra`: the user's own arguments for the session, which come after these. */
-  args(terminalId: string, extra: readonly string[]): string[]
+  /** `extra`: the user's own arguments for the session, which come after these. `cwd`: the session's folder. */
+  args(terminalId: string, extra: readonly string[], cwd: string): string[]
   /**
    * Options that come after the user's own (before a `--` of theirs), for one that has to win over the
    * same option of theirs: of an option given twice, Claude Code takes the last. `cwd`: the session's folder.
@@ -285,7 +290,7 @@ export class TerminalService extends TypedEmitter<Events> {
       }
       if (mode === 'session') {
         providers = [...this.sessionArgs]
-        for (const provider of providers) args.push(...provider.args(id, extra))
+        for (const provider of providers) args.push(...provider.args(id, extra, cwd))
       }
       // Before the extra args: an option there that takes several values would swallow it.
       const prompt = options.prompt?.trim()
@@ -337,6 +342,7 @@ export class TerminalService extends TypedEmitter<Events> {
       authAccountId: auth.id,
       sessionId,
       limit: null,
+      context: null,
       busy: false,
       attention: null,
       muted: options.muted === true,
@@ -401,6 +407,7 @@ export class TerminalService extends TypedEmitter<Events> {
       authAccountId: '',
       sessionId: null,
       limit: null,
+      context: null,
       busy: false,
       attention: null,
       muted: false,
@@ -753,6 +760,14 @@ export class TerminalService extends TypedEmitter<Events> {
       info.limit = limit
       changed = true
     }
+    // From the start of the session: before its first answer with the model chosen in Claude Code and
+    // no tokens yet. Where it compacts is read on every round: `/autocompact` changes it without a new answer.
+    const reading = transcript?.context ?? null
+    const context = { tokens: reading?.tokens ?? null, ...(await readCompactLimit(paths.configDir, reading?.model ?? null)) }
+    if (JSON.stringify(context) !== JSON.stringify(info.context)) {
+      info.context = context
+      changed = true
+    }
     const worktree = currentWorktree(transcript?.titles.worktree, live?.cwd ?? null, info.cwd, info.worktree)
     if (JSON.stringify(worktree) !== JSON.stringify(info.worktree)) {
       info.worktree = worktree
@@ -814,7 +829,9 @@ export class TerminalService extends TypedEmitter<Events> {
   ): Promise<TrackedTranscript | null> {
     if (record.transcript?.sessionId !== sessionId) {
       const file = await this.findTabTranscript(projectsDir, record, sessionId)
-      record.transcript = file ? { sessionId, file, size: -1, mtimeMs: -1, limit: null, titles: newTitleScan() } : null
+      record.transcript = file
+        ? { sessionId, file, size: -1, mtimeMs: -1, limit: null, context: null, titles: newTitleScan() }
+        : null
     }
     const tracked = record.transcript
     if (!tracked) return null
@@ -825,6 +842,9 @@ export class TerminalService extends TypedEmitter<Events> {
     }
     if (info.size !== tracked.size || info.mtimeMs !== tracked.mtimeMs) {
       tracked.limit = await readSessionLimit(tracked.file, Date.parse(record.info.createdAt))
+      const context = await readContextUsage(tracked.file)
+      // After a compaction the end may have no answer yet: the model stays the one before.
+      if (context) tracked.context = { tokens: context.tokens, model: context.model ?? tracked.context?.model ?? null }
       await readSessionTitles(tracked.file, tracked.titles)
       tracked.size = info.size
       tracked.mtimeMs = info.mtimeMs

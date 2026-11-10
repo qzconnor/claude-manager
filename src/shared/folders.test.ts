@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { folderKey, inFolder } from './folders'
+import { folderKey, inFolder, windowsPath } from './folders'
+
+describe('windowsPath', () => {
+  it('writes every drive as Windows does, also from Git Bash and Cygwin', () => {
+    expect(windowsPath('/f/Projekte/autodartsapi')).toBe('F:\\Projekte\\autodartsapi')
+    expect(windowsPath('/cygdrive/c/Users/me')).toBe('C:\\Users\\me')
+    expect(windowsPath('/d')).toBe('D:\\')
+    expect(windowsPath('f:\\Projekte\\Flowtech')).toBe('F:\\Projekte\\Flowtech')
+    expect(windowsPath('e:/Daten')).toBe('E:\\Daten')
+  })
+
+  it('leaves other paths alone', () => {
+    for (const path of ['/home/me', '/fo/bar', '\\\\server\\share', 'relativ\\pfad', '']) expect(windowsPath(path)).toBe(path)
+  })
+})
 
 describe('folderKey', () => {
   it('compares Windows folders without regard to case, slash and a trailing separator', () => {

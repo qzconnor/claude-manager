@@ -56,6 +56,7 @@ function terminal(overrides: Partial<TerminalInfo>): TerminalInfo {
     authAccountId: 'system',
     sessionId: null,
     limit: null,
+    context: null,
     busy: false,
     attention: null,
     muted: false,

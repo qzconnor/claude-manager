@@ -18,7 +18,7 @@ import { selectLinuxPasswordStore } from './lib/secrets'
 import { fallbackSessionFolder } from './lib/session-folder'
 import { loadShellEnv } from './lib/shell-env'
 import { AccountService } from './services/account-service'
-import { AppContextPrompt } from './services/app-context'
+import { SessionPrompt } from './services/app-context'
 import { ClaudeCli } from './services/claude-cli'
 import { CswapImport } from './services/cswap-import'
 import { FileTreeService } from './services/file-tree-service'
@@ -36,6 +36,7 @@ import { TerminalRestore } from './services/terminal-restore'
 import { TerminalService } from './services/terminal-service'
 import { UpdateService } from './services/update-service'
 import { UsageService } from './services/usage-service'
+import { WorkspaceService } from './services/workspace-service'
 import { WorkspaceTrust } from './services/workspace-trust'
 import { WindowDialogs } from './window/dialogs'
 import { createMainWindow, openAppWindows, revealWindow } from './window/main-window'
@@ -70,7 +71,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   const accounts = new AccountService(userDataDir, new LoginProfiles(userDataDir, userAgent))
   await accounts.init()
   const cli = new ClaudeCli(() => settings.get().claude.executablePath)
-  // Known before the first session starts, for the options that depend on it (see AppContextPrompt).
+  // Known before the first session starts, for the options that depend on it (see SessionPrompt).
   void cli.version()
   const indexer = new IndexerClient(userDataDir)
   const dialogs = new WindowDialogs()
@@ -81,8 +82,11 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     return win && !win.isDestroyed() ? dialogs.show(win, options) : null
   })
   const terminals = new TerminalService(accounts, cli, settings, trust)
-  // Claude sessions learn that they run in the app, without the user seeing it (setting `appContext`).
-  terminals.addSessionArgs(new AppContextPrompt(userDataDir, cli, settings))
+  const workspaces = new WorkspaceService(userDataDir)
+  workspaces.init()
+  // Claude sessions learn that they run in the app, without the user seeing it (setting `appContext`),
+  // and get the prompts of the workspaces they work in.
+  terminals.addSessionArgs(new SessionPrompt(userDataDir, cli, settings, workspaces))
   const browser = new BrowserControl(terminals)
   // Claude sessions the app starts reach the app over its server: the browser's MCP server and their
   // hooks, before the tabs are restored. Without the server they start without both.
@@ -148,6 +152,8 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     files,
     command,
     updates,
+    workspaces,
+    trust,
     async appInfo(): Promise<AppInfo> {
       return {
         name: app.getName(),
@@ -350,6 +356,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     sessionHooks.dispose()
     sessionServer.dispose()
     usage.dispose()
+    workspaces.dispose()
     git.dispose()
     files.dispose()
     sessions.dispose()

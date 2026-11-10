@@ -6,9 +6,9 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderOpenIcon,
+  LayersIcon,
   ListChecksIcon,
   MinusIcon,
-  PlusIcon,
   SquareTerminalIcon,
   Trash2Icon,
 } from '@lucide/vue'
@@ -25,25 +25,36 @@ import {
   ContextMenuGroup,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useLauncher } from '@/composables/useLauncher'
 import type { SessionRef } from '@/composables/useSessionDetail'
 import { useSessionRemoval } from '@/composables/useSessionRemoval'
 import { sessionKey } from '@/composables/useSessionSearch'
 import { attempt } from '@/lib/errors'
 import { formatBytes, formatRelative } from '@/lib/format'
+import { splitFolder } from '@/lib/recent-folders'
 import type { SessionProject } from '@/lib/session-tree'
 import { cn } from '@/lib/utils'
+import { useUiStore } from '@/stores/ui'
+import NewSessionButton from './NewSessionButton.vue'
+import NewSessionMenuItem from './NewSessionMenuItem.vue'
 import SessionListItem from './SessionListItem.vue'
 
 const PAGE_SIZE = 50
 
-/** A folder in the session list: its sessions below it, opened and closed like a folder in a tree. */
+/**
+ * A folder in the session list (a project of a workspace, or a folder of its own): its sessions of all
+ * accounts below it, opened and closed like a folder in a tree.
+ */
 const props = defineProps<{
   project: SessionProject
   open: boolean
+  /** In no workspace: the menu offers to make it, or the folder it lies in, a workspace. */
+  convertible?: boolean
   selected: SessionRef | null
   now: number
   hits?: Map<string, SessionSearchHit>
@@ -63,6 +74,7 @@ const emit = defineEmits<{
 
 const launcher = useLauncher()
 const removal = useSessionRemoval()
+const ui = useUiStore()
 const menuOpen = ref(false)
 const limit = ref(PAGE_SIZE)
 const visible = computed(() => props.project.sessions.slice(0, limit.value))
@@ -73,13 +85,27 @@ const checkState = computed(() => {
   return count === props.project.sessions.length ? true : 'indeterminate'
 })
 
+const empty = computed(() => props.project.sessions.length === 0)
+
 const details = computed(() => {
   const { sessions, sizeBytes, updatedAt, path } = props.project
+  if (!updatedAt) return [path, 'Noch keine Sessions'].filter(Boolean).join('\n')
   const count = sessions.length === 1 ? '1 Session' : `${sessions.length} Sessions`
   return [path, `${count} · ${formatBytes(sizeBytes)} · zuletzt ${formatRelative(updatedAt, props.now)}`]
     .filter(Boolean)
     .join('\n')
 })
+
+/** The folder the project lies in, to make it a workspace with its neighbours; null for a drive or the root. */
+const parentFolder = computed(() => {
+  if (!props.project.path) return null
+  const { parent } = splitFolder(props.project.path)
+  return parent ? { path: parent, name: splitFolder(parent).name } : null
+})
+
+function makeWorkspace(path: string) {
+  ui.workspaceRequest = { mode: 'adopt', path }
+}
 
 function openFolder() {
   if (props.project.path) void attempt(() => window.api.app.openPath(props.project.path!), 'Ordner konnte nicht geöffnet werden')
@@ -108,7 +134,7 @@ async function copyPath() {
           <Checkbox
             v-if="selecting"
             :model-value="checkState"
-            :disabled="project.sessions.length === 0"
+            :disabled="empty"
             :aria-label="`Alle Sessions in ${project.name} auswählen`"
             class="ml-2 data-[state=indeterminate]:border-primary data-[state=indeterminate]:bg-primary data-[state=indeterminate]:text-primary-foreground"
             @update:model-value="emit('check', $event === true)"
@@ -120,44 +146,36 @@ async function copyPath() {
           </Checkbox>
           <CollapsibleTrigger
             v-tooltip="details"
-            class="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+            :disabled="empty"
+            class="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-default"
           >
-            <ChevronRightIcon :class="cn('size-3.5 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')" />
-            <component :is="open ? FolderOpenIcon : FolderIcon" class="size-3.5 shrink-0 text-muted-foreground" />
-            <span class="max-w-[70%] shrink-0 truncate font-medium">
+            <ChevronRightIcon
+              :class="cn('size-3.5 shrink-0 text-muted-foreground transition-transform', open && !empty && 'rotate-90', empty && 'opacity-0')"
+            />
+            <component :is="open && !empty ? FolderOpenIcon : FolderIcon" class="size-3.5 shrink-0 text-muted-foreground" />
+            <span :class="cn('max-w-[70%] shrink-0 truncate font-medium', empty && 'font-normal text-muted-foreground')">
               <HighlightText :text="project.name" :terms="terms ?? []" />
             </span>
             <span class="min-w-0 truncate font-mono text-xs text-muted-foreground">{{ project.parent }}</span>
           </CollapsibleTrigger>
-          <span class="shrink-0 text-xs text-muted-foreground tabular-nums">{{ project.sessions.length }}</span>
-          <Tooltip v-if="project.path">
-            <TooltipTrigger as-child>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Neue Session in diesem Ordner"
-                class="opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100"
-                @click="launcher.newSession(project.accountId, project.path)"
-              >
-                <PlusIcon />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Neue Session in {{ project.name }}</TooltipContent>
-          </Tooltip>
+          <span v-if="!empty" class="shrink-0 text-xs text-muted-foreground tabular-nums">{{ project.sessions.length }}</span>
+          <NewSessionButton
+            v-if="project.path"
+            :path="project.path"
+            :name="project.name"
+            class="opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+          />
           <span v-else class="size-6 shrink-0" />
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent class="w-56">
         <ContextMenuGroup>
-          <ContextMenuItem :disabled="!project.path" @select="launcher.newSession(project.accountId, project.path)">
-            <PlusIcon />
-            Neue Session hier
-          </ContextMenuItem>
-          <ContextMenuItem :disabled="!project.path" @select="launcher.newSessionInWorktree(project.accountId, project.path)">
+          <NewSessionMenuItem :path="project.path" />
+          <ContextMenuItem :disabled="!project.path" @select="launcher.newSessionInWorktree(null, project.path)">
             <FolderGit2Icon />
             Neue Session in Worktree…
           </ContextMenuItem>
-          <ContextMenuItem :disabled="!project.path" @select="launcher.shell(project.accountId, project.path)">
+          <ContextMenuItem :disabled="!project.path" @select="launcher.shell(launcher.defaultAccountId(), project.path)">
             <SquareTerminalIcon />
             Shell hier öffnen
           </ContextMenuItem>
@@ -172,9 +190,26 @@ async function copyPath() {
             <CopyIcon />
             Pfad kopieren
           </ContextMenuItem>
+          <ContextMenuSub v-if="convertible && project.path">
+            <ContextMenuSubTrigger>
+              <LayersIcon />
+              Zum Workspace machen
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent class="w-64">
+              <ContextMenuItem @select="makeWorkspace(project.path)">
+                <FolderIcon />
+                <span class="truncate">{{ project.name }}</span>
+              </ContextMenuItem>
+              <ContextMenuItem v-if="parentFolder" @select="makeWorkspace(parentFolder.path)">
+                <FolderIcon />
+                <span class="min-w-0 truncate">{{ parentFolder.name }}</span>
+                <span class="ml-auto shrink-0 text-xs text-muted-foreground">übergeordnet</span>
+              </ContextMenuItem>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
         </ContextMenuGroup>
-        <ContextMenuSeparator />
-        <ContextMenuGroup>
+        <ContextMenuSeparator v-if="!empty" />
+        <ContextMenuGroup v-if="!empty">
           <ContextMenuItem v-if="checkState !== true" @select="emit('check', true)">
             <ListChecksIcon />
             Alle Sessions auswählen

@@ -189,12 +189,29 @@ export const schemas: Record<string, Schema> = {
     resetsAt: nullable(dateTime),
     message: { type: 'string', description: 'Meldung von Claude Code' },
   }),
+  SessionContext: object({
+    tokens: {
+      ...nullable({ type: 'integer', minimum: 0 }),
+      description: 'Tokens im Kontext nach der letzten Antwort; nach einem Compact die Zusammenfassung. null vor der ersten Antwort',
+    },
+    compactAt: {
+      ...nullable(int),
+      description: 'Ab hier fasst Claude Code den Verlauf von selbst zusammen (Fenster minus Puffer); null, wenn Auto-Compact aus ist',
+    },
+    window: { type: 'integer', description: 'Auto-Compact-Fenster: per /autocompact gesetzt, sonst das Kontextfenster des Modells' },
+    configured: { type: 'boolean', description: 'Das Fenster ist per /autocompact oder Einstellung gesetzt' },
+    model: { ...nullable(str), description: 'z. B. claude-opus-5-5; vor der ersten Antwort das in Claude Code gewählte' },
+  }),
   Terminal: object({
     id: str,
     accountId: { type: 'string', description: 'Account, in dessen Ordner die Session liegt' },
     authAccountId: { type: 'string', description: 'Account, dessen Login, Token oder API-Key der Prozess verwendet' },
     sessionId: { ...nullable(str), description: 'Claude-Code-Session, die gerade im Tab läuft' },
     limit: { ...nullable(ref('SessionLimit')), description: 'Gesetzt, solange die Session an einem Nutzungslimit steht' },
+    context: {
+      ...nullable(ref('SessionContext')),
+      description: 'Wie voll der Kontext der Session ist, ab ihrem Start; null bei Shells, Logins und Browsern',
+    },
     busy: { type: 'boolean', description: 'Claude Code arbeitet gerade an einer Antwort (laut Fenstertitel)' },
     hooks: {
       type: 'boolean',

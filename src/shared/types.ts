@@ -209,6 +209,20 @@ export interface SessionLimit {
   message: string
 }
 
+/** How full a session's context is: from its transcript, and where it compacts from Claude Code's settings. */
+export interface SessionContext {
+  /** Tokens in the context after the latest answer; after a compaction its summary. Null before the first answer. */
+  tokens: number | null
+  /** Where Claude Code compacts by itself (the window less room for answer and summary); null when auto-compact is off. */
+  compactAt: number | null
+  /** The auto-compact window: set with `/autocompact`, otherwise the model's context window. */
+  window: number
+  /** The window was set with `/autocompact` (or the setting), not the model's own. */
+  configured: boolean
+  /** e.g. `claude-opus-5-5`; null when the transcript doesn't tell. */
+  model: string | null
+}
+
 /**
  * What runs in a part of a tab: a Claude Code session, a login, a shell, or (`browser`) a web page
  * without a process, whose `url` is set instead.
@@ -407,6 +421,8 @@ export interface TerminalInfo {
   sessionId: string | null
   /** Set while the session is stopped by a usage limit. */
   limit: SessionLimit | null
+  /** How full the session's context is, from its start (tokens from the first answer on); null for shells, logins and browsers. */
+  context: SessionContext | null
   /** Claude Code works on a turn, as its window title shows (also when started in a shell tab). */
   busy: boolean
   /** Something happened in the tab while it wasn't shown; cleared once it is (setting `notifications.unreadDot`). */
@@ -899,6 +915,34 @@ export interface SettingsImportResult {
 
 export type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends (infer U)[] ? U[] : T[K] extends object ? DeepPartial<T[K]> : T[K]
+}
+
+// ---------------------------------------------------------------------------
+// Workspaces
+// ---------------------------------------------------------------------------
+
+/**
+ * A folder whose subfolders are projects that share a system prompt: what its `cm_prompts.md` says
+ * is appended to the system prompt of every session the app starts in it.
+ */
+export interface Workspace {
+  path: string
+  /** The folder's name. */
+  name: string
+  /** False while the folder can't be found, e.g. on a drive that isn't there. */
+  exists: boolean
+  /** Names of the subfolders, without hidden ones (`.git`) and nested workspaces, sorted. */
+  projects: string[]
+  /** `cm_prompts.md` has some text. */
+  hasPrompt: boolean
+}
+
+export interface WorkspaceCreateInput {
+  /** The folder the workspace's folder is made in. */
+  parent: string
+  name: string
+  /** Text for `cm_prompts.md`; empty leaves it empty. */
+  prompt: string
 }
 
 // ---------------------------------------------------------------------------
