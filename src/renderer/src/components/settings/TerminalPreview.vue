@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { UnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes'
-import { Terminal } from '@xterm/xterm'
+import { Terminal, type IDisposable } from '@xterm/xterm'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { placeColumns, renderService, terminalOptions } from '@/composables/useTerminal'
+import { loadWebgl, placeColumns, renderService, terminalOptions, type LoadedWebgl } from '@/composables/useTerminal'
 import { ensureFontLoaded, useTerminalAppearance } from '@/composables/useTerminalAppearance'
+import { drawBlockGlyphs } from '@/lib/block-glyphs'
+import { drawLigatures, type Ligatures } from '@/lib/ligatures'
 import { createBackgroundFilter } from '@/lib/claude-backgrounds'
 import { setSlotTints } from '@/lib/translucent-slots'
 import { useSettingsStore } from '@/stores/settings'
@@ -29,7 +31,7 @@ const SAMPLE = [
   `  ⎿  Read ${ESC}1m142${ESC}0m lines`,
   `${ESC}33m●${ESC}0m ${ESC}1mUpdate${ESC}0m(src/lib/format.ts)`,
   `  ${ESC}48;2;61;1;0m${ESC}31m - ${ESC}39mconst old = ${ESC}48;2;92;2;0m'legacy'${ESC}48;2;61;1;0m // 👋${ESC}K${ESC}0m`,
-  `  ${ESC}48;2;2;40;0m${ESC}32m + ${ESC}39mexport function ${ESC}48;2;4;71;0mformatTokens${ESC}48;2;2;40;0m(value: number) {${ESC}K${ESC}0m`,
+  `  ${ESC}48;2;2;40;0m${ESC}32m + ${ESC}39mexport const ${ESC}48;2;4;71;0mformatTokens${ESC}48;2;2;40;0m = (n: number) => {${ESC}K${ESC}0m`,
   '',
   `${ESC}30m■${ESC}31m■${ESC}32m■${ESC}33m■${ESC}34m■${ESC}35m■${ESC}36m■${ESC}37m■ ${ESC}90m■${ESC}91m■${ESC}92m■${ESC}93m■${ESC}94m■${ESC}95m■${ESC}96m■${ESC}97m■${ESC}0m  äöü ß € → ✓ ⚡ 👨‍👩‍👧 🇩🇪`,
 ].join('\r\n')
@@ -37,18 +39,50 @@ const SAMPLE = [
 const SAMPLE_ROWS = SAMPLE.split('\r\n').length
 
 let term: Terminal | null = null
+let webgl: LoadedWebgl | null = null
+let blockGlyphs: IDisposable | null = null
+let ligatures: Ligatures | null = null
 let observer: ResizeObserver | null = null
 let fitFrame = 0
 
-/** Writes the sample anew; needed when the exchanged backgrounds (or the crab's color) change. */
+/** Draws with the renderer of the terminals, so the preview shows what they show. */
+function applyRenderer() {
+  if (!term) return
+  if (settings.settings.terminal.renderer !== 'webgl') {
+    dropWebgl()
+    return
+  }
+  if (webgl) return
+  try {
+    const loaded = loadWebgl(term)
+    // GPU reset or too many contexts: the DOM renderer draws instead.
+    loaded.addon.onContextLoss(() => {
+      if (webgl === loaded) dropWebgl()
+    })
+    webgl = loaded
+  } catch (error) {
+    console.warn('[terminal preview] WebGL unavailable, using DOM renderer', error)
+  }
+}
+
+function dropWebgl() {
+  webgl?.dispose()
+  webgl = null
+}
+
+/**
+ * Writes the sample anew; needed when the exchanged backgrounds (or the crab's color) change. The
+ * reset goes with the data (`ESC c`): `term.reset()` would empty the screen at once while an earlier
+ * write is still waiting, and that sample would then end up on top of this one.
+ */
 function writeSample() {
   if (!term) return
-  term.reset()
   term.write(
-    createBackgroundFilter(
-      () => backgrounds.value,
-      () => logo.value,
-    )(SAMPLE),
+    '\x1bc' +
+      createBackgroundFilter(
+        () => backgrounds.value,
+        () => logo.value,
+      )(SAMPLE),
   )
 }
 
@@ -73,6 +107,9 @@ function fit() {
     if (cols === term.cols && rows === term.rows) return
     renderService(term).clear()
     term.resize(cols, rows)
+    // Narrower, the bars filled to the old width would wrap and push the top row out (there is no
+    // scrollback), e.g. when the other renderer has a slightly different cell width: written anew.
+    writeSample()
   })
 }
 
@@ -97,6 +134,13 @@ onMounted(async () => {
   term.loadAddon(new UnicodeGraphemesAddon())
   applyUnicode()
   term.open(el)
+  blockGlyphs = drawBlockGlyphs(term)
+  ligatures = drawLigatures(
+    term,
+    () => settings.settings.terminal.ligatures,
+    () => webgl !== null,
+  )
+  applyRenderer()
   writeSample()
   fit()
   observer = new ResizeObserver(() => fit())
@@ -112,6 +156,9 @@ watch(
     setSlotTints(tints)
     Object.assign(term.options, { ...terminalOptions(s, p, tints), cursorBlink: false, scrollback: 0 })
     applyUnicode()
+    applyRenderer()
+    ligatures?.update()
+    webgl?.addon.clearTextureAtlas()
     fit()
   },
 )
@@ -121,6 +168,9 @@ watch([backgrounds, logo], writeSample)
 onBeforeUnmount(() => {
   cancelAnimationFrame(fitFrame)
   observer?.disconnect()
+  blockGlyphs?.dispose()
+  ligatures?.dispose()
+  dropWebgl()
   term?.dispose()
   term = null
 })

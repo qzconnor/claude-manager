@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { searchTerms } from '@shared/utils'
-import { containsTerms, highlightParts, searchText, type TextPart } from './search'
+import { containsTerms, highlightParts, matchSpans, searchText, type TextPart } from './search'
 
 describe('searchText', () => {
   it('joins the present fields in lower case', () => {
@@ -82,5 +82,31 @@ describe('highlightParts', () => {
     const parts = highlightParts(text, searchTerms('ärger und'))
     expect(joined(parts)).toBe(text)
     expect(parts.filter((p) => p.match).map((p) => p.text)).toEqual(['Ärger', 'ÄRGER', 'und', 'ärger'])
+  })
+})
+
+describe('matchSpans', () => {
+  it('finds a term case-insensitively', () => {
+    expect(matchSpans('Developer: Reload Window', searchTerms('reloa'))).toEqual([[11, 16]])
+  })
+
+  it('finds every term and every occurrence, merging what touches', () => {
+    expect(matchSpans('a-b-a', ['a'])).toEqual([
+      [0, 1],
+      [4, 5],
+    ])
+    expect(matchSpans('abcdefg', ['abc', 'cde', 'f'])).toEqual([[0, 6]])
+  })
+
+  it('ignores accents, in the text and in the terms', () => {
+    expect(matchSpans('Ordner öffnen', ['offnen'])).toEqual([[7, 13]])
+    expect(matchSpans('Browser schliessen', ['schließen'])).toEqual([])
+    expect(matchSpans('Datei offnen', ['öffnen'])).toEqual([[6, 12]])
+  })
+
+  it('finds nothing without terms or matches', () => {
+    expect(matchSpans('Neue Session', [])).toEqual([])
+    expect(matchSpans('Neue Session', ['xyz'])).toEqual([])
+    expect(matchSpans('', ['a'])).toEqual([])
   })
 })

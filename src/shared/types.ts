@@ -757,6 +757,8 @@ export interface TerminalSettings {
   fontSize: number
   lineHeight: number
   letterSpacing: number
+  /** Sequences such as `=>` drawn as one sign (⇒) when the font has ligatures for them. */
+  ligatures: boolean
   fontWeight: number
   fontWeightBold: number
   cursorStyle: CursorStyle

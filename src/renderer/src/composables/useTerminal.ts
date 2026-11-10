@@ -5,6 +5,8 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal, type ITheme, type ITerminalOptions } from '@xterm/xterm'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import type { PastedImage, TerminalSettings } from '@shared/types'
+import { drawBlockGlyphs } from '@/lib/block-glyphs'
+import { drawLigatures, type Ligatures } from '@/lib/ligatures'
 import { createBackgroundFilter, slotPalette, type SlotTints } from '@/lib/claude-backgrounds'
 import { answerColorQueries } from '@/lib/color-queries'
 import { matchShortcut } from '@shared/shortcuts'
@@ -79,6 +81,34 @@ function holdWebgl(key: symbol, holder: WebglHolder): void {
   for (const [other, { shown, release }] of webglHolders) {
     if (webglHolders.size <= MAX_WEBGL_CONTEXTS) break
     if (other !== key && !shown()) release()
+  }
+}
+
+/** xterm's WebGL renderer in a terminal; `dispose` takes it out again. */
+export interface LoadedWebgl {
+  addon: WebglAddon
+  dispose(): void
+}
+
+/**
+ * Loads xterm's WebGL renderer into `term`; throws without WebGL. Disposing the addon only takes the
+ * canvas away and its context would count against Chromium's limit until garbage collected, so
+ * `dispose` also loses the context right away.
+ */
+export function loadWebgl(term: Terminal): LoadedWebgl {
+  const before = new Set(term.element?.querySelectorAll('canvas'))
+  const addon = new WebglAddon()
+  term.loadAddon(addon)
+  makeSlotsTranslucent(addon)
+  const canvas = [...(term.element?.querySelectorAll('canvas') ?? [])].find((c) => !before.has(c)) ?? null
+  return {
+    addon,
+    dispose() {
+      // The canvas has a WebGL 2 context already, so this asks for no new one.
+      const gl = canvas?.getContext('webgl2')
+      addon.dispose()
+      gl?.getExtension('WEBGL_lose_context')?.loseContext()
+    },
   }
 }
 
@@ -187,9 +217,7 @@ export function useTerminal(options: UseTerminalOptions) {
   const hasSelection = ref(false)
   let term: Terminal | null = null
   let searchAddon: SearchAddon | null = null
-  let webgl: WebglAddon | null = null
-  /** The canvas the WebGL renderer draws on, to free its context. */
-  let webglCanvas: HTMLCanvasElement | null = null
+  let webgl: LoadedWebgl | null = null
   const webglKey = Symbol(terminalId)
   /** On screen (not in a hidden tab, group or page). */
   let shown = false
@@ -203,6 +231,7 @@ export function useTerminal(options: UseTerminalOptions) {
   /** Current downward shift of the rows (see `align`). */
   let shiftY = 0
   let disposed = false
+  let ligatures: Ligatures | null = null
   const cleanups: (() => void)[] = []
 
   const imagePreview = ref<ImagePreview | null>(null)
@@ -334,23 +363,19 @@ export function useTerminal(options: UseTerminalOptions) {
     }
     if (webglLosses >= MAX_WEBGL_LOSSES) return
     try {
-      const addon = new WebglAddon()
-      addon.onContextLoss(() => {
+      const loaded = loadWebgl(term)
+      loaded.addon.onContextLoss(() => {
         // GPU reset or too many contexts: a terminal on screen gets a new one right away, a hidden one
         // when shown again; the DOM renderer draws meanwhile.
         webglLosses++
-        if (webgl !== addon) {
-          addon.dispose()
+        if (webgl !== loaded) {
+          loaded.addon.dispose()
           return
         }
         disableWebgl()
         if (shown) enableWebgl()
       })
-      const canvases = new Set(term.element?.querySelectorAll('canvas'))
-      term.loadAddon(addon)
-      makeSlotsTranslucent(addon)
-      webgl = addon
-      webglCanvas = [...(term.element?.querySelectorAll('canvas') ?? [])].find((canvas) => !canvases.has(canvas)) ?? null
+      webgl = loaded
       holdWebgl(webglKey, { shown: () => shown, release: disableWebgl })
     } catch (error) {
       console.warn('[terminal] WebGL unavailable, using DOM renderer', error)
@@ -361,14 +386,8 @@ export function useTerminal(options: UseTerminalOptions) {
   function disableWebgl(): void {
     clearTimeout(hiddenTimer)
     webglHolders.delete(webglKey)
-    if (!webgl) return
-    // Disposing only takes the canvas away; its context would count against Chromium's limit until
-    // garbage collected. The canvas has a WebGL 2 context already, so this asks for no new one.
-    const gl = webglCanvas?.getContext('webgl2')
-    webgl.dispose()
+    webgl?.dispose()
     webgl = null
-    webglCanvas = null
-    gl?.getExtension('WEBGL_lose_context')?.loseContext()
   }
 
   /** Only terminals on screen keep a WebGL context: one hidden for a while gives it up. */
@@ -529,6 +548,14 @@ export function useTerminal(options: UseTerminalOptions) {
     term.unicode.activeVersion = s.unicode === 'graphemes' ? '15-graphemes' : '11'
 
     term.open(el)
+    const blockGlyphs = drawBlockGlyphs(term)
+    cleanups.push(() => blockGlyphs.dispose())
+    const lig = (ligatures = drawLigatures(
+      term,
+      () => settingsStore.settings.terminal.ligatures,
+      () => webgl !== null,
+    ))
+    cleanups.push(() => lig.dispose())
     // Right away for a terminal on screen, so the output so far isn't drawn by the DOM renderer first.
     setShown(el.getClientRects().length > 0)
     term.attachCustomKeyEventHandler(handleKey)
@@ -641,7 +668,8 @@ export function useTerminal(options: UseTerminalOptions) {
         if (prev.renderer !== 'webgl') webglLosses = 0
         enableWebgl()
       }
-      webgl?.clearTextureAtlas()
+      ligatures?.update()
+      webgl?.addon.clearTextureAtlas()
       fit()
     },
   )

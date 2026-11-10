@@ -91,6 +91,7 @@ const TREE = [
           { id: 'terminal.fontSize', label: 'Schriftgröße', keywords: 'Größe Zoom vergrößern verkleinern' },
           { id: 'terminal.lineHeight', label: 'Zeilenhöhe', keywords: 'Zeilenabstand' },
           { id: 'terminal.letterSpacing', label: 'Zeichenabstand', keywords: 'Buchstabenabstand Laufweite' },
+          { id: 'terminal.ligatures', label: 'Ligaturen', keywords: 'Pfeil => != JetBrains Mono Fira Code Cascadia Code' },
           { id: 'terminal.fontWeight', label: 'Schriftstärke', keywords: 'fett bold normal Gewicht' },
         ],
       },

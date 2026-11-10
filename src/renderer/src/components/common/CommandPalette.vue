@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ListboxRoot } from 'reka-ui'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
+import { searchTerms } from '@shared/utils'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import TabSearchList from '@/components/terminal/TabSearchList.vue'
+import { useMatchHighlight } from '@/composables/useMatchHighlight'
 import { cn } from '@/lib/utils'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
@@ -20,6 +22,11 @@ const ui = useUiStore()
 const terminals = useTerminalsStore()
 
 const mode = computed(() => (ui.paletteQuery.startsWith('>') ? 'commands' : ui.paletteQuery.startsWith('?') ? 'help' : 'tabs'))
+
+/** What was typed is colored in the commands, tabs and sessions found; the prefixes don't count. */
+const results = ref<HTMLElement | null>(null)
+const terms = computed(() => (mode.value === 'help' ? [] : searchTerms(ui.paletteQuery.replace(/^>\s*/, ''))))
+useMatchHighlight(() => results.value, () => terms.value)
 
 let keepFocus = false
 function done(keep = false) {
@@ -62,11 +69,14 @@ function onCloseAutoFocus(event: Event) {
         <DialogTitle>Suchen</DialogTitle>
         <DialogDescription>Tabs und Sessions suchen, mit &gt; Befehle, mit ? die Möglichkeiten</DialogDescription>
       </DialogHeader>
-      <PaletteCommands v-if="mode === 'commands'" v-model:query="ui.paletteQuery" @done="done" />
-      <PaletteHelp v-else-if="mode === 'help'" v-model:query="ui.paletteQuery" />
-      <ListboxRoot v-else highlight-on-hover class="flex min-h-0 flex-col">
-        <TabSearchList v-model:query="ui.paletteQuery" @done="done()" />
-      </ListboxRoot>
+      <!-- `contents`: no box of its own, the dialog's grid lays out the mode as before. -->
+      <div ref="results" class="contents">
+        <PaletteCommands v-if="mode === 'commands'" v-model:query="ui.paletteQuery" @done="done" />
+        <PaletteHelp v-else-if="mode === 'help'" v-model:query="ui.paletteQuery" />
+        <ListboxRoot v-else highlight-on-hover class="flex min-h-0 flex-col">
+          <TabSearchList v-model:query="ui.paletteQuery" @done="done()" />
+        </ListboxRoot>
+      </div>
     </DialogContent>
   </Dialog>
 </template>

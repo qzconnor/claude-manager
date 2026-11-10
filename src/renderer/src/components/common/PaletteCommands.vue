@@ -11,6 +11,7 @@ import {
   PanelRightIcon,
   PlusIcon,
   RefreshCwIcon,
+  RotateCwIcon,
   Rows2Icon,
   SparklesIcon,
   SquareTerminalIcon,
@@ -89,6 +90,14 @@ function toggleNotifications() {
     () => settings.update({ notifications: { enabled: !notificationsOn.value } }),
     'Benachrichtigungen konnten nicht umgeschaltet werden',
   )
+}
+
+/**
+ * Like VS Code's Reload Window: loads the app's page anew, e.g. when it draws something wrong. The
+ * terminals run in the main process and show again with their output.
+ */
+function reloadWindow() {
+  location.reload()
 }
 
 /** Shows a terminal's tab; in groups the route follows it by itself. */
@@ -212,6 +221,14 @@ const closesBrowser = computed(
           <BellOffIcon v-if="notificationsOn" />
           <BellIcon v-else />
           {{ notificationsOn ? 'Benachrichtigungen ausschalten' : 'Benachrichtigungen einschalten' }}
+        </CommandItem>
+        <CommandItem
+          value="reload-window"
+          filter-text="Fenster neu laden Reload Window neu rendern neu zeichnen Entwickler Developer"
+          @select="run(reloadWindow)"
+        >
+          <RotateCwIcon />
+          Fenster neu laden
         </CommandItem>
       </CommandGroup>
 

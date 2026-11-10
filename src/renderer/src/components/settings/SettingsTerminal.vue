@@ -33,6 +33,7 @@ const fontFamily = t('fontFamily')
 const fontSize = t('fontSize', 150)
 const lineHeight = t('lineHeight', 150)
 const letterSpacing = t('letterSpacing', 150)
+const ligatures = t('ligatures')
 const fontWeight = t('fontWeight')
 const fontWeightBold = t('fontWeightBold')
 const cursorStyle = t('cursorStyle')
@@ -137,6 +138,14 @@ function onScheme(value: unknown) {
       </SettingField>
       <SettingField anchor="terminal.letterSpacing" for="terminal-letter-spacing" label="Zeichenabstand">
         <NumberControl id="terminal-letter-spacing" v-model="letterSpacing" :min="-5" :max="10" :step="0.5" />
+      </SettingField>
+      <SettingField
+        anchor="terminal.ligatures"
+        for="terminal-ligatures"
+        label="Ligaturen"
+        description="Zeichenfolgen wie => oder != erscheinen als ein Zeichen (⇒, ≠), wenn die Schrift Ligaturen hat, z. B. JetBrains Mono, Fira Code oder Cascadia Code."
+      >
+        <Switch id="terminal-ligatures" v-model="ligatures" />
       </SettingField>
       <SettingField anchor="terminal.fontWeight" label="Schriftstärke" description="Normal und fett.">
         <Select :model-value="String(fontWeight)" @update:model-value="onWeight">

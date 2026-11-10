@@ -73,6 +73,7 @@ export function createDefaultSettings(platform = 'win32'): AppSettings {
       fontSize: 14,
       lineHeight: 1.2,
       letterSpacing: 0,
+      ligatures: true,
       fontWeight: 400,
       fontWeightBold: 700,
       cursorStyle: 'bar',
