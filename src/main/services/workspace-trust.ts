@@ -78,6 +78,30 @@ export class WorkspaceTrust {
     }
   }
 
+  /**
+   * The folder `from` moved to `to`: an account that trusted it trusts it there too. Not where the
+   * trust would cover more than the folder (a git repository it now lies in, the home folder).
+   */
+  carry(from: string, to: string): Promise<void> {
+    const run = this.queue.then(() => this.carryNow(from, to))
+    this.queue = run.catch(() => undefined)
+    return run
+  }
+
+  private async carryNow(from: string, to: string): Promise<void> {
+    for (const account of this.accounts.list()) {
+      const configFile = this.accounts.paths(account.id).globalConfigFile
+      try {
+        if (!(await trustTarget(configFile, from)).trusted) continue
+        const target = await trustTarget(configFile, to)
+        if (target.trusted || target.folder !== target.cwd || isHomeFolder(target.folder, homedir())) continue
+        await trustFolder(configFile, target)
+      } catch (error) {
+        console.warn('[trust] could not be carried over, the app asks when the session starts', error)
+      }
+    }
+  }
+
   private question(accountId: string, target: TrustTarget): DialogOptions {
     const paragraphs = [
       'Claude Code kann in diesem Ordner Dateien lesen, bearbeiten und ausführen. Vertraue nur eigenen Projekten, Code aus deinem Team oder bekannten Open-Source-Projekten.',

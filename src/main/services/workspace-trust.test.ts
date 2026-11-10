@@ -76,4 +76,15 @@ describe.skipIf(insideRepository(tmpdir()))('WorkspaceTrust.grant', () => {
     expect(Object.keys(await projects('a'))).toEqual([projectKey(parent)])
     expect(Object.keys(await projects('b'))).toEqual([projectKey(join(parent, 'acme'))])
   })
+
+  it('trusts a moved folder at its new place where it trusted it before', async () => {
+    const from = join(dir, 'Kunden', 'shop')
+    const to = join(dir, 'Andere', 'shop')
+    await mkdir(to, { recursive: true })
+    await writeFile(configs.a!, JSON.stringify({ projects: { [projectKey(from)]: { hasTrustDialogAccepted: true } } }))
+    await trust.carry(from, to)
+    expect((await projects('a'))[projectKey(to)]?.hasTrustDialogAccepted).toBe(true)
+    // The other account didn't trust it: it is asked there, as before.
+    expect(await projects('b')).toEqual({})
+  })
 })

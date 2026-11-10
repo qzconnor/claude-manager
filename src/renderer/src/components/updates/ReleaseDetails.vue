@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ChevronRightIcon } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
+import { withoutReleaseLines } from '@shared/release-notes'
 import MarkdownContent from '@/components/sessions/MarkdownContent.vue'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -18,7 +19,13 @@ const open = ref(false)
 const loading = ref(false)
 const error = ref<string | null>(null)
 
-const loaded = computed(() => props.references.flatMap((number) => updates.references[number] ?? []))
+/** Without their list of changes (`## Versionshinweise`): the notes above show it already. */
+const loaded = computed(() =>
+  props.references.flatMap((number) => {
+    const reference = updates.references[number]
+    return reference ? [{ ...reference, body: withoutReleaseLines(reference.body) }] : []
+  }),
+)
 
 async function load(): Promise<void> {
   loading.value = true

@@ -96,6 +96,8 @@ describe('workspace', () => {
     expect(diffOfTab('diff:nope')).toBeNull()
     expect(diffOfTab('diff:["only-root"]')).toBeNull()
     expect(diffOfTab('diff:["", "a.ts"]')).toBeNull()
+    // All changes of the folder.
+    expect(diffOfTab(diffTab({ root: 'C:\\Repo', path: '' }))).toEqual({ root: 'C:\\Repo', path: '' })
   })
 
   it('finds the drop spot: bar joins, edges split, middle joins', () => {

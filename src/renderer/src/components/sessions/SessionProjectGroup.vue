@@ -5,7 +5,11 @@ import {
   CopyIcon,
   FolderGit2Icon,
   FolderIcon,
+  FolderInputIcon,
   FolderOpenIcon,
+  FolderPlusIcon,
+  FolderSearchIcon,
+  FolderXIcon,
   LayersIcon,
   ListChecksIcon,
   MinusIcon,
@@ -14,7 +18,9 @@ import {
 } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { toast } from 'vue-sonner'
+import { folderKey, inFolder } from '@shared/folders'
 import type { SessionSearchHit, SessionSummary } from '@shared/types'
+import { workspaceOf } from '@shared/workspaces'
 import HighlightText from '@/components/common/HighlightText.vue'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -30,6 +36,7 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
+import { useFolderMove } from '@/composables/useFolderMove'
 import { useLauncher } from '@/composables/useLauncher'
 import type { SessionRef } from '@/composables/useSessionDetail'
 import { useSessionRemoval } from '@/composables/useSessionRemoval'
@@ -40,6 +47,7 @@ import { splitFolder } from '@/lib/recent-folders'
 import type { SessionProject } from '@/lib/session-tree'
 import { cn } from '@/lib/utils'
 import { useUiStore } from '@/stores/ui'
+import { useWorkspacesStore } from '@/stores/workspaces'
 import NewSessionButton from './NewSessionButton.vue'
 import NewSessionMenuItem from './NewSessionMenuItem.vue'
 import SessionListItem from './SessionListItem.vue'
@@ -53,7 +61,10 @@ const PAGE_SIZE = 50
 const props = defineProps<{
   project: SessionProject
   open: boolean
-  /** In no workspace: the menu offers to make it, or the folder it lies in, a workspace. */
+  /**
+   * In no workspace: the menu offers to make it, or the folder it lies in, a workspace. A project of a
+   * workspace can become one itself, then the list shows it by itself.
+   */
   convertible?: boolean
   selected: SessionRef | null
   now: number
@@ -75,6 +86,8 @@ const emit = defineEmits<{
 const launcher = useLauncher()
 const removal = useSessionRemoval()
 const ui = useUiStore()
+const workspaces = useWorkspacesStore()
+const folderMove = useFolderMove()
 const menuOpen = ref(false)
 const limit = ref(PAGE_SIZE)
 const visible = computed(() => props.project.sessions.slice(0, limit.value))
@@ -86,15 +99,48 @@ const checkState = computed(() => {
 })
 
 const empty = computed(() => props.project.sessions.length === 0)
+/** The folder isn't there (any more), e.g. moved or deleted outside the app. */
+const missing = computed(() => !!props.project.path && workspaces.isMissing(props.project.path))
+/** Where sessions can start and the folder can go: only where it is. */
+const path = computed(() => (missing.value ? null : props.project.path))
 
 const details = computed(() => {
   const { sessions, sizeBytes, updatedAt, path } = props.project
-  if (!updatedAt) return [path, 'Noch keine Sessions'].filter(Boolean).join('\n')
+  const gone = missing.value ? 'Der Ordner ist nicht mehr da. Verschoben? Im Menü lässt sich sein neuer Ort zuordnen.' : ''
+  if (!updatedAt) return [path, 'Noch keine Sessions', gone].filter(Boolean).join('\n')
   const count = sessions.length === 1 ? '1 Session' : `${sessions.length} Sessions`
-  return [path, `${count} · ${formatBytes(sizeBytes)} · zuletzt ${formatRelative(updatedAt, props.now)}`]
+  return [path, `${count} · ${formatBytes(sizeBytes)} · zuletzt ${formatRelative(updatedAt, props.now)}`, gone]
     .filter(Boolean)
     .join('\n')
 })
+
+/**
+ * The workspaces the folder can move into: not the one it lies in, nor itself or one in it. A
+ * workspace in another one says which.
+ */
+const moveTargets = computed(() => {
+  const folder = path.value
+  if (!folder) return []
+  const here = folderKey(splitFolder(folder).parent)
+  const all = workspaces.workspaces.filter((w) => w.exists)
+  return all
+    .filter((w) => folderKey(w.path) !== here && !inFolder(w.path, folder))
+    .map((w) => {
+      const outer = workspaceOf(splitFolder(w.path).parent, all.map((o) => o.path))
+      return { path: w.path, name: w.name, outer: outer ? splitFolder(outer).name : null }
+    })
+})
+
+function moveTo(into: string) {
+  if (path.value) void folderMove.move(path.value, into, props.project.sessions.length)
+}
+
+/** A new workspace, beside the one the folder lies in; the folder moves into it once made. */
+function moveToNewWorkspace() {
+  if (!path.value || folderMove.blocked(path.value)) return
+  const parent = splitFolder(splitFolder(path.value).parent).parent || null
+  ui.workspaceRequest = { mode: 'create', parent, move: { path: path.value, sessions: props.project.sessions.length } }
+}
 
 /** The folder the project lies in, to make it a workspace with its neighbours; null for a drive or the root. */
 const parentFolder = computed(() => {
@@ -152,16 +198,23 @@ async function copyPath() {
             <ChevronRightIcon
               :class="cn('size-3.5 shrink-0 text-muted-foreground transition-transform', open && !empty && 'rotate-90', empty && 'opacity-0')"
             />
-            <component :is="open && !empty ? FolderOpenIcon : FolderIcon" class="size-3.5 shrink-0 text-muted-foreground" />
-            <span :class="cn('max-w-[70%] shrink-0 truncate font-medium', empty && 'font-normal text-muted-foreground')">
+            <component
+              :is="missing ? FolderXIcon : open && !empty ? FolderOpenIcon : FolderIcon"
+              :class="cn('size-3.5 shrink-0 text-muted-foreground', missing && 'text-destructive/70')"
+            />
+            <span
+              :class="
+                cn('max-w-[70%] shrink-0 truncate font-medium', (empty || missing) && 'font-normal text-muted-foreground', missing && 'line-through')
+              "
+            >
               <HighlightText :text="project.name" :terms="terms ?? []" />
             </span>
             <span class="min-w-0 truncate font-mono text-xs text-muted-foreground">{{ project.parent }}</span>
           </CollapsibleTrigger>
           <span v-if="!empty" class="shrink-0 text-xs text-muted-foreground tabular-nums">{{ project.sessions.length }}</span>
           <NewSessionButton
-            v-if="project.path"
-            :path="project.path"
+            v-if="path"
+            :path="path"
             :name="project.name"
             class="opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
           />
@@ -170,19 +223,23 @@ async function copyPath() {
       </ContextMenuTrigger>
       <ContextMenuContent class="w-56">
         <ContextMenuGroup>
-          <NewSessionMenuItem :path="project.path" />
-          <ContextMenuItem :disabled="!project.path" @select="launcher.newSessionInWorktree(null, project.path)">
+          <NewSessionMenuItem :path="path" />
+          <ContextMenuItem :disabled="!path" @select="launcher.newSessionInWorktree(null, path)">
             <FolderGit2Icon />
             Neue Session in Worktree…
           </ContextMenuItem>
-          <ContextMenuItem :disabled="!project.path" @select="launcher.shell(launcher.defaultAccountId(), project.path)">
+          <ContextMenuItem :disabled="!path" @select="launcher.shell(launcher.defaultAccountId(), path)">
             <SquareTerminalIcon />
             Shell hier öffnen
           </ContextMenuItem>
         </ContextMenuGroup>
         <ContextMenuSeparator />
         <ContextMenuGroup>
-          <ContextMenuItem :disabled="!project.path" @select="openFolder">
+          <ContextMenuItem v-if="missing" @select="folderMove.relocate(project.path!)">
+            <FolderSearchIcon />
+            Neuen Ort zuordnen…
+          </ContextMenuItem>
+          <ContextMenuItem v-else :disabled="!path" @select="openFolder">
             <FolderOpenIcon />
             Ordner öffnen
           </ContextMenuItem>
@@ -190,13 +247,31 @@ async function copyPath() {
             <CopyIcon />
             Pfad kopieren
           </ContextMenuItem>
-          <ContextMenuSub v-if="convertible && project.path">
+          <ContextMenuSub v-if="path">
+            <ContextMenuSubTrigger>
+              <FolderInputIcon />
+              Verschieben nach
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent class="max-h-[min(24rem,var(--reka-context-menu-content-available-height))] w-64 overflow-y-auto">
+              <ContextMenuItem v-for="target in moveTargets" :key="target.path" @select="moveTo(target.path)">
+                <LayersIcon />
+                <span class="min-w-0 truncate">{{ target.name }}</span>
+                <span v-if="target.outer" class="ml-auto shrink-0 text-xs text-muted-foreground">in {{ target.outer }}</span>
+              </ContextMenuItem>
+              <ContextMenuSeparator v-if="moveTargets.length" />
+              <ContextMenuItem @select="moveToNewWorkspace">
+                <FolderPlusIcon />
+                Neuer Workspace…
+              </ContextMenuItem>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+          <ContextMenuSub v-if="convertible && path">
             <ContextMenuSubTrigger>
               <LayersIcon />
               Zum Workspace machen
             </ContextMenuSubTrigger>
             <ContextMenuSubContent class="w-64">
-              <ContextMenuItem @select="makeWorkspace(project.path)">
+              <ContextMenuItem @select="makeWorkspace(path)">
                 <FolderIcon />
                 <span class="truncate">{{ project.name }}</span>
               </ContextMenuItem>
@@ -207,6 +282,10 @@ async function copyPath() {
               </ContextMenuItem>
             </ContextMenuSubContent>
           </ContextMenuSub>
+          <ContextMenuItem v-else-if="path" @select="makeWorkspace(path)">
+            <LayersIcon />
+            Zum Workspace machen…
+          </ContextMenuItem>
         </ContextMenuGroup>
         <ContextMenuSeparator v-if="!empty" />
         <ContextMenuGroup v-if="!empty">

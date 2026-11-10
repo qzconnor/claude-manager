@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, sep } from 'node:path'
+import { basename, join, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { WorkspaceService } from './workspace-service'
 
@@ -130,8 +130,12 @@ describe('WorkspaceService', () => {
     expect(service.promptsFor(join(outer, 'websiteA')).map((p) => p.name)).toEqual(['Webseiten'])
     expect(service.promptsFor(join(root, 'Ohne'))).toEqual([])
     expect(service.promptsFor(root)).toEqual([])
-    // A nested workspace is no project of the outer one.
+    // A nested workspace is no project of the outer one, and comes right after it.
     expect((await service.list())[0]?.projects).toEqual([])
+    expect(service.paths().map((p) => basename(p))).toEqual(['Webseiten', 'Kunden', 'Ohne'])
+    mkdirSync(join(outer, 'Shops'))
+    await service.adopt(join(outer, 'Shops'), null)
+    expect(service.paths().map((p) => basename(p))).toEqual(['Webseiten', 'Kunden', 'Shops', 'Ohne'])
   })
 
   it('writes prompts only of workspaces', async () => {
@@ -139,5 +143,89 @@ describe('WorkspaceService', () => {
     expect(existsSync(join(root, 'cm_prompts.md'))).toBe(false)
     // Read also before a folder becomes one, to show what is there.
     expect(await service.readPrompt(root)).toBe('')
+  })
+
+  describe('moving folders', () => {
+    let kunden: string
+    let andere: string
+    let follows: [string, string][]
+
+    beforeEach(async () => {
+      await service.create({ parent: root, name: 'Kunden', prompt: '' })
+      await service.create({ parent: root, name: 'Andere', prompt: '' })
+      kunden = join(root, 'Kunden')
+      andere = join(root, 'Andere')
+      mkdirSync(join(kunden, 'shop', 'src'), { recursive: true })
+      follows = []
+      service.follow(async (from, to) => {
+        follows.push([from, to])
+      })
+      // Seen as they are now.
+      await service.list()
+    })
+
+    it('moves a project into another workspace, with the workspaces in it', async () => {
+      await service.adopt(join(kunden, 'shop'), null)
+      const moved = await service.move(join(kunden, 'shop'), andere)
+
+      expect(moved).toEqual({ path: join(andere, 'shop'), leftover: false })
+      expect(existsSync(join(andere, 'shop', 'src'))).toBe(true)
+      expect(service.paths()).toEqual([kunden, andere, join(andere, 'shop')])
+      const listed = await service.list()
+      expect(listed.map((w) => [w.name, w.projects])).toEqual([
+        ['Kunden', []],
+        ['Andere', []],
+        ['shop', ['src']],
+      ])
+      // The app moved it itself: no move to follow.
+      expect(follows).toEqual([])
+    })
+
+    it('refuses to move a folder into itself, onto another or where it is', async () => {
+      await expect(service.move(join(kunden, 'shop'), join(kunden, 'shop', 'src'))).rejects.toThrow(/in sich selbst/)
+      await expect(service.move(join(kunden, 'shop'), kunden)).rejects.toThrow(/liegt schon/)
+      mkdirSync(join(andere, 'shop'))
+      await expect(service.move(join(kunden, 'shop'), andere)).rejects.toThrow(/gibt es schon/)
+      await expect(service.move(join(kunden, 'weg'), andere)).rejects.toThrow(/gibt es nicht/)
+    })
+
+    it('follows a folder moved outside the app, by its identity', async () => {
+      renameSync(join(kunden, 'shop'), join(andere, 'laden'))
+      // A new folder with its own identity is no move.
+      mkdirSync(join(andere, 'neu'))
+      await service.list()
+      expect(follows).toEqual([[join(kunden, 'shop'), join(andere, 'laden')]])
+      await service.list()
+      expect(follows).toHaveLength(1)
+    })
+
+    it('keeps a moved workspace one, at its new place', async () => {
+      await service.adopt(join(kunden, 'shop'), null)
+      await service.list()
+      renameSync(join(kunden, 'shop'), join(andere, 'shop'))
+      await service.list()
+      expect(follows).toEqual([[join(kunden, 'shop'), join(andere, 'shop')]])
+      expect(service.paths()).toEqual([kunden, andere, join(andere, 'shop')])
+    })
+
+    it('follows a move made while the app was closed', async () => {
+      service.dispose()
+      renameSync(join(kunden, 'shop'), join(andere, 'shop'))
+      const next = new WorkspaceService(data)
+      next.init()
+      const seen: [string, string][] = []
+      next.follow(async (from, to) => {
+        seen.push([from, to])
+      })
+      await next.list()
+      next.dispose()
+      expect(seen).toEqual([[join(kunden, 'shop'), join(andere, 'shop')]])
+    })
+
+    it('takes no folder of a workspace taken off the list for moved', async () => {
+      await service.remove(kunden)
+      await service.list()
+      expect(follows).toEqual([])
+    })
   })
 })

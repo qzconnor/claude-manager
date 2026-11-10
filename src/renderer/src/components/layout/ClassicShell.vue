@@ -2,6 +2,7 @@
 import { useElementBounding } from '@vueuse/core'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import ChangesView from '@/components/files/ChangesView.vue'
 import DiffView from '@/components/files/DiffView.vue'
 import FileTreePanel from '@/components/files/FileTreePanel.vue'
 import TerminalWorkspace from '@/components/terminal/TerminalWorkspace.vue'
@@ -49,7 +50,7 @@ const split = computed(() => {
   return { target: target.value, file, width: Math.round(rest * fileTree.diffShare) }
 })
 /** The file of the tree whose changes are shown, selected in the tree. */
-const current = computed(() => (split.value && split.value.file.root === tree.value?.target.root ? split.value.file.path : null))
+const current = computed(() => (split.value?.file.path && split.value.file.root === tree.value?.target.root ? split.value.file.path : null))
 
 /** The terminals keep their size on other pages too, so they don't fit themselves anew for nothing. */
 const workspaceStyle = computed(() => {
@@ -166,7 +167,15 @@ watch(
           :class="cn('absolute inset-y-0 flex', treeSide === 'left' ? 'border-r' : 'border-l')"
           :style="diffStyle"
         >
+          <ChangesView
+            v-if="split.file.path === ''"
+            class="min-w-0 flex-1"
+            :root="split.file.root"
+            closable
+            @close="fileTree.closeSplitDiff(split.target.id)"
+          />
           <DiffView
+            v-else
             class="min-w-0 flex-1"
             :root="split.file.root"
             :path="split.file.path"

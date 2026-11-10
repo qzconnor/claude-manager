@@ -19,7 +19,7 @@ import {
   UsersIcon,
   XIcon,
 } from '@lucide/vue'
-import { refDebounced } from '@vueuse/core'
+import { refDebounced, useEventListener } from '@vueuse/core'
 import { computed, nextTick, onActivated, onMounted, ref, watch } from 'vue'
 import { SYSTEM_ACCOUNT_ID } from '@shared/defaults'
 import type { SessionSummary } from '@shared/types'
@@ -522,10 +522,34 @@ watch(
   { immediate: true },
 )
 
+/** The folders the list shows, to find out which of them aren't there (any more). */
+const shownFolders = computed(() => {
+  const { workspaces: inWorkspaces, starts, folders } = tree.value
+  const paths = [...inWorkspaces, ...starts].flatMap((root) => root.projects.map((p) => p.path)).concat(folders.map((f) => f.path))
+  return [...new Set(paths.filter((path): path is string => !!path))].sort()
+})
+const checkFolders = () => workspaces.checkFolders(shownFolders.value)
+watch(() => shownFolders.value.join('\n'), () => void checkFolders(), { immediate: true })
+// A project gone from its workspace stays in the list while sessions name it: check it then too.
+watch(() => workspaces.workspaces, () => void checkFolders())
+// Moved or deleted in Explorer meanwhile: shown as gone once the window is back.
+useEventListener(window, 'focus', () => void checkFolders())
+
 const load = () => attempt(() => Promise.all([sessions.load(), workspaces.load()]), 'Sessions konnten nicht geladen werden')
+/**
+ * Reads everything again: the workspaces first, as folders moved meanwhile (in Explorer) take their
+ * sessions along, then the sessions, then which folders are gone.
+ */
+const reload = () =>
+  attempt(async () => {
+    await workspaces.load()
+    await sessions.load()
+    await checkFolders()
+  }, 'Sessions konnten nicht geladen werden')
 onMounted(load)
 onActivated(() => {
   if (!sessions.loaded || !workspaces.loaded) void load()
+  else void checkFolders()
 })
 </script>
 
@@ -574,7 +598,7 @@ onActivated(() => {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger as-child>
-              <Button variant="outline" aria-label="Neu einlesen" :class="TOOL_BUTTON" :disabled="sessions.loading" @click="load">
+              <Button variant="outline" aria-label="Neu einlesen" :class="TOOL_BUTTON" :disabled="sessions.loading" @click="reload">
                 <Spinner v-if="sessions.loading" class="size-[16px]" />
                 <RefreshCwIcon v-else class="size-[16px]" />
               </Button>

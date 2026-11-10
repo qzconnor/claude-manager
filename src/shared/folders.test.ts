@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { folderKey, inFolder, windowsPath } from './folders'
+import { folderKey, inFolder, movedPath, windowsPath } from './folders'
 
 describe('windowsPath', () => {
   it('writes every drive as Windows does, also from Git Bash and Cygwin', () => {
@@ -37,5 +37,19 @@ describe('inFolder', () => {
     expect(inFolder('/home/dev/App', '/home/dev/app')).toBe(false)
     expect(inFolder('C:\\dev', 'C:\\dev\\app')).toBe(false)
     expect(inFolder('C:\\dev', ' ')).toBe(false)
+  })
+})
+
+describe('movedPath', () => {
+  it('moves what lies in the folder along with it', () => {
+    expect(movedPath('F:\\Kunden\\shop', 'F:\\Kunden\\shop', 'F:\\Andere\\shop')).toBe('F:\\Andere\\shop')
+    expect(movedPath('f:/kunden/Shop/src/', 'F:\\Kunden\\shop', 'F:\\Andere\\shop')).toBe('F:\\Andere\\shop\\src')
+    expect(movedPath('/home/dev/app/src', '/home/dev/app', '/srv/app')).toBe('/srv/app/src')
+    expect(movedPath('C:\\x\\y', 'C:\\', 'D:\\')).toBe('D:\\x\\y')
+  })
+
+  it('is null outside of it', () => {
+    expect(movedPath('F:\\Kunden\\shop-alt', 'F:\\Kunden\\shop', 'F:\\Andere\\shop')).toBeNull()
+    expect(movedPath('F:\\Kunden', 'F:\\Kunden\\shop', 'F:\\Andere\\shop')).toBeNull()
   })
 })

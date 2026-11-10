@@ -12,6 +12,7 @@ import type {
 } from '@shared/types'
 import { windowsPath } from '@shared/folders'
 import { liveSessionIds, sessionFiles } from '../lib/session-files'
+import { moveSessions } from '../lib/session-move'
 import { TypedEmitter } from '../lib/typed-emitter'
 import type { ConversationResult, IndexedSession, TranscriptSearchHit } from '../workers/indexer-protocol'
 import type { AccountService } from './account-service'
@@ -178,6 +179,34 @@ export class SessionService extends TypedEmitter<Events> {
     )
     for (const accountId of new Set(result.removed.map((r) => r.accountId))) this.emit('changed', accountId)
     return result
+  }
+
+  /**
+   * The folder `from` is now `to`: the sessions of every account that worked in it (or below it) go
+   * along, so they continue there. Returns how many moved; those a running Claude Code has open stay.
+   */
+  async relocate(from: string, to: string): Promise<number> {
+    let moved = 0
+    // Accounts can share a config dir: its sessions move once.
+    const done = new Set<string>()
+    for (const account of this.accounts.list()) {
+      const paths = this.accounts.paths(account.id)
+      if (done.has(paths.projectsDir)) continue
+      done.add(paths.projectsDir)
+      try {
+        const [indexed, live] = await Promise.all([
+          this.indexer.request<IndexedSession[]>({ method: 'scanSessions', projectsDir: paths.projectsDir }),
+          liveSessionIds(paths.sessionsDir),
+        ])
+        const sessions = indexed.map((s) => ({ id: s.id, cwd: s.cwd && localPath(s.cwd), filePath: s.filePath }))
+        const result = await moveSessions(paths.projectsDir, sessions, from, to, live)
+        if (result.moved > 0) this.emit('changed', account.id)
+        moved += result.moved
+      } catch (error) {
+        console.warn(`[sessions] sessions of ${account.name} could not move along`, error)
+      }
+    }
+    return moved
   }
 
   private toSummary(accountId: string, s: IndexedSession): SessionSummary {

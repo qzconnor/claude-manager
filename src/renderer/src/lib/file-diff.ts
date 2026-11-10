@@ -1,3 +1,5 @@
+import type { FileDiff, GitFileStatus } from '@shared/types'
+
 /** A line of a diff as it is shown: unchanged, added, removed, or the head of a hunk. */
 export interface DiffLine {
   kind: 'context' | 'add' | 'del' | 'hunk'
@@ -71,4 +73,116 @@ export function lineColumns(text: string, tabSize: number): number {
   let columns = 0
   for (const ch of text) columns = ch === '\t' ? columns + tabSize - (columns % tabSize) : columns + 1
   return columns
+}
+
+/** How wide a tab is in a diff (columns). */
+export const DIFF_TAB_SIZE = 4
+/** Longer lines are cut, so one minified line doesn't make the view thousands of screens wide. */
+export const MAX_DIFF_COLUMNS = 2000
+
+/**
+ * What a file's diff shows: its changes; the whole file as added (git doesn't know it yet), as it is
+ * (no changes, or outside a repository); or why there is nothing to show.
+ */
+export type DiffMode = 'diff' | 'new' | 'unchanged' | 'plain' | 'binary' | 'tooLarge' | 'missing'
+
+/** What a diff shows, with `status` the file's state in git. */
+export function diffMode(diff: FileDiff, status: GitFileStatus | null | undefined): DiffMode {
+  if (diff.tooLarge) return 'tooLarge'
+  if (diff.binary) return 'binary'
+  if (diff.patch) return 'diff'
+  if (diff.missing || diff.text === null) return 'missing'
+  if (!diff.repo) return 'plain'
+  return status === 'untracked' || status === 'added' ? 'new' : 'unchanged'
+}
+
+const NO_LINES: ParsedDiff = { lines: [], added: 0, removed: 0 }
+
+/** The lines a diff shows in its mode; none for a file that can't be shown. */
+export function diffLines(diff: FileDiff, mode: DiffMode): ParsedDiff {
+  if (mode === 'diff') return parsePatch(diff.patch)
+  if (diff.text !== null && (mode === 'new' || mode === 'unchanged' || mode === 'plain')) {
+    return fileLines(diff.text, mode === 'new' ? 'add' : 'context')
+  }
+  return NO_LINES
+}
+
+/** Wrapped, a long line (a paragraph of Markdown) shows whole; only one beyond this (minified code) is cut. */
+export const MAX_WRAPPED_COLUMNS = 20000
+
+/** A line's text as it is shown: cut after `max` characters. */
+export function shownText(text: string, max = MAX_DIFF_COLUMNS): string {
+  return text.length > max ? `${text.slice(0, max)} …` : text
+}
+
+/**
+ * Rows a line takes wrapped at `width` columns, as the view wraps it: anywhere, spaces and tabs too
+ * (`break-spaces`, `line-break: anywhere`), a tab up to its next stop in its row.
+ */
+export function wrappedRows(text: string, width: number, tabSize = DIFF_TAB_SIZE): number {
+  if (width < 1 || (text.length <= width && !text.includes('\t'))) return 1
+  let rows = 1
+  let column = 0
+  for (const ch of text) {
+    let w = ch === '\t' ? tabSize - (column % tabSize) : 1
+    if (column > 0 && column + w > width) {
+      rows++
+      column = 0
+      if (ch === '\t') w = tabSize
+    }
+    column += w
+  }
+  return rows
+}
+
+/**
+ * Where each line of a diff starts, in rows, wrapped at `width` columns; the last entry is the rows
+ * of all of them.
+ */
+export function wrapOffsets(lines: readonly DiffLine[], width: number): Uint32Array {
+  const offsets = new Uint32Array(lines.length + 1)
+  for (let i = 0; i < lines.length; i++) offsets[i + 1] = offsets[i]! + wrappedRows(shownText(lines[i]!.text, MAX_WRAPPED_COLUMNS), width)
+  return offsets
+}
+
+/** The line that row `row` belongs to, for offsets from `wrapOffsets` (the last line beyond the end). */
+export function lineAtRow(offsets: Uint32Array, row: number): number {
+  const last = offsets.length - 2
+  if (last < 0) return 0
+  let low = 0
+  let high = last
+  while (low < high) {
+    const mid = (low + high + 1) >> 1
+    if (offsets[mid]! <= row) low = mid
+    else high = mid - 1
+  }
+  return low
+}
+
+/** The widest line of a diff (columns), at most `MAX_DIFF_COLUMNS`. */
+export function diffColumns(lines: readonly DiffLine[]): number {
+  let most = 0
+  for (const line of lines) most = Math.max(most, lineColumns(line.text, DIFF_TAB_SIZE))
+  return Math.min(most, MAX_DIFF_COLUMNS)
+}
+
+/** Digits of the highest line number of a diff, for the width of its numbers. */
+export function numberDigits(lines: readonly DiffLine[]): number {
+  let most = 1
+  for (const line of lines) most = Math.max(most, line.old ?? 0, line.new ?? 0)
+  return String(most).length
+}
+
+/** Whether a file was looked at while reviewing the changes: yes, not yet, or it changed since. */
+export type SeenState = 'yes' | 'no' | 'changed'
+
+/** A short fingerprint of a diff (FNV-1a), to tell whether a file changed since it was looked at. */
+export function diffHash(diff: FileDiff): string {
+  const source = `${diff.patch}\0${diff.text ?? ''}\0${diff.missing}`
+  let hash = 0x811c9dc5
+  for (let i = 0; i < source.length; i++) {
+    hash ^= source.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return `${source.length}:${(hash >>> 0).toString(36)}`
 }

@@ -20,6 +20,7 @@ const api: ManagerApi = {
     openPath: (path) => invoke(IpcInvoke.appOpenPath, path),
     showItem: (path) => invoke(IpcInvoke.appShowItem, path),
     pickDirectory: (defaultPath) => invoke(IpcInvoke.appPickDirectory, defaultPath ?? null),
+    missingFolders: (paths) => invoke(IpcInvoke.appMissingFolders, paths),
     listFonts: () => invoke(IpcInvoke.appListFonts),
     clipboardHasImage: () => invoke(IpcInvoke.appClipboardHasImage),
     pathForFile: (file) => webUtils.getPathForFile(file),
@@ -134,7 +135,10 @@ const api: ManagerApi = {
     createProject: (workspace, name) => invoke(IpcInvoke.workspacesCreateProject, workspace, name),
     readPrompt: (path) => invoke(IpcInvoke.workspacesReadPrompt, path),
     writePrompt: (path, text) => invoke(IpcInvoke.workspacesWritePrompt, path, text),
+    move: (from, into) => invoke(IpcInvoke.workspacesMove, from, into),
+    relocate: (from, to) => invoke(IpcInvoke.workspacesRelocate, from, to),
     onChanged: (cb) => subscribe(IpcEvent.workspacesChanged, cb),
+    onMoved: (cb) => subscribe(IpcEvent.workspacesMoved, cb),
   },
   notifications: {
     test: () => invoke(IpcInvoke.notificationsTest),

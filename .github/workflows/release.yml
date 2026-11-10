@@ -32,7 +32,7 @@ jobs:
           cache: npm
       # Only semantic-release is needed here, not Electron or node-pty.
       - run: npm ci --ignore-scripts
-      # The dry run only decides the version (.releaserc.json writes it to .release-version), without
+      # The dry run only decides the version (release.config.mjs writes it to .release-version), without
       # a release-worthy commit there is none and nothing is built.
       - id: next
         run: |
@@ -111,7 +111,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
-      # Where .releaserc.json looks for the assets, as if they had been built here. The artifacts
+      # Where release.config.mjs looks for the assets, as if they had been built here. The artifacts
       # already contain the version folder (upload-artifact keeps everything after `release/`).
       - uses: actions/download-artifact@v4
         with:

@@ -937,6 +937,24 @@ export interface Workspace {
   hasPrompt: boolean
 }
 
+/** A folder the app moved (`workspaces.move`). */
+export interface FolderMoveResult {
+  /** Where it is now. */
+  path: string
+  /** Sessions that went along. */
+  sessions: number
+  /** Moved to another drive: copied, but not all of the old folder could be deleted. */
+  leftover: boolean
+}
+
+/** A folder of a workspace moved outside the app. */
+export interface FolderMovedEvent {
+  from: string
+  to: string
+  /** Sessions that went along. */
+  sessions: number
+}
+
 export interface WorkspaceCreateInput {
   /** The folder the workspace's folder is made in. */
   parent: string

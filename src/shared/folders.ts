@@ -36,3 +36,17 @@ export function inFolder(path: string, folder: string): boolean {
   const separator = WINDOWS_PATH.test(b) ? '\\' : '/'
   return a.startsWith(b.endsWith(separator) ? b : `${b}${separator}`)
 }
+
+/**
+ * Where `path` is once the folder `from` it lies in (or is) has moved to `to`, with the separators of
+ * `to`; null when it doesn't lie in `from`.
+ */
+export function movedPath(path: string, from: string, to: string): string | null {
+  if (!inFolder(path, from)) return null
+  // Spelled differently maybe, but as long: `folderKey` changes neither the length nor the separators' places.
+  const rest = path.trim().replace(TRAILING_SEPARATORS, '').slice(from.trim().replace(TRAILING_SEPARATORS, '').length)
+  const parts = rest.split(/[\\/]+/).filter(Boolean)
+  if (parts.length === 0) return to
+  const separator = to.includes('\\') || DRIVE.test(to) ? '\\' : '/'
+  return `${to.replace(/[\\/]+$/, '')}${separator}${parts.join(separator)}`
+}

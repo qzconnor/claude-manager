@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs'
-import { isAbsolute, join } from 'node:path'
+import { stat } from 'node:fs/promises'
+import { basename, isAbsolute, join } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell, type IpcMainInvokeEvent } from 'electron'
+import { inFolder } from '@shared/folders'
 import { IpcEvent, IpcInvoke, IpcSend } from '@shared/ipc'
 import { parsePaneNode } from '@shared/panes'
 import type {
@@ -14,6 +16,8 @@ import type {
   CswapImportInput,
   DeepPartial,
   FileTreeWatch,
+  FolderMovedEvent,
+  FolderMoveResult,
   TerminalCreateOptions,
 } from '@shared/types'
 import type { ApiServer } from './api/api-server'
@@ -85,6 +89,8 @@ const MAX_TREE_DIRS = 2000
 const MAX_PROMPT_LENGTH = 100_000
 /** More workspaces than anyone keeps; a longer list to reorder is no list of them. */
 const MAX_WORKSPACES = 10_000
+/** Folders the session list checks at once; more than any list shows. */
+const MAX_CHECKED_FOLDERS = 20_000
 /** Longer paths exist on no file system the app runs on. */
 const MAX_PATH_LENGTH = 32_767
 
@@ -164,6 +170,12 @@ export function registerIpc(ctx: AppContext): void {
       defaultPath: typeof defaultPath === 'string' && defaultPath ? defaultPath : undefined,
     })
     return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+  ipcMain.handle(IpcInvoke.appMissingFolders, async (_e, paths: unknown) => {
+    if (!Array.isArray(paths) || paths.length > MAX_CHECKED_FOLDERS) throw new Error('Ungültiger Parameter: paths')
+    const checked = paths.map((path) => requirePath(path, 'paths'))
+    const there = await Promise.all(checked.map((path) => stat(path).then((s) => s.isDirectory(), () => false)))
+    return checked.filter((_, i) => !there[i])
   })
   ipcMain.handle(IpcInvoke.appListFonts, () => listFontFamilies())
   ipcMain.handle(IpcInvoke.appClipboardHasImage, async () =>
@@ -405,7 +417,38 @@ export function registerIpc(ctx: AppContext): void {
   ipcMain.handle(IpcInvoke.workspacesWritePrompt, (_e, path: unknown, text: unknown) =>
     ctx.workspaces.writePrompt(requirePath(path, 'path'), promptOf(text) ?? ''),
   )
+  ipcMain.handle(IpcInvoke.workspacesMove, async (_e, from: unknown, into: unknown): Promise<FolderMoveResult> => {
+    const source = requirePath(from, 'from')
+    const parent = requirePath(into, 'into')
+    // Their processes keep the folder from moving, and their file trees and git state would point nowhere.
+    const open = ctx.terminals.list().filter((t) => t.cwd && inFolder(t.cwd, source))
+    if (open.length > 0) {
+      const tabs = open.length === 1 ? `ist noch der Tab „${open[0]!.title}“` : `sind noch ${open.length} Tabs`
+      throw new Error(`In „${basename(source)}“ ${tabs} offen. Schließe sie, dann lässt sich der Ordner verschieben.`)
+    }
+    const moved = await ctx.workspaces.move(source, parent)
+    return { path: moved.path, sessions: await followMove(source, moved.path), leftover: moved.leftover }
+  })
+  ipcMain.handle(IpcInvoke.workspacesRelocate, async (_e, from: unknown, to: unknown) => {
+    const source = requirePath(from, 'from')
+    const target = requirePath(to, 'to')
+    if (existsSync(source)) throw new Error(`„${source}“ ist noch da. Verschiebe den Ordner, die Sessions gehen dann mit.`)
+    if (!(await stat(target).catch(() => null))?.isDirectory()) throw new Error(`Den Ordner „${target}“ gibt es nicht.`)
+    return followMove(source, target)
+  })
   ctx.workspaces.on('changed', () => broadcast(IpcEvent.workspacesChanged))
+  // Moved outside the app, e.g. in Explorer: the sessions go along, and the window learns of it.
+  ctx.workspaces.follow(async (from, to) => {
+    const sessions = await followMove(from, to)
+    broadcast(IpcEvent.workspacesMoved, { from, to, sessions } satisfies FolderMovedEvent)
+  })
+
+  /** The folder `from` is now `to`: its sessions go along, and Claude Code trusts it there as before. */
+  async function followMove(from: string, to: string): Promise<number> {
+    const sessions = await ctx.sessions.relocate(from, to)
+    await ctx.trust.carry(from, to)
+    return sessions
+  }
 
   // --- usage ---------------------------------------------------------------
   ipcMain.handle(IpcInvoke.usageGet, () => ctx.usage.getAll())

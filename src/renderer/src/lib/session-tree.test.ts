@@ -164,6 +164,31 @@ describe('buildSessionTree: workspaces and start folders', () => {
     expect(tree.starts).toEqual([])
   })
 
+  it('shows a project made a workspace by itself, with its sessions', () => {
+    // As the main process lists them: the inner workspace is no project of the outer one.
+    const inner: TreeRoots = {
+      workspaces: [
+        { path: 'F:\\Kunden', projects: ['acme'] },
+        { path: 'F:\\Kunden\\amsplugins', projects: ['shop'] },
+      ],
+      startFolders: [],
+    }
+    const tree = buildSessionTree(
+      [
+        session('own', { cwd: 'F:\\Kunden\\amsplugins' }),
+        session('deep', { cwd: 'F:\\Kunden\\amsplugins\\shop\\src' }),
+        session('outer', { cwd: 'F:\\Kunden\\acme' }),
+      ],
+      inner,
+      { sort: 'recent', showEmpty: true },
+    )
+    expect(tree.workspaces.map((w) => w.name)).toEqual(['Kunden', 'amsplugins'])
+    expect(tree.workspaces[0]?.projects.map((p) => p.name)).toEqual(['acme'])
+    expect(tree.workspaces[0]?.count).toBe(1)
+    expect(tree.workspaces[1]?.sessions.map((s) => s.id)).toEqual(['own'])
+    expect(tree.workspaces[1]?.projects.map((p) => [p.name, p.sessions.map((s) => s.id)])).toEqual([['shop', ['deep']]])
+  })
+
   it('keeps the workspaces in their order, whatever the sort', () => {
     const two: TreeRoots = { workspaces: [{ path: 'F:\\Zeta', projects: [] }, { path: 'F:\\Alpha', projects: [] }], startFolders: [] }
     const sessions = [

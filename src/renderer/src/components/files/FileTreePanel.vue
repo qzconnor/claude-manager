@@ -9,14 +9,14 @@ import {
   CopyIcon,
   EllipsisIcon,
   ExternalLinkIcon,
-  EyeIcon,
+  FileDiffIcon,
   FolderOpenIcon,
   FolderXIcon,
   GitCompareIcon,
   GitBranchIcon,
   GitCommitHorizontalIcon,
+  ListFilterIcon,
   ListTreeIcon,
-  PencilIcon,
   PlusIcon,
   RefreshCwIcon,
   SearchIcon,
@@ -25,7 +25,7 @@ import {
   XIcon,
 } from '@lucide/vue'
 import { useElementSize } from '@vueuse/core'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { FileTouchKind, FileTreeSide, GitFileState, GitFileStatus } from '@shared/types'
 import {
   ContextMenu,
@@ -36,7 +36,6 @@ import {
 } from '@/components/ui/context-menu'
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -48,28 +47,38 @@ import { useFileTreeModel } from '@/composables/useFileTreeModel'
 import { useLauncher } from '@/composables/useLauncher'
 import { formatArgs } from '@/lib/args'
 import { attempt } from '@/lib/errors'
+import { formatClock } from '@/lib/format'
 import { fileIcon, type FileIconInfo } from '@/lib/file-icons'
 import {
   absolutePath,
   ancestors,
-  changesTree,
+  changedFiles,
   FILE_TREE_DRAG_TYPE,
+  filesTree,
   flattenTree,
   folderName,
   foldersOf,
+  GIT_STATUSES,
   gitDecorations,
   parentPath,
+  recordKind,
   searchTree,
   STATUS_CLASS,
   STATUS_LABEL,
   STATUS_LETTER,
+  TOUCH_KINDS,
+  TOUCH_RANK,
   treePathOf,
+  untrackedFolders,
+  type TouchRecord,
   type TreeRow,
 } from '@/lib/file-tree'
+import { TOUCH_DONE, TOUCH_ICON } from '@/lib/file-touch'
 import { terminalBus } from '@/lib/terminal-bus'
 import { cn } from '@/lib/utils'
 import { DEFAULT_TREE_WIDTH, SEPARATOR, useFileTreeStore, type TreeTarget } from '@/stores/file-tree'
 import { useSettingsStore } from '@/stores/settings'
+import FileTreeFilters from './FileTreeFilters.vue'
 
 /**
  * The file tree of a tab, beside its terminal (not over it), in the spirit of the claude-code-filetree
@@ -118,7 +127,7 @@ const OVERSCAN = 10
 const git = computed(() => model.value.git)
 const decorations = computed(() => gitDecorations(git.value))
 const summary = computed(() =>
-  (['conflict', 'modified', 'added', 'renamed', 'deleted', 'untracked'] as GitFileStatus[]).flatMap((status) => {
+  GIT_STATUSES.flatMap((status) => {
     const count = decorations.value.counts[status] ?? 0
     return count ? [{ status, count }] : []
   }),
@@ -134,29 +143,91 @@ const branchTooltip = computed(() => {
   return lines.join('\n')
 })
 
-// ── Only the changes ──
+// ── Filters ──
 
-const changesOnly = computed(() => model.value.changesOnly)
+/** Which files the trees show: the changed ones, those Claude touched in the session, or both. */
+const filters = fileTree.filters
+const filtered = computed(() => filters.changes || filters.activity)
+/** Files git ignores, while they are hidden. */
+const hidden = computed(() => (fileTree.showIgnored ? undefined : (path: string) => decorations.value.ignored(path)))
 /** Folders git reports as new as a whole (`dir/`); their files come from the search's list. */
-const untrackedDirs = computed(() => Object.keys(git.value?.files ?? {}).filter((key) => key.endsWith('/')))
+const untrackedDirs = computed(() => untrackedFolders(git.value))
 /** The files git sees changed, deleted ones too, and those in new folders once the list of files is there. */
-const changedPaths = computed(() => {
-  const paths = Object.keys(git.value?.files ?? {}).filter((key) => !key.endsWith('/'))
-  const dirs = untrackedDirs.value
-  if (dirs.length > 0) {
-    for (const path of model.value.search?.paths ?? []) if (dirs.some((dir) => path.startsWith(dir))) paths.push(path)
-  }
-  return paths
-})
+const changedPaths = computed(() => changedFiles(git.value, model.value.search?.paths))
 const changesTooltip = computed(() => summary.value.map((item) => `${STATUS_LABEL[item.status]}: ${item.count}`).join(' · '))
 
-function toggleChanges() {
-  model.value.changesOnly = !model.value.changesOnly
-  // A search goes on in the other list, which starts at its top, at the selected entry if it has it.
-  if (scroller.value) scroller.value.scrollTop = 0
-  void nextTick(() => {
-    if (selected.value) revealRow(selected.value, true)
-  })
+/** What Claude did in the tab's session with the files of the tree, by their path in the tree. */
+const recorded = computed(() => {
+  const files = new Map<string, TouchRecord>()
+  for (const [absolute, record] of fileTree.activityOf(props.target.session.id) ?? []) {
+    const path = treePathOf(props.target.root, absolute, windows)
+    if (path) files.set(path, record)
+  }
+  return files
+})
+/** How many files of the tree Claude touched in each way; the ignored ones while they show. */
+const kindCounts = computed(() => {
+  const counts: Record<FileTouchKind, number> = { read: 0, search: 0, write: 0, commit: 0 }
+  for (const [path, record] of recorded.value) {
+    if (hidden.value?.(path)) continue
+    for (const kind of TOUCH_KINDS) if (record[kind] !== undefined) counts[kind]++
+  }
+  return counts
+})
+
+/** The files the filters let through: the changes in the states shown, the files Claude touched in the kinds shown. */
+const filteredPaths = computed(() => {
+  const paths = new Set<string>()
+  if (filters.changes) {
+    const marks = decorations.value
+    for (const path of changedPaths.value) {
+      const status = marks.file(path)?.status
+      if (!status || !fileTree.hiddenStatuses.has(status)) paths.add(path)
+    }
+  }
+  if (filters.activity) {
+    for (const [path, record] of recorded.value) {
+      if (!hidden.value?.(path) && recordKind(record, fileTree.hiddenKinds)) paths.add(path)
+    }
+  }
+  return [...paths]
+})
+
+const filterLabel = computed(() =>
+  filters.changes && filters.activity ? 'Änderungen und Aktivität' : filters.changes ? 'Nur Änderungen' : 'Nur Aktivität',
+)
+/** Why a filtered tree is empty. */
+const emptyText = computed(() => {
+  const changes = filters.changes && changedPaths.value.length > 0
+  const touched = filters.activity && TOUCH_KINDS.some((kind) => kindCounts.value[kind] > 0)
+  if (changes || touched) return 'Keine Datei passt zu den gewählten Arten.'
+  if (filters.changes && filters.activity) return 'Keine Änderungen und keine Aktivität von Claude.'
+  if (filters.changes) return git.value ? 'Keine Änderungen seit dem letzten Commit.' : 'Kein Git-Repository.'
+  return isSession.value ? 'Claude hat in dieser Session noch keine Datei hier angefasst.' : 'Aktivität von Claude gibt es nur in Sessions.'
+})
+
+function showAll() {
+  filters.changes = false
+  filters.activity = false
+}
+
+// A search goes on in the other list, which starts at its top, at the selected entry if it has it.
+watch(
+  () => [filters.changes, filters.activity],
+  () => {
+    if (scroller.value) scroller.value.scrollTop = 0
+    void nextTick(() => {
+      if (selected.value) revealRow(selected.value, true)
+    })
+  },
+)
+
+/** What Claude did with a file in the session, in words. */
+function activityLabel(record: TouchRecord): string {
+  const done = TOUCH_KINDS.filter((kind) => record[kind] !== undefined).map((kind) => TOUCH_DONE[kind])
+  const words = done.length > 1 ? `${done.slice(0, -1).join(', ')} und ${done.at(-1)}` : done[0]
+  const last = Math.max(...TOUCH_KINDS.map((kind) => record[kind] ?? 0))
+  return `Claude hat die Datei ${words}, zuletzt um ${formatClock(new Date(last).toISOString())}`
 }
 
 // ── Search ──
@@ -168,8 +239,8 @@ const query = computed({
 const searching = computed(() => query.value.trim().length > 0)
 const searchInput = ref<HTMLInputElement | null>(null)
 
-/** The list of all files is needed to search them, and for the files in new folders when only the changes show. */
-const listNeeded = computed(() => (changesOnly.value ? untrackedDirs.value.length > 0 : searching.value))
+/** The list of all files is needed to search them, and for the files in new folders when the changes show. */
+const listNeeded = computed(() => (filtered.value ? filters.changes && untrackedDirs.value.length > 0 : searching.value))
 watch(
   () => listNeeded.value && !model.value.searchLoading && (!model.value.search || model.value.searchStale),
   (load) => {
@@ -178,9 +249,9 @@ watch(
   { immediate: true },
 )
 
-/** Files git deleted are still known to it, but gone from the disk; showing only the changes, the changed files are searched. */
+/** Files git deleted are still known to it, but gone from the disk; a filtered tree searches the files it shows. */
 const searchPaths = computed(() => {
-  if (changesOnly.value) return changedPaths.value
+  if (filtered.value) return filteredPaths.value
   const paths = model.value.search?.paths ?? []
   const deleted = Object.entries(git.value?.files ?? {}).filter(([, s]) => s.status === 'deleted')
   if (deleted.length === 0) return paths
@@ -188,16 +259,15 @@ const searchPaths = computed(() => {
   return paths.filter((path) => !gone.has(path))
 })
 const searchResult = computed(() =>
-  searching.value && (changesOnly.value || model.value.search) ? searchTree(searchPaths.value, query.value) : null,
+  searching.value && (filtered.value || model.value.search) ? searchTree(searchPaths.value, query.value) : null,
 )
 
 // ── Rows ──
 
-const hidden = computed(() => (fileTree.showIgnored ? undefined : (path: string) => decorations.value.ignored(path)))
 const rows = computed<TreeRow[]>(() => {
   if (searching.value) return searchResult.value?.rows ?? []
   const m = model.value
-  if (m.changesOnly) return changesTree(changedPaths.value, m.collapsedChanges)
+  if (filtered.value) return filesTree(filteredPaths.value, m.collapsedFiltered)
   return flattenTree({ listings: m.listings, errors: m.errors, expanded: m.expanded, hidden: hidden.value })
 })
 const entries = computed(() => rows.value.filter((row): row is Extract<TreeRow, { kind: 'entry' }> => row.kind === 'entry'))
@@ -207,8 +277,6 @@ const rootLoading = computed(() => !model.value.listings.has('') && !rootError.v
 
 // ── What Claude does ──
 
-/** Which kind of touch a closed folder shows when several files in it are touched. */
-const TOUCH_RANK: Record<FileTouchKind, number> = { search: 0, read: 1, commit: 2, write: 3 }
 const TOUCH_INSIDE: Record<FileTouchKind, string> = {
   read: 'Claude liest eine Datei in diesem Ordner',
   search: 'Claude durchsucht Dateien in diesem Ordner',
@@ -220,12 +288,6 @@ const TOUCH_LABEL: Record<FileTouchKind, string> = {
   search: 'Claude durchsucht die Datei',
   write: 'Claude schreibt die Datei',
   commit: 'Claude hat die Datei committet',
-}
-const TOUCH_ICON: Record<FileTouchKind, Component> = {
-  read: EyeIcon,
-  search: SearchIcon,
-  write: PencilIcon,
-  commit: GitCommitHorizontalIcon,
 }
 /**
  * The files of the tree the tab's session touched lately (by their path in the tree), and the
@@ -277,6 +339,9 @@ interface RowView {
   touch: FileTouchKind | null
   /** Claude touched a file inside this closed folder. */
   touchInside: FileTouchKind | null
+  /** With the activity filter: what Claude did with the file in the session, and the kind it shows. */
+  record: TouchRecord | null
+  recorded: FileTouchKind | null
 }
 
 const visibleRows = computed<RowView[]>(() => {
@@ -285,11 +350,24 @@ const visibleRows = computed<RowView[]>(() => {
   const last = Math.min(rows.value.length, Math.ceil((scrollTop.value + viewHeight.value) / height) + OVERSCAN)
   const marks = decorations.value
   const now = touched.value
+  const history = filters.activity ? recorded.value : null
   return rows.value.slice(first, last).map((row, i) => {
     if (row.kind !== 'entry') {
-      return { row, index: first + i, icon: null, state: null, folderState: null, ignored: false, touch: null, touchInside: null }
+      return {
+        row,
+        index: first + i,
+        icon: null,
+        state: null,
+        folderState: null,
+        ignored: false,
+        touch: null,
+        touchInside: null,
+        record: null,
+        recorded: null,
+      }
     }
     const dir = row.entry.dir
+    const record = (!dir && history?.get(row.path)) || null
     return {
       row,
       index: first + i,
@@ -299,6 +377,8 @@ const visibleRows = computed<RowView[]>(() => {
       ignored: marks.ignored(row.path),
       touch: (!dir && now?.files.get(row.path)) || null,
       touchInside: (dir && !row.expanded && now?.folders.get(row.path)) || null,
+      record,
+      recorded: record && recordKind(record, fileTree.hiddenKinds),
     }
   })
 })
@@ -329,10 +409,10 @@ const abs = (path: string) => absolutePath(props.target.root, path, SEPARATOR)
 
 function toggleDir(path: string, open?: boolean) {
   const m = model.value
-  if (m.changesOnly) {
+  if (filtered.value) {
     // Its folders are open unless closed here; the tree's own stay as they are.
-    if ((open ?? m.collapsedChanges.has(path)) === true) m.collapsedChanges.delete(path)
-    else m.collapsedChanges.add(path)
+    if ((open ?? m.collapsedFiltered.has(path)) === true) m.collapsedFiltered.delete(path)
+    else m.collapsedFiltered.add(path)
   } else {
     fileTree.setExpanded(m, path, open ?? !m.expanded.has(path))
   }
@@ -340,13 +420,13 @@ function toggleDir(path: string, open?: boolean) {
 
 const canCollapse = computed(() => {
   if (searching.value) return false
-  if (changesOnly.value) return rows.value.some((row) => row.kind === 'entry' && row.expanded)
+  if (filtered.value) return rows.value.some((row) => row.kind === 'entry' && row.expanded)
   return model.value.expanded.size > 0
 })
 
 function collapseAll() {
   const m = model.value
-  if (m.changesOnly) for (const dir of foldersOf(changedPaths.value)) m.collapsedChanges.add(dir)
+  if (filtered.value) for (const dir of foldersOf(filteredPaths.value)) m.collapsedFiltered.add(dir)
   else fileTree.collapseAll(m)
 }
 
@@ -398,7 +478,7 @@ onBeforeUnmount(() => clearTimeout(pendingTimer))
 function showInTree(path: string, dir: boolean) {
   query.value = ''
   const m = model.value
-  if (m.changesOnly) for (const folder of ancestors(path)) m.collapsedChanges.delete(folder)
+  if (filtered.value) for (const folder of ancestors(path)) m.collapsedFiltered.delete(folder)
   else fileTree.reveal(m, path)
   if (dir) toggleDir(path, true)
   select(path)
@@ -622,10 +702,6 @@ const iconButton =
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" class="w-60">
-          <DropdownMenuCheckboxItem :model-value="fileTree.showIgnored" @update:model-value="fileTree.showIgnored = $event === true">
-            Von Git ignorierte Dateien zeigen
-          </DropdownMenuCheckboxItem>
-          <DropdownMenuSeparator />
           <DropdownMenuItem @select="openFolder('')">
             <FolderOpenIcon />
             Im {{ explorer }} öffnen
@@ -643,9 +719,11 @@ const iconButton =
       </DropdownMenu>
     </div>
 
-    <!-- Branch with how far it is from its upstream, and the changes by kind, like the plugin's branch row. -->
-    <div v-if="git" class="-mt-1 flex h-[22px] shrink-0 items-center gap-1.5 px-3 text-xs text-muted-foreground">
-      <span class="flex min-w-0 items-center gap-2" v-tooltip="branchTooltip">
+    <!-- Branch with how far it is from its upstream, and the changes by kind, like the plugin's branch row;
+         at its end the button for all changes one below the other, and the filters' one. Also without git,
+         so the filters' button has its place. -->
+    <div class="-mt-1 flex h-[24px] shrink-0 items-center gap-1.5 pr-2 pl-3 text-xs text-muted-foreground">
+      <span v-if="git" class="flex min-w-0 items-center gap-2" v-tooltip="branchTooltip">
         <GitCommitHorizontalIcon v-if="!git.branch" class="size-3.5 shrink-0" />
         <GitBranchIcon v-else class="size-3.5 shrink-0" />
         <span :class="cn('truncate', !git.branch && 'font-mono')">{{ branchLabel }}</span>
@@ -653,31 +731,53 @@ const iconButton =
         <span v-if="git.behind" class="flex shrink-0 items-center tabular-nums"><ArrowDownIcon class="size-[12px]" />{{ git.behind }}</span>
       </span>
       <span class="flex-1" />
-      <!-- The changes by kind, and a click shows only the changed files. -->
+      <!-- The changes by kind. -->
+      <span v-if="summary.length" class="mr-1 flex shrink-0 items-center gap-1.5" v-tooltip="changesTooltip">
+        <span
+          v-for="item in summary"
+          :key="item.status"
+          :class="cn('font-mono text-[11px] font-medium tabular-nums', STATUS_CLASS[item.status])"
+        >
+          {{ STATUS_LETTER[item.status] }}{{ item.count }}
+        </span>
+      </span>
+      <!-- All changes one below the other, to review them like a pull request. -->
       <Tooltip v-if="summary.length">
+        <TooltipTrigger as-child>
+          <button type="button" aria-label="Alle Änderungen ansehen" :class="iconButton" @click="showDiff('', true)">
+            <FileDiffIcon class="size-[16px]" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>Alle Änderungen untereinander ansehen</TooltipContent>
+      </Tooltip>
+      <!-- Unfolds the filters; while one holds, a dot on it says so. -->
+      <Tooltip>
         <TooltipTrigger as-child>
           <button
             type="button"
-            aria-label="Nur geänderte Dateien zeigen"
-            :aria-pressed="changesOnly"
-            class="-mr-[6px] flex h-[20px] shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-[6px] transition-colors outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50 aria-pressed:bg-foreground/10 aria-pressed:ring-1 aria-pressed:ring-foreground/15"
-            @click="toggleChanges"
+            aria-label="Filter"
+            :aria-pressed="fileTree.filtersOpen"
+            :class="cn(iconButton, 'relative aria-pressed:bg-accent aria-pressed:text-foreground')"
+            @click="fileTree.filtersOpen = !fileTree.filtersOpen"
           >
-            <span
-              v-for="item in summary"
-              :key="item.status"
-              :class="cn('font-mono text-[11px] font-medium tabular-nums', STATUS_CLASS[item.status])"
-            >
-              {{ STATUS_LETTER[item.status] }}{{ item.count }}
-            </span>
+            <ListFilterIcon class="size-[16px]" />
+            <span v-if="filtered" class="absolute top-[3px] right-[3px] size-[6px] rounded-full bg-primary" />
           </button>
         </TooltipTrigger>
         <TooltipContent class="flex-col items-start gap-0.5">
-          <span>{{ changesOnly ? 'Alle Dateien zeigen' : 'Nur geänderte Dateien zeigen' }}</span>
-          <span class="opacity-70">{{ changesTooltip }}</span>
+          <span>{{ fileTree.filtersOpen ? 'Filter zuklappen' : 'Filter' }}</span>
+          <span v-if="filtered" class="opacity-70">{{ filterLabel }}</span>
         </TooltipContent>
       </Tooltip>
     </div>
+
+    <FileTreeFilters
+      v-if="fileTree.filtersOpen"
+      :statuses="summary"
+      :kinds="kindCounts"
+      :git="!!git"
+      :session="isSession"
+    />
 
     <!-- Search by name across every folder, the open ones or not. -->
     <!-- Like the search in the title bar. -->
@@ -692,8 +792,8 @@ const iconButton =
           type="text"
           spellcheck="false"
           autocomplete="off"
-          :aria-label="changesOnly ? 'Geänderte Dateien suchen' : 'Dateien suchen'"
-          :placeholder="changesOnly ? 'Geänderte Dateien suchen' : 'Dateien suchen'"
+          :aria-label="filtered ? 'Gefilterte Dateien suchen' : 'Dateien suchen'"
+          :placeholder="filtered ? 'Gefilterte Dateien suchen' : 'Dateien suchen'"
           class="h-full min-w-0 flex-1 bg-transparent px-2 outline-none placeholder:text-muted-foreground"
           @keydown="onSearchKeydown"
         />
@@ -716,17 +816,17 @@ const iconButton =
               ? `${searchResult.matches} Treffer, die besten 400`
               : `${searchResult.matches} ${searchResult.matches === 1 ? 'Treffer' : 'Treffer'}`
         }}
-        <template v-if="model.search?.truncated && !changesOnly"> · nicht alle Dateien durchsucht</template>
+        <template v-if="model.search?.truncated && !filtered"> · nicht alle Dateien durchsucht</template>
       </p>
-      <p v-else-if="changesOnly && git && changedPaths.length" class="flex items-center gap-1 px-2.5 pt-1.5 text-[11px] text-muted-foreground">
+      <p v-else-if="filtered && filteredPaths.length" class="flex items-center gap-1 px-2.5 pt-1.5 text-[11px] text-muted-foreground">
         <span class="min-w-0 truncate">
-          Nur Änderungen: {{ changedPaths.length }} {{ changedPaths.length === 1 ? 'Datei' : 'Dateien' }}
-          <template v-if="git.truncated || (untrackedDirs.length && model.search?.truncated)"> · nicht alle</template>
+          {{ filterLabel }}: {{ filteredPaths.length }} {{ filteredPaths.length === 1 ? 'Datei' : 'Dateien' }}
+          <template v-if="filters.changes && git && (git.truncated || (untrackedDirs.length && model.search?.truncated))"> · nicht alle</template>
         </span>
         <button
           type="button"
           class="ml-auto shrink-0 cursor-pointer rounded px-1 text-foreground/80 hover:bg-accent hover:text-foreground"
-          @click="toggleChanges"
+          @click="showAll"
         >
           Alle zeigen
         </button>
@@ -767,7 +867,6 @@ const iconButton =
                 draggable="true"
                 class="group/row absolute inset-x-0 top-0 cursor-pointer"
                 :style="{ transform: `translateY(${view.index * rowHeight}px)`, height: `${rowHeight}px` }"
-                v-tooltip="view.row.path"
                 @click="onRowClick(view.row)"
                 @dblclick="onRowDoubleClick(view.row)"
                 @dragstart="onDragStart($event, view.row)"
@@ -837,6 +936,15 @@ const iconButton =
                     :aria-label="TOUCH_LABEL[view.touch]"
                     class="file-tree-touch-icon ml-2 size-3.5 shrink-0"
                   />
+                  <!-- With the activity filter: what Claude did with it before, quieter. -->
+                  <component
+                    :is="TOUCH_ICON[view.recorded]"
+                    v-else-if="view.recorded"
+                    :data-touch="view.recorded"
+                    :aria-label="activityLabel(view.record!)"
+                    class="file-tree-touch-icon ml-2 size-3.5 shrink-0 opacity-60"
+                    v-tooltip="activityLabel(view.record!)"
+                  />
                   <span
                     v-if="view.touchInside"
                     class="relative ml-2 flex w-[12px] shrink-0 items-center justify-center"
@@ -875,13 +983,13 @@ const iconButton =
             </template>
           </div>
           <template v-if="rows.length === 0 && !searching">
-            <div v-if="!changesOnly" class="px-4 pt-3 text-center text-xs text-muted-foreground">Der Ordner ist leer.</div>
+            <div v-if="!filtered" class="px-4 pt-3 text-center text-xs text-muted-foreground">Der Ordner ist leer.</div>
             <div v-else-if="model.searchLoading" class="flex justify-center pt-6">
               <Spinner class="size-[16px] text-muted-foreground" />
             </div>
             <div v-else class="flex flex-col items-center gap-2 px-4 pt-3 text-center text-xs text-muted-foreground">
-              {{ git ? 'Keine Änderungen seit dem letzten Commit.' : 'Kein Git-Repository.' }}
-              <button type="button" class="cursor-pointer rounded px-1.5 py-0.5 text-foreground/80 hover:bg-accent hover:text-foreground" @click="toggleChanges">
+              {{ emptyText }}
+              <button type="button" class="cursor-pointer rounded px-1.5 py-0.5 text-foreground/80 hover:bg-accent hover:text-foreground" @click="showAll">
                 Alle Dateien zeigen
               </button>
             </div>

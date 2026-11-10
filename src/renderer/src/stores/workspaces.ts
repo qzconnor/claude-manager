@@ -1,7 +1,9 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { toast } from 'vue-sonner'
 import { folderKey } from '@shared/folders'
-import type { Workspace, WorkspaceCreateInput } from '@shared/types'
+import type { FolderMoveResult, Workspace, WorkspaceCreateInput } from '@shared/types'
+import { splitFolder } from '@/lib/recent-folders'
 
 /** The workspaces: folders whose projects (subfolders) share a system prompt (`cm_prompts.md`). */
 export const useWorkspacesStore = defineStore('workspaces', () => {
@@ -66,8 +68,46 @@ export const useWorkspacesStore = defineStore('workspaces', () => {
     await load()
   }
 
+  /** Moves the folder into the folder `into` (a workspace); its sessions go along. */
+  async function move(from: string, into: string): Promise<FolderMoveResult> {
+    const result = await window.api.workspaces.move(from, into)
+    await load()
+    return result
+  }
+
+  /** The folder `from` is gone, it is `to` now: its sessions go there. Resolves to how many. */
+  async function relocate(from: string, to: string): Promise<number> {
+    const moved = await window.api.workspaces.relocate(from, to)
+    await load()
+    return moved
+  }
+
+  /** Folders of the session list that aren't there (any more), by `folderKey`. */
+  const missing = ref<ReadonlySet<string>>(new Set())
+  let checking = 0
+
+  /** Finds out which of the folders aren't there; only the latest check counts. */
+  async function checkFolders(paths: readonly string[]): Promise<void> {
+    const mine = ++checking
+    const gone = await window.api.app.missingFolders([...paths]).catch(() => null)
+    if (gone === null || mine !== checking) return
+    missing.value = new Set(gone.map(folderKey))
+  }
+
+  const isMissing = (path: string) => missing.value.has(folderKey(path))
+
   window.api.workspaces.onChanged(() => {
     if (loaded.value) void load()
+  })
+  // Moved in Explorer: the list shows it in its new place, and says so when sessions went along.
+  window.api.workspaces.onMoved((moved) => {
+    if (loaded.value) void load()
+    if (moved.sessions === 0) return
+    const name = splitFolder(moved.to).name
+    const parent = splitFolder(splitFolder(moved.to).parent).name
+    toast.info(`„${name}“ liegt jetzt in „${parent}“`, {
+      description: `${moved.sessions === 1 ? 'Die Session ist' : `Die ${moved.sessions} Sessions sind`} mitgezogen und ${moved.sessions === 1 ? 'lässt' : 'lassen'} sich dort fortsetzen.`,
+    })
   })
 
   return {
@@ -81,5 +121,10 @@ export const useWorkspacesStore = defineStore('workspaces', () => {
     createProject,
     readPrompt: (path: string) => window.api.workspaces.readPrompt(path),
     writePrompt,
+    move,
+    relocate,
+    missing,
+    checkFolders,
+    isMissing,
   }
 })
