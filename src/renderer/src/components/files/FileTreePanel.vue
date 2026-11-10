@@ -47,7 +47,6 @@ import { useFileTreeModel } from '@/composables/useFileTreeModel'
 import { useLauncher } from '@/composables/useLauncher'
 import { formatArgs } from '@/lib/args'
 import { attempt } from '@/lib/errors'
-import { formatClock } from '@/lib/format'
 import { fileIcon, type FileIconInfo } from '@/lib/file-icons'
 import {
   absolutePath,
@@ -73,7 +72,7 @@ import {
   type TouchRecord,
   type TreeRow,
 } from '@/lib/file-tree'
-import { TOUCH_DONE, TOUCH_ICON } from '@/lib/file-touch'
+import { TOUCH_ICON } from '@/lib/file-touch'
 import { terminalBus } from '@/lib/terminal-bus'
 import { cn } from '@/lib/utils'
 import { DEFAULT_TREE_WIDTH, SEPARATOR, useFileTreeStore, type TreeTarget } from '@/stores/file-tree'
@@ -222,14 +221,6 @@ watch(
   },
 )
 
-/** What Claude did with a file in the session, in words. */
-function activityLabel(record: TouchRecord): string {
-  const done = TOUCH_KINDS.filter((kind) => record[kind] !== undefined).map((kind) => TOUCH_DONE[kind])
-  const words = done.length > 1 ? `${done.slice(0, -1).join(', ')} und ${done.at(-1)}` : done[0]
-  const last = Math.max(...TOUCH_KINDS.map((kind) => record[kind] ?? 0))
-  return `Claude hat die Datei ${words}, zuletzt um ${formatClock(new Date(last).toISOString())}`
-}
-
 // ── Search ──
 
 const query = computed({
@@ -339,9 +330,6 @@ interface RowView {
   touch: FileTouchKind | null
   /** Claude touched a file inside this closed folder. */
   touchInside: FileTouchKind | null
-  /** With the activity filter: what Claude did with the file in the session, and the kind it shows. */
-  record: TouchRecord | null
-  recorded: FileTouchKind | null
 }
 
 const visibleRows = computed<RowView[]>(() => {
@@ -350,7 +338,6 @@ const visibleRows = computed<RowView[]>(() => {
   const last = Math.min(rows.value.length, Math.ceil((scrollTop.value + viewHeight.value) / height) + OVERSCAN)
   const marks = decorations.value
   const now = touched.value
-  const history = filters.activity ? recorded.value : null
   return rows.value.slice(first, last).map((row, i) => {
     if (row.kind !== 'entry') {
       return {
@@ -362,12 +349,9 @@ const visibleRows = computed<RowView[]>(() => {
         ignored: false,
         touch: null,
         touchInside: null,
-        record: null,
-        recorded: null,
       }
     }
     const dir = row.entry.dir
-    const record = (!dir && history?.get(row.path)) || null
     return {
       row,
       index: first + i,
@@ -377,8 +361,6 @@ const visibleRows = computed<RowView[]>(() => {
       ignored: marks.ignored(row.path),
       touch: (!dir && now?.files.get(row.path)) || null,
       touchInside: (dir && !row.expanded && now?.folders.get(row.path)) || null,
-      record,
-      recorded: record && recordKind(record, fileTree.hiddenKinds),
     }
   })
 })
@@ -935,15 +917,6 @@ const iconButton =
                     role="status"
                     :aria-label="TOUCH_LABEL[view.touch]"
                     class="file-tree-touch-icon ml-2 size-3.5 shrink-0"
-                  />
-                  <!-- With the activity filter: what Claude did with it before, quieter. -->
-                  <component
-                    :is="TOUCH_ICON[view.recorded]"
-                    v-else-if="view.recorded"
-                    :data-touch="view.recorded"
-                    :aria-label="activityLabel(view.record!)"
-                    class="file-tree-touch-icon ml-2 size-3.5 shrink-0 opacity-60"
-                    v-tooltip="activityLabel(view.record!)"
                   />
                   <span
                     v-if="view.touchInside"
