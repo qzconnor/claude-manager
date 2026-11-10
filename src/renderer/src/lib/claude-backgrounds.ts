@@ -1,5 +1,5 @@
-import type { DiffColors, PanelBackground } from '@shared/types'
-import type { TerminalPalette } from '@/themes/types'
+import type { DiffColors, LogoColor, PanelBackground } from '@shared/types'
+import type { TerminalPalette } from '@shared/themes/types'
 
 /**
  * Claude Code paints some areas with fixed background colors from its own themes. With
@@ -11,6 +11,9 @@ import type { TerminalPalette } from '@/themes/types'
  * see-through (see translucent-slots.ts); the xterm theme holds an opaque mix of each for
  * everything else xterm does with the color (`slotPalette`). Programs that use these slots
  * themselves get the slot's standard color as RGB instead, so their output looks as before.
+ *
+ * Claude Code's crab (its logo, also while it moves) takes the theme's accent the same way, in the
+ * slot `logo`: as text color and as background (its eyes are holes in a body-colored background).
  */
 export const SLOTS = {
   panel: 16,
@@ -20,6 +23,7 @@ export const SLOTS = {
   removed: 20,
   removedWord: 21,
   removedDimmed: 22,
+  logo: 23,
 } as const
 export type Slot = keyof typeof SLOTS
 export const SLOT_NAMES = Object.keys(SLOTS) as Slot[]
@@ -34,7 +38,7 @@ export type SlotTints = Record<Slot, SlotTint>
 const DIFF_SLOTS = ['added', 'addedWord', 'addedDimmed', 'removed', 'removedWord', 'removedDimmed'] as const
 
 /** Claude Code's colors behind each slot, as `R;G;B`. */
-const CLAUDE_COLORS: Record<Slot, string[]> = {
+const CLAUDE_COLORS: Record<Exclude<Slot, 'logo'>, string[]> = {
   // Dark, light and light daltonized theme: side panels such as /diff (composerSidebarBackground),
   // the bars behind the user's own messages (userMessageBackground) and behind `!` bash and `#`
   // memory input. The lighter hover gray of a message stays, so hovering still highlights it.
@@ -55,6 +59,18 @@ const CLAUDE_COLORS: Record<Slot, string[]> = {
   removedDimmed: ['105;72;77', '253;210;216'],
 }
 
+/** The crab's body (`clawd_body`), the same in all of Claude Code's themes that use RGB. */
+const CLAWD_BODY = '215;119;87'
+/**
+ * The crab is drawn from block elements (█ ▄ ▐ ▛ ▗ …) and spaces. Claude's orange is also its
+ * spinner and highlights: only text of these characters takes the accent.
+ */
+const LOGO_TEXT_RE = /^[▀-▟ ]+$/
+/** SGR sequences right after one another, e.g. a text color and then a background. */
+const SGR_RUN_RE = /^(?:\x1b\[[0-9;:]*m)*/
+/** SGR sequences at the very end of a chunk, with no text after them yet. */
+const TRAILING_SGR_RE = /(?:\x1b\[[0-9;:]*m)+$/
+
 /** How much of the tint color covers what lies behind, from 0 to 1. */
 const ALPHA = { panel: 0.07, line: 0.15, word: 0.3, dimmed: 0.08 }
 
@@ -63,17 +79,21 @@ const slotSgr = (slot: Slot) => `48;5;${SLOTS[slot]}`
 /** Claude's `R;G;B` backgrounds mapped to the SGR parameters that replace them. */
 export function backgroundReplacements(panel: PanelBackground, diff: DiffColors): Map<string, string> {
   const map = new Map<string, string>()
-  const replace = (slot: Slot, sgr: string) => CLAUDE_COLORS[slot].forEach((rgb) => map.set(rgb, sgr))
+  const replace = (slot: Exclude<Slot, 'logo'>, sgr: string) => CLAUDE_COLORS[slot].forEach((rgb) => map.set(rgb, sgr))
   // `49` is the terminal's own background, which lets the window material shine through.
   if (panel !== 'original') replace('panel', panel === 'theme' ? slotSgr('panel') : '49')
   if (diff === 'theme') DIFF_SLOTS.forEach((slot) => replace(slot, slotSgr(slot)))
   return map
 }
 
-/** The slots in a theme: panels lightly tinted with its text color, diffs with its green and red. */
-export function themeSlotTints(palette: TerminalPalette): SlotTints {
+/**
+ * The slots in a theme: panels lightly tinted with its text color, diffs with its green and red,
+ * the crab opaque in its `accent`.
+ */
+export function themeSlotTints(palette: TerminalPalette, accent: string): SlotTints {
   const { foreground, green, red } = palette
   return {
+    logo: { color: accent, alpha: 1 },
     panel: { color: foreground, alpha: ALPHA.panel },
     added: { color: green, alpha: ALPHA.line },
     addedWord: { color: green, alpha: ALPHA.word },
@@ -130,7 +150,8 @@ const COLON_SLOT_RE = /^([345]8):5:(\d+)$/
 /** A program's use of a slot, e.g. `38;5;17`. */
 const SLOT_USE_RE = new RegExp(`[345]8[;:]5[;:](?:${[...SLOT_INDICES].join('|')})(?![0-9])`)
 
-function rewrite(params: string, replacements: ReadonlyMap<string, string>): string {
+/** `logo`: the text after the sequence is the crab's, so its orange becomes the slot `logo`, as text color and as background. */
+function rewrite(params: string, replacements: ReadonlyMap<string, string>, logo: boolean): string {
   const parts = params.split(';')
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i]
@@ -145,7 +166,9 @@ function rewrite(params: string, replacements: ReadonlyMap<string, string>): str
       if (SLOT_INDICES.has(index)) parts.splice(i + 1, 2, '2', standardRgb(index))
       i += 2
     } else if (parts[i + 1] === '2') {
-      const replacement = part === '48' ? replacements.get(parts.slice(i + 2, i + 5).join(';')) : undefined
+      const rgb = parts.slice(i + 2, i + 5).join(';')
+      const replacement =
+        logo && rgb === CLAWD_BODY && part !== '58' ? `${part};5;${SLOTS.logo}` : part === '48' ? replacements.get(rgb) : undefined
       if (replacement) parts.splice(i, 5, replacement)
       else i += 4
     }
@@ -155,15 +178,28 @@ function rewrite(params: string, replacements: ReadonlyMap<string, string>): str
 
 /** Whether a piece of output may hold a sequence that `rewrite` changes. */
 function mayNeedRewrite(data: string): boolean {
-  return data.includes('48;2;') || SLOT_USE_RE.test(data)
+  return data.includes('48;2;') || data.includes(`38;2;${CLAWD_BODY}`) || SLOT_USE_RE.test(data)
+}
+
+/** Whether the text from `at` on, behind any further SGR sequences, up to the next escape is the crab's. */
+function isLogoText(data: string, at: number): boolean {
+  const rest = data.slice(at, at + 256)
+  const start = SGR_RUN_RE.exec(rest)![0].length
+  const end = rest.indexOf('\x1b', start)
+  return LOGO_TEXT_RE.test(rest.slice(start, end === -1 ? undefined : end))
 }
 
 /**
  * Returns a function that exchanges Claude's backgrounds in one terminal's output, chunk by chunk,
- * as `replacements()` maps them (see `backgroundReplacements`). A sequence cut off at the end of a
- * chunk is held back until the next one; xterm would wait for its end anyway.
+ * as `replacements()` maps them (see `backgroundReplacements`), and with `logo()` at 'theme' the
+ * crab's orange for the slot `logo`. A sequence cut off at the end of a chunk is held back until
+ * the next one; xterm would wait for its end anyway. So is the crab's orange at the very end of a
+ * chunk: only its text in the next one tells whether it is the crab's, and a color alone draws nothing.
  */
-export function createBackgroundFilter(replacements: () => ReadonlyMap<string, string>): (chunk: string) => string {
+export function createBackgroundFilter(
+  replacements: () => ReadonlyMap<string, string>,
+  logo: () => LogoColor = () => 'original',
+): (chunk: string) => string {
   let carry = ''
   return (chunk) => {
     let data = carry + chunk
@@ -173,10 +209,20 @@ export function createBackgroundFilter(replacements: () => ReadonlyMap<string, s
       carry = partial[0]
       data = data.slice(0, data.length - carry.length)
     }
+    const accent = logo() === 'theme'
+    if (accent) {
+      const tail = TRAILING_SGR_RE.exec(data.slice(-256))
+      if (tail?.[0].includes(CLAWD_BODY)) {
+        carry = tail[0] + carry
+        data = data.slice(0, data.length - tail[0].length)
+      }
+    }
     if (!mayNeedRewrite(data)) return data
     const map = replacements()
-    return data.replace(SGR_RE, (sequence, params: string) =>
-      mayNeedRewrite(params) ? `\x1b[${rewrite(params, map)}m` : sequence,
-    )
+    return data.replace(SGR_RE, (sequence, params: string, offset: number) => {
+      if (!mayNeedRewrite(params)) return sequence
+      const crab = accent && params.includes(CLAWD_BODY) && isLogoText(data, offset + sequence.length)
+      return `\x1b[${rewrite(params, map, crab)}m`
+    })
   }
 }

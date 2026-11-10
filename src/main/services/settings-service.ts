@@ -218,6 +218,7 @@ function sanitize(s: AppSettings, fallback: AppSettings = createDefaultSettings(
     ? s.terminal.panelBackground
     : d.terminal.panelBackground
   s.terminal.diffColors = s.terminal.diffColors === 'original' ? 'original' : 'theme'
+  s.terminal.logoColor = s.terminal.logoColor === 'original' ? 'original' : 'theme'
   if (!s.terminal.fontFamily.trim()) s.terminal.fontFamily = d.terminal.fontFamily
   s.claude.defaultCwdAsked = s.claude.defaultCwdAsked === true
   s.claude.usageRefreshMinutes = clamp(s.claude.usageRefreshMinutes, 2, 120, d.claude.usageRefreshMinutes)

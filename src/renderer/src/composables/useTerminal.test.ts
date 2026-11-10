@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TerminalSettings } from '@shared/types'
 import { createDefaultSettings } from '@shared/defaults'
 import { slotPalette, themeSlotTints } from '@/lib/claude-backgrounds'
-import { findTheme } from '@/themes/themes'
+import { findTheme } from '@shared/themes/builtin'
 import { buildFontStack } from './useTerminalAppearance'
 import { placeColumns, terminalOptions, toXtermTheme } from './useTerminal'
 
@@ -21,7 +21,7 @@ vi.mock('@/stores/app', () => ({ useAppStore: vi.fn() }))
 vi.mock('@/stores/settings', () => ({ useSettingsStore: vi.fn() }))
 
 const palette = findTheme('ember').terminal
-const tints = themeSlotTints(palette)
+const tints = themeSlotTints(palette, findTheme('ember').colors.primary)
 
 describe('toXtermTheme', () => {
   it('keeps the palette but leaves the background to the container', () => {

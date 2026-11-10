@@ -716,6 +716,8 @@ export type UnicodeMode = 'graphemes' | 'unicode11'
 export type PanelBackground = 'theme' | 'terminal' | 'original'
 /** Green and red behind changed lines in Claude Code's diffs: a see-through tint of the theme or Claude's own. */
 export type DiffColors = 'theme' | 'original'
+/** Claude Code's crab (the logo, also while it moves): in the theme's accent or Claude's own orange. */
+export type LogoColor = 'theme' | 'original'
 
 /**
  * Where the terminal tabs are: in the title bar or listed in the nav sidebar, or (`groups`) like VS Code's
@@ -772,6 +774,7 @@ export interface TerminalSettings {
   minimumContrastRatio: number
   panelBackground: PanelBackground
   diffColors: DiffColors
+  logoColor: LogoColor
   /**
    * Windows: new tabs use the ConPTY of Windows Terminal that comes with node-pty instead of the one
    * of Windows. It passes queries such as the background color on to the terminal.

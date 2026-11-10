@@ -39,7 +39,18 @@ const TREE = [
     tab: 'appearance',
     label: 'Darstellung',
     sections: [
-      { id: 'appearance.theme', title: 'Theme', keywords: 'Farben Farbschema hell dunkel Design' },
+      {
+        id: 'appearance.theme',
+        title: 'Theme',
+        keywords: 'Farben Farbschema hell dunkel Design',
+        fields: [
+          {
+            id: 'appearance.customThemes',
+            label: 'Eigene Themes',
+            keywords: 'Theme erstellen bearbeiten Editor Farbwähler Color Picker anpassen kopieren importieren exportieren teilen JSON Datei löschen',
+          },
+        ],
+      },
       {
         id: 'appearance.tabs',
         title: 'Tabs',
@@ -91,6 +102,7 @@ const TREE = [
           { id: 'terminal.backgroundOpacity', label: 'Hintergrund-Deckkraft', keywords: 'Transparenz durchsichtig Acryl Material', windowsOnly: true },
           { id: 'terminal.panelBackground', label: 'Hintergrund von Claude-Flächen', keywords: 'Seitenleisten diff Balken Eingaben grau' },
           { id: 'terminal.diffColors', label: 'Diff-Farben', keywords: 'grün rot Änderungen' },
+          { id: 'terminal.logoColor', label: 'Claude-Logo', keywords: 'Krabbe Clawd Maskottchen Animation Akzentfarbe orange' },
           { id: 'terminal.cursorStyle', label: 'Cursor', keywords: 'Balken Block Unterstrich Form' },
           { id: 'terminal.cursorBlink', label: 'Cursor blinkt', keywords: 'blinken' },
           { id: 'terminal.contrast', label: 'Mindestkontrast', keywords: 'Kontrast lesbar aufhellen' },

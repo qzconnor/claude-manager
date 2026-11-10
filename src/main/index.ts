@@ -1,6 +1,6 @@
 import { homedir, release } from 'node:os'
 import { join } from 'node:path'
-import { app, BrowserWindow, nativeTheme } from 'electron'
+import { app, BrowserWindow, nativeTheme, shell } from 'electron'
 import { IpcEvent } from '@shared/ipc'
 import type { AppInfo } from '@shared/types'
 import { ApiServer } from './api/api-server'
@@ -36,6 +36,7 @@ import { TerminalRestore } from './services/terminal-restore'
 import { TerminalService } from './services/terminal-service'
 import { UpdateService } from './services/update-service'
 import { UsageService } from './services/usage-service'
+import { ThemeService } from './services/theme-service'
 import { WorkspaceService } from './services/workspace-service'
 import { WorkspaceTrust } from './services/workspace-trust'
 import { WindowDialogs } from './window/dialogs'
@@ -84,6 +85,8 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   const terminals = new TerminalService(accounts, cli, settings, trust)
   const workspaces = new WorkspaceService(userDataDir)
   workspaces.init()
+  const themes = new ThemeService(userDataDir, (path) => shell.trashItem(path))
+  themes.init()
   // Claude sessions learn that they run in the app, without the user seeing it (setting `appContext`),
   // and get the prompts of the workspaces they work in.
   terminals.addSessionArgs(new SessionPrompt(userDataDir, cli, settings, workspaces))
@@ -153,6 +156,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     command,
     updates,
     workspaces,
+    themes,
     trust,
     async appInfo(): Promise<AppInfo> {
       return {
@@ -357,6 +361,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     sessionServer.dispose()
     usage.dispose()
     workspaces.dispose()
+    themes.dispose()
     git.dispose()
     files.dispose()
     sessions.dispose()

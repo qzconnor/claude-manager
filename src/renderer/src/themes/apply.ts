@@ -1,21 +1,21 @@
 import type { AppearanceSettings } from '@shared/types'
-import type { AppTheme } from './types'
+import type { AppTheme } from '@shared/themes/types'
 
 const mix = (color: string, percent: number, other = 'transparent') =>
   `color-mix(in oklab, ${color} ${percent}%, ${other})`
 
 /**
- * Writes all design tokens of a theme to <html>. Translucent layers are expressed with
- * color-mix so the window material (acrylic/mica) shines through cards, sidebar and body.
+ * All design tokens of a theme, as CSS variables. Translucent layers are expressed with color-mix
+ * so the window material (acrylic/mica) shines through cards, sidebar and body. Set on an element,
+ * they color what is in it, e.g. the preview of the theme editor.
  */
-export function applyTheme(theme: AppTheme, appearance: AppearanceSettings, translucent: boolean): void {
+export function themeTokens(theme: Pick<AppTheme, 'mode' | 'colors' | 'terminal'>, appearance: AppearanceSettings, translucent: boolean): Record<string, string> {
   const c = theme.colors
   const t = theme.terminal
-  const root = document.documentElement
   const opacity = translucent ? appearance.surfaceOpacity : 100
   const isDark = theme.mode === 'dark'
 
-  const tokens: Record<string, string> = {
+  return {
     '--background': c.background,
     '--foreground': c.foreground,
     '--card': mix(c.surface, translucent ? Math.min(100, opacity + 8) : 100),
@@ -55,7 +55,13 @@ export function applyTheme(theme: AppTheme, appearance: AppearanceSettings, tran
     '--window-bg': mix(c.background, opacity),
     '--ui-font-size': `${appearance.uiFontSize}px`,
   }
-  for (const [key, value] of Object.entries(tokens)) root.style.setProperty(key, value)
+}
+
+/** Writes all design tokens of a theme to <html> (see `themeTokens`). */
+export function applyTheme(theme: AppTheme, appearance: AppearanceSettings, translucent: boolean): void {
+  const root = document.documentElement
+  const isDark = theme.mode === 'dark'
+  for (const [key, value] of Object.entries(themeTokens(theme, appearance, translucent))) root.style.setProperty(key, value)
   root.classList.toggle('dark', isDark)
   root.style.colorScheme = theme.mode
   root.dataset.theme = theme.id

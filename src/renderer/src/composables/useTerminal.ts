@@ -15,7 +15,7 @@ import { urlLinks } from '@/lib/url-links'
 import { useAppStore } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
-import type { TerminalPalette } from '@/themes/types'
+import type { TerminalPalette } from '@shared/themes/types'
 import { buildFontStack, ensureFontLoaded, useTerminalAppearance } from './useTerminalAppearance'
 
 export interface UseTerminalOptions {
@@ -176,9 +176,12 @@ export function useTerminal(options: UseTerminalOptions) {
   const settingsStore = useSettingsStore()
   const appStore = useAppStore()
   const terminalsStore = useTerminalsStore()
-  const { palette, dark, slotTints, backgrounds } = useTerminalAppearance()
+  const { palette, dark, slotTints, backgrounds, logo } = useTerminalAppearance()
   /** All output passes through here on its way to xterm. */
-  const filterOutput = createBackgroundFilter(() => backgrounds.value)
+  const filterOutput = createBackgroundFilter(
+    () => backgrounds.value,
+    () => logo.value,
+  )
 
   const ready = ref(false)
   const hasSelection = ref(false)

@@ -53,6 +53,7 @@ import type {
   WindowState,
 } from './types'
 import type { Shortcut } from './shortcuts'
+import type { CustomThemeEntry, ThemeContent, ThemeImportResult } from './themes/types'
 
 /** Request/response channels (ipcRenderer.invoke ↔ ipcMain.handle). */
 export const IpcInvoke = {
@@ -135,6 +136,16 @@ export const IpcInvoke = {
   workspacesWritePrompt: 'workspaces:write-prompt',
   workspacesMove: 'workspaces:move',
   workspacesRelocate: 'workspaces:relocate',
+
+  themesList: 'themes:list',
+  themesCreate: 'themes:create',
+  themesSave: 'themes:save',
+  themesRemove: 'themes:remove',
+  themesExport: 'themes:export',
+  themesImport: 'themes:import',
+  themesOpenFile: 'themes:open-file',
+  themesShowFile: 'themes:show-file',
+  themesOpenFolder: 'themes:open-folder',
 
   usageGet: 'usage:get',
   usageRefresh: 'usage:refresh',
@@ -235,6 +246,8 @@ export const IpcEvent = {
   workspacesChanged: 'event:workspaces-changed',
   /** A folder of a workspace was moved outside the app, and its sessions went along. */
   workspacesMoved: 'event:workspaces-moved',
+  /** A file in the themes folder came, went or changed (also by hand). */
+  themesChanged: 'event:themes-changed',
   apiStatusChanged: 'event:api-status-changed',
   updatesChanged: 'event:updates-changed',
   /** The update notification was clicked. */
@@ -458,6 +471,27 @@ export interface ManagerApi {
     onChanged(cb: () => void): Unsubscribe
     /** A folder of a workspace was moved outside the app (e.g. in Explorer), its sessions went along. */
     onMoved(cb: (move: FolderMovedEvent) => void): Unsubscribe
+  }
+  /** The user's own themes, one JSON file each in the folder `themes` of the app's data. */
+  themes: {
+    /** Every file of the folder; ones that can't be used with the reason. */
+    list(): Promise<CustomThemeEntry[]>
+    /** Saves a new theme (a name another theme has gets a number). */
+    create(theme: ThemeContent): Promise<CustomThemeEntry>
+    /** Saves the theme `id`; a new name renames its file, so its id changes. Resolves to the theme with its id. */
+    save(id: string, theme: ThemeContent): Promise<CustomThemeEntry>
+    /** Moves the file to the recycle bin. */
+    remove(id: string): Promise<void>
+    /** Saves the theme to a file the user picks. The path, or null when cancelled. */
+    export(id: string): Promise<string | null>
+    /** Takes over themes from `files`, or from files the user picks without; null when cancelled. */
+    import(files?: string[]): Promise<ThemeImportResult | null>
+    /** Opens the file in the program the system has for JSON; false when it has none (the file is shown in Explorer then). */
+    openFile(id: string): Promise<boolean>
+    /** Shows the file selected in Explorer (the file manager). */
+    showFile(id: string): Promise<void>
+    openFolder(): Promise<void>
+    onChanged(cb: () => void): Unsubscribe
   }
   notifications: {
     /** Shows an example notification with the current settings. */

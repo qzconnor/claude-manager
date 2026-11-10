@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { PaneDirection } from '@shared/panes'
+import type { ThemeContent } from '@shared/themes/types'
 import type { DialogOptions } from '@shared/types'
 import type { SessionRef } from '@/composables/useSessionDetail'
 import type { DropSide } from '@/lib/workspace'
@@ -30,6 +31,9 @@ export type WorkspaceRequest =
   | { mode: 'create'; parent?: string | null; move?: { path: string; sessions: number } }
   | { mode: 'adopt'; path: string }
   | { mode: 'edit'; path: string }
+
+/** What `ThemeEditorDialog` edits: a theme of the user (`id`), or a new one that starts with the colors of `from`. */
+export type ThemeEditorRequest = { mode: 'edit'; id: string } | { mode: 'create'; from: ThemeContent }
 
 /** Transient UI state shared across components (dialogs, palette, search requests). */
 export const useUiStore = defineStore('ui', () => {
@@ -67,6 +71,7 @@ export const useUiStore = defineStore('ui', () => {
   const projectRequest = ref<{ workspace: string; name: string } | null>(null)
   /** Asks for a worktree name before a session starts in one (`WorktreeDialog`); `cwd` null asks for the folder too. */
   const worktreeRequest = ref<{ accountId: string; cwd: string | null } | null>(null)
+  const themeEditorRequest = ref<ThemeEditorRequest | null>(null)
   /**
    * Left and right edge (viewport px) of the selected tab in the title bar, as far as it is visible.
    * The page below opens its top border there, so the tab merges into it.
@@ -110,6 +115,7 @@ export const useUiStore = defineStore('ui', () => {
     worktreeRequest,
     workspaceRequest,
     projectRequest,
+    themeEditorRequest,
     selectedTabEdges,
     hoveredTab,
     draggingTab,

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { findTheme } from '@/themes/themes'
+import { findTheme } from '@shared/themes/builtin'
 import {
   backgroundReplacements,
   createBackgroundFilter,
@@ -33,23 +33,29 @@ describe('parseHex', () => {
 
 describe('themeSlotTints', () => {
   const palette = findTheme('ember').terminal
+  const accent = findTheme('ember').colors.primary
 
   it('tints panels with the text color and diffs with green and red', () => {
-    const tints = themeSlotTints(palette)
+    const tints = themeSlotTints(palette, accent)
     expect(tints.panel.color).toBe(palette.foreground)
     for (const slot of ['added', 'addedWord', 'addedDimmed'] as const) expect(tints[slot].color).toBe(palette.green)
     for (const slot of ['removed', 'removedWord', 'removedDimmed'] as const) expect(tints[slot].color).toBe(palette.red)
   })
 
   it('covers every slot with a see-through alpha, words stronger than lines', () => {
-    const tints = themeSlotTints(palette)
+    const tints = themeSlotTints(palette, accent)
     expect(Object.keys(tints).sort()).toEqual([...SLOT_NAMES].sort())
-    for (const slot of SLOT_NAMES) {
+    for (const slot of SLOT_NAMES.filter((name) => name !== 'logo')) {
       expect(tints[slot].alpha).toBeGreaterThan(0)
       expect(tints[slot].alpha).toBeLessThan(1)
     }
     expect(tints.addedWord.alpha).toBeGreaterThan(tints.added.alpha)
     expect(tints.removedWord.alpha).toBeGreaterThan(tints.removed.alpha)
+  })
+
+  it("gives the crab the theme's accent, opaque", () => {
+    expect(themeSlotTints(palette, accent).logo).toEqual({ color: accent, alpha: 1 })
+    expect(slotPalette(themeSlotTints(palette, '#3366ff'), palette.background)[SLOTS.logo - 16]).toBe('#3366ff')
   })
 })
 
@@ -88,7 +94,8 @@ describe('backgroundReplacements', () => {
     expect(map.get('4;71;0')).toBe(`48;5;${SLOTS.addedWord}`)
     expect(map.get('61;1;0')).toBe(`48;5;${SLOTS.removed}`)
     expect(map.get('92;2;0')).toBe(`48;5;${SLOTS.removedWord}`)
-    expect(new Set(map.values())).toEqual(new Set(SLOT_NAMES.map((slot) => `48;5;${SLOTS[slot]}`)))
+    const backgrounds = SLOT_NAMES.filter((slot) => slot !== 'logo')
+    expect(new Set(map.values())).toEqual(new Set(backgrounds.map((slot) => `48;5;${SLOTS[slot]}`)))
   })
 
   it("maps panels to the terminal's own background", () => {
@@ -148,7 +155,7 @@ describe('createBackgroundFilter', () => {
 
   it('leaves other palette colors alone', () => {
     const filter = createBackgroundFilter(themed)
-    for (const params of ['38;5;160', '48;5;23', '38;5;15', '5;16', '38:5:160']) expect(filter(sgr(params))).toBe(sgr(params))
+    for (const params of ['38;5;160', '48;5;24', '38;5;15', '5;16', '38:5:160']) expect(filter(sgr(params))).toBe(sgr(params))
   })
 
   it('holds back a sequence cut off at the end of a chunk', () => {
@@ -170,6 +177,43 @@ describe('createBackgroundFilter', () => {
     expect(filter(sgr('48;2;38;38;38'))).toBe(sgr('49'))
     current = backgroundReplacements('original', 'original')
     expect(filter(sgr('48;2;38;38;38'))).toBe(sgr('48;2;38;38;38'))
+  })
+
+  describe("Claude Code's crab", () => {
+    const orange = '38;2;215;119;87'
+    const crab = createBackgroundFilter(themed, () => 'theme')
+
+    it('takes the slot of the accent as text color', () => {
+      const header = `${sgr(orange)} ▐▛███▜▌${sgr('39')}   ${sgr('1')}Claude Code${sgr('0')}`
+      expect(crab(header)).toBe(`${sgr('38;5;23')} ▐▛███▜▌${sgr('39')}   ${sgr('1')}Claude Code${sgr('0')}`)
+      expect(crab(`${sgr(`1;${orange}`)}▝▜█████▛▘`)).toBe(`${sgr('1;38;5;23')}▝▜█████▛▘`)
+    })
+
+    it('takes it as background too, behind further sequences (its eyes)', () => {
+      const eyes = `${sgr('48;2;215;119;87')}${sgr('38;2;0;0;0')} ▗     ▖ ${sgr('39')}${sgr('49')}`
+      expect(crab(eyes)).toBe(`${sgr('48;5;23')}${sgr('38;2;0;0;0')} ▗     ▖ ${sgr('39')}${sgr('49')}`)
+      expect(crab(`${sgr('48;2;215;119;87')}         ${sgr('49')}`)).toBe(`${sgr('48;5;23')}         ${sgr('49')}`)
+    })
+
+    it("leaves Claude's other orange alone: spinner, text", () => {
+      for (const text of [`${sgr(orange)}✻${sgr('39')} Thinking…`, `${sgr(orange)}Claude${sgr('39')}`, `${sgr(orange)}█ x`]) {
+        expect(crab(text)).toBe(text)
+      }
+    })
+
+    it('holds its orange back at the end of a chunk until the text tells', () => {
+      const filter = createBackgroundFilter(themed, () => 'theme')
+      expect(filter(`a${sgr('1')}${sgr(orange)}`)).toBe('a')
+      expect(filter(' ▐▛███▜▌')).toBe(`${sgr('1')}${sgr('38;5;23')} ▐▛███▜▌`)
+      expect(filter(sgr(orange))).toBe('')
+      expect(filter('✻ Thinking')).toBe(`${sgr(orange)}✻ Thinking`)
+    })
+
+    it('stays orange with the original color', () => {
+      const header = `${sgr(orange)} ▐▛███▜▌${sgr('39')}`
+      expect(createBackgroundFilter(themed, () => 'original')(header)).toBe(header)
+      expect(createBackgroundFilter(themed)(header)).toBe(header)
+    })
   })
 
   it('still frees the slots when nothing is exchanged', () => {

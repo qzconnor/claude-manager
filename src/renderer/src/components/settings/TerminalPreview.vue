@@ -12,13 +12,14 @@ import { useSettingsStore } from '@/stores/settings'
 /** Static xterm instance that shows the current terminal settings with sample output. */
 const container = ref<HTMLElement | null>(null)
 const settings = useSettingsStore()
-const { palette, slotTints, containerBackground, backgrounds } = useTerminalAppearance()
+const { palette, slotTints, containerBackground, backgrounds, logo } = useTerminalAppearance()
 
 const ESC = '\x1b['
 const SAMPLE = [
-  `${ESC}1;38;2;217;119;87m✻${ESC}0m ${ESC}1mWelcome to Claude Code!${ESC}0m`,
-  '',
-  `${ESC}2m  /help for help, /status for your current setup${ESC}0m`,
+  // Claude Code's header with its crab, in its orange like in a real terminal.
+  `${ESC}38;2;215;119;87m ▐▛███▜▌${ESC}39m   ${ESC}1mClaude Code${ESC}0m`,
+  `${ESC}38;2;215;119;87m▝▜█████▛▘${ESC}39m  ${ESC}2mOpus · Claude Max${ESC}0m`,
+  `${ESC}38;2;215;119;87m  ▘▘ ▝▝${ESC}39m    ${ESC}2m~/projects/app${ESC}0m`,
   '',
   // Claude Code's own backgrounds, exchanged like in a real terminal: the bar behind the user's
   // message and the diff. `ESC[K` fills the rest of the row with the background.
@@ -32,23 +33,30 @@ const SAMPLE = [
   '',
   `${ESC}30m■${ESC}31m■${ESC}32m■${ESC}33m■${ESC}34m■${ESC}35m■${ESC}36m■${ESC}37m■ ${ESC}90m■${ESC}91m■${ESC}92m■${ESC}93m■${ESC}94m■${ESC}95m■${ESC}96m■${ESC}97m■${ESC}0m  äöü ß € → ✓ ⚡ 👨‍👩‍👧 🇩🇪`,
 ].join('\r\n')
+/** The preview is as tall as the sample at any font size, so no line slips out at the top. */
+const SAMPLE_ROWS = SAMPLE.split('\r\n').length
 
 let term: Terminal | null = null
 let observer: ResizeObserver | null = null
 let fitFrame = 0
 
-/** Writes the sample anew; needed when the exchanged backgrounds change. */
+/** Writes the sample anew; needed when the exchanged backgrounds (or the crab's color) change. */
 function writeSample() {
   if (!term) return
   term.reset()
-  term.write(createBackgroundFilter(() => backgrounds.value)(SAMPLE))
+  term.write(
+    createBackgroundFilter(
+      () => backgrounds.value,
+      () => logo.value,
+    )(SAMPLE),
+  )
 }
 
 function applyUnicode() {
   if (term) term.unicode.activeVersion = settings.settings.terminal.unicode === 'graphemes' ? '15-graphemes' : '11'
 }
 
-/** Places the columns like the real terminal, so the left and right padding look the same here. */
+/** Places the columns like the real terminal, so the left and right padding look the same here; the rows are the sample's. */
 function fit() {
   cancelAnimationFrame(fitFrame)
   fitFrame = requestAnimationFrame(() => {
@@ -60,7 +68,8 @@ function fit() {
     const { left, right } = settings.settings.terminal.padding
     const { cols, offset } = placeColumns(rect.width, cell.width, left, right)
     el.style.paddingLeft = `${offset}px`
-    const rows = Math.max(1, Math.floor(rect.height / cell.height))
+    el.style.height = `${SAMPLE_ROWS * cell.height}px`
+    const rows = SAMPLE_ROWS
     if (cols === term.cols && rows === term.rows) return
     renderService(term).clear()
     term.resize(cols, rows)
@@ -107,7 +116,7 @@ watch(
   },
 )
 
-watch(backgrounds, writeSample)
+watch([backgrounds, logo], writeSample)
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(fitFrame)

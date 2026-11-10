@@ -204,7 +204,7 @@ describe('SettingsService loading', () => {
     const settings = (
       await load({
         appearance: { material: 'glass', tabPosition: 'left' },
-        terminal: { cursorStyle: 'beam', renderer: 'canvas', unicode: 'unicode6', panelBackground: 'black', diffColors: 'neon' },
+        terminal: { cursorStyle: 'beam', renderer: 'canvas', unicode: 'unicode6', panelBackground: 'black', diffColors: 'neon', logoColor: 'pink' },
         general: { closeOnExit: 'sometimes' },
         notifications: { when: 'always' },
       })
@@ -216,6 +216,7 @@ describe('SettingsService loading', () => {
     expect(settings.terminal.unicode).toBe('graphemes')
     expect(settings.terminal.panelBackground).toBe('theme')
     expect(settings.terminal.diffColors).toBe('theme')
+    expect(settings.terminal.logoColor).toBe('theme')
     expect(settings.general.closeOnExit).toBe('graceful')
     expect(settings.notifications.when).toBe('background')
   })
@@ -224,7 +225,7 @@ describe('SettingsService loading', () => {
     const settings = (
       await load({
         appearance: { material: 'mica', tabPosition: 'groups' },
-        terminal: { cursorStyle: 'underline', renderer: 'dom', unicode: 'unicode11', panelBackground: 'original', diffColors: 'original' },
+        terminal: { cursorStyle: 'underline', renderer: 'dom', unicode: 'unicode11', panelBackground: 'original', diffColors: 'original', logoColor: 'original' },
         general: { closeOnExit: 'never' },
         notifications: { when: 'hidden' },
       })
@@ -236,6 +237,7 @@ describe('SettingsService loading', () => {
     expect(settings.terminal.unicode).toBe('unicode11')
     expect(settings.terminal.panelBackground).toBe('original')
     expect(settings.terminal.diffColors).toBe('original')
+    expect(settings.terminal.logoColor).toBe('original')
     expect(settings.general.closeOnExit).toBe('never')
     expect(settings.notifications.when).toBe('hidden')
   })

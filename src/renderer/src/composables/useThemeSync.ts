@@ -1,13 +1,14 @@
 import { computed, watchEffect } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { supportsMaterial } from '@/lib/platform'
+import { useThemesStore } from '@/stores/themes'
 import { applyTheme } from '@/themes/apply'
-import { findTheme } from '@/themes/themes'
 
 /** Applies the selected theme to the document and the native window chrome. */
 export function useThemeSync() {
   const store = useSettingsStore()
-  const theme = computed(() => findTheme(store.settings.appearance.themeId))
+  const themes = useThemesStore()
+  const theme = computed(() => themes.find(store.settings.appearance.themeId))
 
   watchEffect(() => {
     const appearance = store.settings.appearance
