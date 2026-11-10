@@ -206,6 +206,58 @@ export async function readSessionLimit(file: string, since: number, now = Date.n
   return null
 }
 
+/** How full a session's context is, as its transcript tells. */
+export interface ContextReading {
+  /** Tokens in the context: what the latest answer was sent and wrote; after a compaction its summary. */
+  tokens: number
+  /** The model of the latest answer; null when the end of the transcript has none. */
+  model: string | null
+}
+
+/** The context after the latest answer or compaction; null while the end of the transcript has neither. */
+export async function readContextUsage(file: string): Promise<ContextReading | null> {
+  return contextUsage(await readTail(file))
+}
+
+/**
+ * Claude Code counts the context like this: the input of the latest request (also from the cache)
+ * and its answer. A compaction (`compact_boundary`) leaves its summary until the next answer.
+ * Subagents (`isSidechain`) and answers Claude Code made up itself (`<synthetic>`) don't count.
+ */
+export function contextUsage(text: string): ContextReading | null {
+  const lines = text.split('\n')
+  let compacted: number | null = null
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]
+    const boundary = compacted === null && line.includes('"compact_boundary"')
+    if (!boundary && !line.includes('"assistant"')) continue
+    let entry: TranscriptEntry
+    try {
+      entry = JSON.parse(line) as TranscriptEntry
+    } catch {
+      continue
+    }
+    if (boundary && entry.type === 'system' && entry.subtype === 'compact_boundary') {
+      const after = entry.compactMetadata?.postTokens
+      compacted = typeof after === 'number' && after >= 0 ? after : 0
+      continue
+    }
+    if (entry.type !== 'assistant' || entry.isSidechain) continue
+    const model = typeof entry.message?.model === 'string' ? entry.message.model : null
+    if (!model || model === '<synthetic>') continue
+    if (compacted !== null) return { tokens: compacted, model }
+    const usage = entry.message?.usage
+    const count = (key: string) => {
+      const value = usage?.[key]
+      return typeof value === 'number' && value > 0 ? value : 0
+    }
+    const tokens =
+      count('input_tokens') + count('cache_creation_input_tokens') + count('cache_read_input_tokens') + count('output_tokens')
+    if (tokens > 0) return { tokens, model }
+  }
+  return compacted === null ? null : { tokens: compacted, model: null }
+}
+
 /** The end of a transcript, from the first complete line on. */
 async function readTail(file: string): Promise<string> {
   const handle = await open(file, 'r')
@@ -441,7 +493,8 @@ interface TranscriptEntry {
   error?: unknown
   timestamp?: unknown
   quotaLimits?: { resetsAt?: unknown; rateLimitType?: unknown }
-  message?: { content?: unknown }
+  compactMetadata?: { postTokens?: unknown }
+  message?: { content?: unknown; model?: unknown; usage?: Record<string, unknown> }
 }
 
 function toLimit(entry: TranscriptEntry, since: number, now: number): SessionLimit | null {

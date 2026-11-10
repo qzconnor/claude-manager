@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { claudePaths } from './claude-paths'
 import {
   assertNoNewerCopy,
+  contextUsage,
   copySession,
   findTranscript,
   isWorktreeOf,
@@ -727,5 +728,41 @@ describe('copySession', () => {
 
   it('passes when there is no copy yet', async () => {
     await expect(assertNoNewerCopy(to, SESSION, transcript, 'Work')).resolves.toBeUndefined()
+  })
+})
+
+describe('contextUsage', () => {
+  const answer = (model: string, usage: Record<string, number>, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ type: 'assistant', ...extra, message: { model, usage, content: [] } })
+  const usage = { input_tokens: 6, cache_creation_input_tokens: 2_000, cache_read_input_tokens: 130_000, output_tokens: 500 }
+
+  it('counts the input of the latest answer, from the cache too, and what it wrote', () => {
+    const text = [
+      answer('claude-opus-5-5', { input_tokens: 10, output_tokens: 10 }),
+      JSON.stringify({ type: 'user', message: { content: 'weiter' } }),
+      answer('claude-opus-5-5', usage),
+      // A subagent's and a made-up answer don't count.
+      answer('claude-haiku-5-5', { input_tokens: 900_000 }, { isSidechain: true }),
+      answer('<synthetic>', { input_tokens: 0 }),
+    ].join('\n')
+    expect(contextUsage(text)).toEqual({ tokens: 132_506, model: 'claude-opus-5-5' })
+  })
+
+  it('takes the summary after a compaction until the next answer', () => {
+    const boundary = JSON.stringify({
+      type: 'system',
+      subtype: 'compact_boundary',
+      compactMetadata: { trigger: 'auto', preTokens: 368_904, postTokens: 21_336 },
+    })
+    const before = answer('claude-opus-5-5', usage)
+    expect(contextUsage([before, boundary].join('\n'))).toEqual({ tokens: 21_336, model: 'claude-opus-5-5' })
+    expect(contextUsage(boundary)).toEqual({ tokens: 21_336, model: null })
+    const after = answer('claude-opus-5-5', { input_tokens: 3, cache_read_input_tokens: 25_000, output_tokens: 40 })
+    expect(contextUsage([before, boundary, after].join('\n'))).toEqual({ tokens: 25_043, model: 'claude-opus-5-5' })
+  })
+
+  it('has nothing before the first answer', () => {
+    expect(contextUsage(JSON.stringify({ type: 'user', message: { content: 'Hallo' } }))).toBeNull()
+    expect(contextUsage('')).toBeNull()
   })
 })

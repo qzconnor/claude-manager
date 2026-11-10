@@ -1,9 +1,11 @@
-import { existsSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { compareVersions } from '@shared/version'
 import type { ClaudeCli } from './claude-cli'
 import type { SettingsService } from './settings-service'
 import type { SessionArgsProvider } from './terminal-service'
+import type { WorkspacePrompt, WorkspaceService } from './workspace-service'
 
 /**
  * What every session the app starts learns about the app, appended to Claude Code's system prompt:
@@ -31,56 +33,106 @@ const APPEND_PROMPT_RE = /^--append-system-prompt(=|$)/
 const APPEND_PROMPT_FILE_RE = /^--append-system-prompt-file(=|$)/
 
 /**
- * The option that hands a session the prompt file, given the user's own arguments (`extra`) and the
- * version of Claude Code (`null` while unknown). Nothing when it would clash with them: a file of the
- * user's own wins anyway (of an option given twice, the last counts), and older versions don't take
- * the user's `--append-system-prompt` together with a file.
+ * Whether a session can get a prompt file, given the user's own arguments (`extra`) and the version of
+ * Claude Code (`null` while unknown). Not when it would clash with them: a file of the user's own wins
+ * anyway (of an option given twice, the last counts), and older versions don't take the user's
+ * `--append-system-prompt` together with a file.
  */
-export function appContextArgs(file: string, extra: readonly string[], version: string | null): string[] {
-  if (extra.some((arg) => APPEND_PROMPT_FILE_RE.test(arg))) return []
-  if (version && compareVersions(version, FILE_MIN_VERSION) < 0) return []
+export function promptFileAllowed(extra: readonly string[], version: string | null): boolean {
+  if (extra.some((arg) => APPEND_PROMPT_FILE_RE.test(arg))) return false
+  if (version && compareVersions(version, FILE_MIN_VERSION) < 0) return false
   const ownPrompt = extra.some((arg) => APPEND_PROMPT_RE.test(arg))
-  if (ownPrompt && (!version || compareVersions(version, COMBINED_MIN_VERSION) < 0)) return []
-  // `=` form: an option of the user's that takes several values would otherwise take the path as one more.
-  return [`--append-system-prompt-file=${file}`]
+  return !ownPrompt || (!!version && compareVersions(version, COMBINED_MIN_VERSION) >= 0)
 }
 
-/** Gives every session the app's context (see APP_CONTEXT_PROMPT) as a file in the app's data folder, unless the settings say no. */
-export class AppContextPrompt implements SessionArgsProvider {
-  private readonly file: string
-  private written = false
+/** The option that hands a session the prompt file; nothing when it isn't allowed (see `promptFileAllowed`). */
+export function appContextArgs(file: string, extra: readonly string[], version: string | null): string[] {
+  // `=` form: an option of the user's that takes several values would otherwise take the path as one more.
+  return promptFileAllowed(extra, version) ? [`--append-system-prompt-file=${file}`] : []
+}
+
+/** What a session learns from the workspaces it lies in, the outermost first. */
+export function workspacePromptText(prompts: readonly WorkspacePrompt[]): string {
+  return prompts
+    .map(
+      (p) =>
+        `The user set these instructions for every project in the workspace "${p.name}" (${p.path}). Follow them in this session:\n\n${p.text}\n`,
+    )
+    .join('\n')
+}
+
+/**
+ * Appends to the system prompt of every session the app starts (as one file: Claude Code takes only
+ * the last `--append-system-prompt-file`): the app's context (see APP_CONTEXT_PROMPT, unless the
+ * setting `appContext` says no) and the prompts of the workspaces the session's folder lies in.
+ */
+export class SessionPrompt implements SessionArgsProvider {
+  private readonly appFile: string
+  /** Files of the app's context together with workspace prompts, named after their content. */
+  private readonly combinedDir: string
+  private appWritten = false
+  private combinedCleared = false
 
   constructor(
     userDataDir: string,
     private readonly cli: ClaudeCli,
     private readonly settings: SettingsService,
+    private readonly workspaces: Pick<WorkspaceService, 'promptsFor'>,
   ) {
-    this.file = join(userDataDir, 'claude-context.md')
+    this.appFile = join(userDataDir, 'claude-context.md')
+    this.combinedDir = join(userDataDir, 'session-prompts')
   }
 
-  args(_terminalId: string, extra: readonly string[]): string[] {
-    if (!this.settings.get().claude.appContext) return []
-    const args = appContextArgs(this.file, extra, this.cli.knownVersion())
-    return args.length && this.ensureFile() ? args : []
+  args(_terminalId: string, extra: readonly string[], cwd?: string): string[] {
+    const appContext = this.settings.get().claude.appContext
+    const workspace = cwd ? workspacePromptText(this.workspaces.promptsFor(cwd)) : ''
+    if (!appContext && !workspace) return []
+    if (!promptFileAllowed(extra, this.cli.knownVersion())) return []
+    const file = workspace
+      ? this.combinedFile(appContext ? `${APP_CONTEXT_PROMPT}\n${workspace}` : workspace)
+      : this.ensureAppFile()
+    return file ? [`--append-system-prompt-file=${file}`] : []
   }
 
   release(): void {
-    // One file for all sessions; it stays.
+    // The files are shared by the sessions; they stay.
   }
 
   /**
    * Written with the first session of a run (an update may bring a new text) and again whenever it
    * has gone missing: without the file Claude Code would not start.
    */
-  private ensureFile(): boolean {
-    if (this.written && existsSync(this.file)) return true
+  private ensureAppFile(): string | null {
+    if (this.appWritten && existsSync(this.appFile)) return this.appFile
     try {
-      writeFileSync(this.file, APP_CONTEXT_PROMPT)
-      this.written = true
-      return true
+      writeFileSync(this.appFile, APP_CONTEXT_PROMPT)
+      this.appWritten = true
+      return this.appFile
     } catch (error) {
-      console.error('[app-context] prompt file could not be written', error)
-      return false
+      console.error('[session-prompt] prompt file could not be written', error)
+      return null
+    }
+  }
+
+  /**
+   * One file per text, shared by the sessions with the same one. The first one of a run clears out
+   * those of earlier runs: their sessions ended with the app.
+   */
+  private combinedFile(text: string): string | null {
+    const file = join(this.combinedDir, `${createHash('sha256').update(text).digest('hex').slice(0, 16)}.md`)
+    try {
+      if (!this.combinedCleared) {
+        rmSync(this.combinedDir, { recursive: true, force: true })
+        this.combinedCleared = true
+      }
+      if (!existsSync(file)) {
+        mkdirSync(this.combinedDir, { recursive: true })
+        writeFileSync(file, text)
+      }
+      return file
+    } catch (error) {
+      console.error('[session-prompt] prompt file could not be written', error)
+      return null
     }
   }
 }

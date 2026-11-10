@@ -3,6 +3,8 @@ import { onMounted, ref } from 'vue'
 import CommandPalette from '@/components/common/CommandPalette.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import DefaultFolderDialog from '@/components/common/DefaultFolderDialog.vue'
+import ProjectDialog from '@/components/common/ProjectDialog.vue'
+import WorkspaceDialog from '@/components/common/WorkspaceDialog.vue'
 import WorktreeDialog from '@/components/common/WorktreeDialog.vue'
 import AppShell from '@/components/layout/AppShell.vue'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
@@ -61,6 +63,8 @@ onMounted(async () => {
     <DefaultFolderDialog v-if="ready" />
     <CommandPalette v-if="ready" />
     <WorktreeDialog v-if="ready" />
+    <WorkspaceDialog v-if="ready" />
+    <ProjectDialog v-if="ready" />
     <Toaster :theme="theme.mode" position="bottom-right" close-button />
     <AppTooltip />
   </TooltipProvider>

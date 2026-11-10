@@ -15,6 +15,7 @@ import { computed, ref } from 'vue'
 import { toast } from 'vue-sonner'
 import type { SessionSearchHit, SessionSummary } from '@shared/types'
 import AccountChoiceItems from '@/components/common/AccountChoiceItems.vue'
+import AccountDot from '@/components/common/AccountDot.vue'
 import HighlightText from '@/components/common/HighlightText.vue'
 import {
   ContextMenu,
@@ -35,6 +36,7 @@ import { attempt } from '@/lib/errors'
 import { formatBytes, formatRelative } from '@/lib/format'
 import { sessionFolder } from '@/lib/session-tree'
 import { cn } from '@/lib/utils'
+import { useAccountsStore } from '@/stores/accounts'
 
 const props = defineProps<{
   session: SessionSummary
@@ -54,7 +56,10 @@ const emit = defineEmits<{
 }>()
 
 const launcher = useLauncher()
+const accounts = useAccountsStore()
 const accountSwitch = useAccountSwitch()
+/** A folder holds the sessions of all accounts: the dot before the title tells whose, as in the tabs. */
+const account = computed(() => accounts.get(props.session.accountId))
 const removal = useSessionRemoval()
 const menuOpen = ref(false)
 
@@ -128,6 +133,9 @@ async function copyId() {
           <div class="flex min-w-0 items-baseline gap-2">
             <!-- ItemTitle is a flex container, so the ellipsis needs its own text box. -->
             <ItemTitle class="min-w-0 flex-1">
+              <span v-tooltip="account?.name ?? session.accountId" class="flex shrink-0 items-center self-center">
+                <AccountDot :color="account?.color" />
+              </span>
               <span class="truncate"><HighlightText :text="session.title" :terms="terms ?? []" /></span>
             </ItemTitle>
             <span class="shrink-0 text-xs text-muted-foreground tabular-nums">

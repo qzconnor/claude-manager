@@ -7,6 +7,7 @@ import {
   ClockIcon,
   EyeIcon,
   EyeOffIcon,
+  FolderPlusIcon,
   HardDriveIcon,
   HistoryIcon,
   ListChecksIcon,
@@ -14,6 +15,7 @@ import {
   RefreshCwIcon,
   SearchIcon,
   Trash2Icon,
+  TriangleAlertIcon,
   UsersIcon,
   XIcon,
 } from '@lucide/vue'
@@ -25,7 +27,7 @@ import { searchTerms } from '@shared/utils'
 import AccountDot from '@/components/common/AccountDot.vue'
 import SessionDetailPanel from '@/components/sessions/SessionDetailPanel.vue'
 import SessionFilterChip, { type FilterOption } from '@/components/sessions/SessionFilterChip.vue'
-import SessionGroupSection from '@/components/sessions/SessionGroupSection.vue'
+import SessionRootSection from '@/components/sessions/SessionRootSection.vue'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -42,18 +44,32 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useClock } from '@/composables/useClock'
+import { useSectionDrag } from '@/composables/useSectionDrag'
 import { useSessionDetail, type SessionRef } from '@/composables/useSessionDetail'
 import { useSessionRemoval } from '@/composables/useSessionRemoval'
 import { sessionKey, useSessionSearch } from '@/composables/useSessionSearch'
 import { attempt } from '@/lib/errors'
 import { formatBytes } from '@/lib/format'
 import { containsTerms, searchText } from '@/lib/search'
-import { groupByProject, projectId, type SessionProject, type SessionSort } from '@/lib/session-tree'
+import {
+  buildSessionTree,
+  FOLDERS_SECTION_ID,
+  opensByDefault,
+  placeFolder,
+  placeSession,
+  type Placement,
+  type SessionProject,
+  type SessionRoot,
+  type SessionSort,
+  type TreeRoots,
+} from '@/lib/session-tree'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
 import { useAppStore } from '@/stores/app'
 import { useSessionsStore } from '@/stores/sessions'
+import { useSettingsStore } from '@/stores/settings'
 import { useUiStore } from '@/stores/ui'
+import { useWorkspacesStore } from '@/stores/workspaces'
 
 /**
  * The buttons beside the search: as high as the field and in whole pixels (32px around a 16px icon,
@@ -64,7 +80,9 @@ const TOOL_BUTTON_PRESSED =
   'bg-primary/10 ring-primary/40 hover:bg-primary/15 dark:bg-primary/10 dark:ring-primary/30 dark:hover:bg-primary/15'
 
 const sessions = useSessionsStore()
+const workspaces = useWorkspacesStore()
 const accounts = useAccountsStore()
+const settings = useSettingsStore()
 const app = useAppStore()
 const ui = useUiStore()
 const removal = useSessionRemoval()
@@ -189,40 +207,76 @@ function matches(session: SessionSummary): boolean {
   return containsTerms(text, terms.value)
 }
 
-/** Account › folder › sessions, the standard account included. */
-const allGroups = computed(() => {
-  const order = new Map(accountOrder.value.map((a, i) => [a.id, i]))
-  const home = app.info?.homeDir
-  return sessions.groups
-    .filter((g) => accountFilter.value === 'all' || g.accountId === accountFilter.value)
-    .map((g) => {
-      const matching = g.sessions.filter(matches)
-      return {
-        accountId: g.accountId,
-        error: g.error,
-        count: matching.length,
-        projects: groupByProject(g.accountId, matching, sort.value, home),
-      }
-    })
-    .filter((g) => !filtering.value || g.count > 0)
-    .sort((a, b) => (order.get(a.accountId) ?? 99) - (order.get(b.accountId) ?? 99))
-})
-
-/** The standard account while it is hidden, with its matching sessions; null while shown or without matches. */
-const hiddenStandard = computed(() => {
-  if (!standardHidden.value) return null
-  const group = allGroups.value.find((g) => g.accountId === SYSTEM_ACCOUNT_ID)
-  return group && group.count > 0 ? group : null
-})
-const tree = computed(() =>
-  standardHidden.value ? allGroups.value.filter((g) => g.accountId !== SYSTEM_ACCOUNT_ID) : allGroups.value,
+/** The accounts the account filter lets through. */
+const filteredGroups = computed(() =>
+  sessions.groups.filter((g) => accountFilter.value === 'all' || g.accountId === accountFilter.value),
 )
 
-const projects = computed(() => tree.value.flatMap((g) => g.projects))
+/** The matching sessions of all accounts the list shows: a folder holds them together, whoever ran them. */
+const visibleSessions = computed(() =>
+  filteredGroups.value
+    .filter((g) => !(standardHidden.value && g.accountId === SYSTEM_ACCOUNT_ID))
+    .flatMap((g) => g.sessions.filter(matches)),
+)
+
+/** Matching sessions of the standard account while it is hidden. */
+const hiddenStandardCount = computed(() => {
+  if (!standardHidden.value) return 0
+  return filteredGroups.value.find((g) => g.accountId === SYSTEM_ACCOUNT_ID)?.sessions.filter(matches).length ?? 0
+})
+
+/** Accounts whose sessions couldn't be read. */
+const accountErrors = computed(() =>
+  filteredGroups.value
+    .filter((g) => g.error)
+    .map((g) => ({ accountId: g.accountId, name: accounts.get(g.accountId)?.name ?? g.accountId, error: g.error })),
+)
+
+/** Where new sessions start without a folder chosen: the list keeps them apart from the projects. */
+const startFolders = computed(() =>
+  [settings.settings.claude.defaultCwd, app.info?.fallbackCwd, ...accounts.accounts.map((a) => a.defaultCwd)].filter(
+    (path): path is string => !!path?.trim(),
+  ),
+)
+const roots = computed<TreeRoots>(() => ({
+  workspaces: workspaces.workspaces.map((w) => ({ path: w.path, projects: w.projects })),
+  startFolders: startFolders.value,
+}))
+const workspaceByPath = computed(() => new Map(workspaces.workspaces.map((w) => [w.path, w])))
+
+/** Workspaces › projects › sessions, the folders in no workspace and the start folders. */
+const tree = computed(() =>
+  // While searching or filtering, folders without matches go; otherwise every project shows, to start sessions there.
+  buildSessionTree(visibleSessions.value, roots.value, { sort: sort.value, home: app.info?.homeDir, showEmpty: !filtering.value }),
+)
+
+/** A section of the list: a workspace, the other folders (`root` null) or a start folder. */
+interface Section {
+  id: string
+  root: SessionRoot | null
+  projects: SessionProject[]
+  /** Sessions in the root's own folder. */
+  sessions: SessionSummary[]
+  count: number
+}
+
+const sections = computed<Section[]>(() => {
+  const { workspaces: ws, folders, starts } = tree.value
+  const ofRoot = (root: SessionRoot): Section => ({ id: root.id, root, projects: root.projects, sessions: root.sessions, count: root.count })
+  const rest: Section[] = folders.length
+    ? [{ id: FOLDERS_SECTION_ID, root: null, projects: folders, sessions: [], count: folders.reduce((n, p) => n + p.sessions.length, 0) }]
+    : []
+  // The start folders first (closed, out of the way), the workspaces in the order the user dragged them into.
+  return [...starts.map(ofRoot), ...ws.map(ofRoot), ...rest]
+})
+const workspaceSections = computed(() => sections.value.filter((s) => s.root?.kind === 'workspace'))
+
+const projects = computed(() => sections.value.flatMap((s) => s.projects))
 /** The sessions in the list, in its order. */
-const shown = computed(() => projects.value.flatMap((p) => p.sessions))
+const shown = computed(() => sections.value.flatMap((s) => [...s.projects.flatMap((p) => p.sessions), ...s.sessions]))
 const total = computed(() => shown.value.length)
 const totalBytes = computed(() => shown.value.reduce((sum, s) => sum + s.sizeBytes, 0))
+const folderCount = computed(() => projects.value.filter((p) => p.sessions.length > 0).length)
 
 const emptyMessage = computed(() => {
   const filtered = age.value !== null || size.value !== null
@@ -230,7 +284,7 @@ const emptyMessage = computed(() => {
   return filtered ? 'Keine Session passt zu den Filtern.' : null
 })
 
-// --- opening and closing accounts and folders --------------------------------
+// --- opening and closing sections and folders --------------------------------
 function toggled(set: Set<string>, key: string, on: boolean): Set<string> {
   const next = new Set(set)
   if (on) next.add(key)
@@ -238,62 +292,65 @@ function toggled(set: Set<string>, key: string, on: boolean): Set<string> {
   return next
 }
 
-const closedAccounts = ref(new Set<string>())
-/** Folders start closed, for an overview; these were opened. */
-const openedProjects = ref(new Set<string>())
-/** While searching or filtering every folder with matches is open, except those closed meanwhile. */
+/**
+ * Sections and folders whose state differs from how they start (see `opensByDefault`): workspaces and
+ * the other folders open, start folders and folders closed, for an overview.
+ */
+const flipped = ref(new Set<string>())
+/** While searching or filtering every section and folder with matches is open, except those closed meanwhile. */
 const closedWhileFiltering = ref(new Set<string>())
 watch([query, ageFilter, sizeFilter], () => {
   closedWhileFiltering.value = new Set()
 })
 
-const openProjects = computed(
-  () =>
-    new Set(
-      projects.value
-        .filter((p) => (filtering.value ? !closedWhileFiltering.value.has(p.id) : openedProjects.value.has(p.id)))
-        .map((p) => p.id),
-    ),
-)
-
-function setAccountOpen(accountId: string, open: boolean) {
-  closedAccounts.value = toggled(closedAccounts.value, accountId, !open)
+function isOpen(id: string): boolean {
+  return filtering.value ? !closedWhileFiltering.value.has(id) : opensByDefault(id) !== flipped.value.has(id)
 }
 
-function setProjectOpen(project: SessionProject, open: boolean) {
-  if (filtering.value) closedWhileFiltering.value = toggled(closedWhileFiltering.value, project.id, !open)
+/** Sets how a section or folder stays once the search is cleared, without the rest of `setOpen`. */
+function keepOpen(id: string, open: boolean) {
+  flipped.value = toggled(flipped.value, id, open !== opensByDefault(id))
+}
+
+function setOpen(id: string, open: boolean) {
+  if (filtering.value) closedWhileFiltering.value = toggled(closedWhileFiltering.value, id, !open)
   // Opened while searching, it stays open once the search is cleared.
-  openedProjects.value = toggled(openedProjects.value, project.id, open)
+  keepOpen(id, open)
 }
 
-/** The folders of the accounts that are open. */
+const openProjects = computed(() => new Set(projects.value.filter((p) => isOpen(p.id)).map((p) => p.id)))
+
+/** The folders with sessions in the open sections. */
 const reachableProjects = computed(() =>
-  tree.value.filter((g) => !closedAccounts.value.has(g.accountId)).flatMap((g) => g.projects),
+  sections.value.filter((s) => isOpen(s.id)).flatMap((s) => s.projects.filter((p) => p.sessions.length > 0)),
 )
 const allOpen = computed(
   () => reachableProjects.value.length > 0 && reachableProjects.value.every((p) => openProjects.value.has(p.id)),
 )
 
 function toggleAll() {
-  const ids = projects.value.map((p) => p.id)
+  const ids = projects.value.filter((p) => p.sessions.length > 0).map((p) => p.id)
   if (allOpen.value) {
-    openedProjects.value = new Set()
-    closedWhileFiltering.value = new Set(ids)
+    for (const id of ids) keepOpen(id, false)
+    closedWhileFiltering.value = new Set([...closedWhileFiltering.value, ...ids])
   } else {
-    closedAccounts.value = new Set()
-    openedProjects.value = new Set([...openedProjects.value, ...ids])
+    for (const id of [...sections.value.map((s) => s.id), ...ids]) keepOpen(id, true)
     closedWhileFiltering.value = new Set()
   }
 }
 
-/** Opens the account and the folder of a session. */
+/** Opens the section and the folder of a place in the list. */
+function revealPlace(place: Placement) {
+  keepOpen(place.rootId ?? FOLDERS_SECTION_ID, true)
+  if (place.projectId) keepOpen(place.projectId, true)
+}
+
+/** Opens the section and the folder of a session. */
 function reveal(target: SessionRef) {
   const session = sessions.groups
     .find((g) => g.accountId === target.accountId)
     ?.sessions.find((s) => s.id === target.sessionId)
-  if (!session) return
-  closedAccounts.value = toggled(closedAccounts.value, session.accountId, false)
-  openedProjects.value = toggled(openedProjects.value, projectId(session.accountId, session), true)
+  if (session) revealPlace(placeSession(session, roots.value))
 }
 
 // --- selecting several sessions, e.g. to delete the old ones ----------------
@@ -312,7 +369,9 @@ const allState = computed(() => {
 
 /** The sessions one can see, top to bottom: a Shift+click range leaves out closed folders. */
 const visibleOrder = computed(() =>
-  reachableProjects.value.filter((p) => openProjects.value.has(p.id)).flatMap((p) => p.sessions),
+  sections.value
+    .filter((s) => isOpen(s.id))
+    .flatMap((s) => [...s.projects.filter((p) => openProjects.value.has(p.id)).flatMap((p) => p.sessions), ...s.sessions]),
 )
 
 function startSelecting() {
@@ -377,16 +436,42 @@ function onKeydown(event: KeyboardEvent) {
 function select(session: SessionSummary) {
   selected.value = { accountId: session.accountId, sessionId: session.id }
   // Its folder stays open after a search.
-  openedProjects.value = toggled(openedProjects.value, projectId(session.accountId, session), true)
+  revealPlace(placeSession(session, roots.value))
 }
 
 const list = ref<HTMLElement | null>(null)
+
+// Workspaces are dragged by their header; the order is saved (`workspaces.json`).
+useSectionDrag(list, { onDrop: moveWorkspace })
+
+/** Puts the workspace before another one (null: last) and saves the order. */
+function moveWorkspace(path: string, before: string | null) {
+  const order = workspaces.workspaces.map((w) => w.path).filter((p) => p !== path)
+  const at = before === null ? -1 : order.indexOf(before)
+  order.splice(at === -1 ? order.length : at, 0, path)
+  void attempt(() => workspaces.reorder(order), 'Reihenfolge konnte nicht gespeichert werden')
+}
+
+/** Up or down past the next workspace shown (while searching, others may be left out). */
+function moveSection(section: Section, offset: -1 | 1) {
+  const shownWorkspaces = workspaceSections.value
+  const index = shownWorkspaces.indexOf(section)
+  const path = section.root?.path
+  if (index === -1 || !path || !shownWorkspaces[index + offset]) return
+  const before = offset < 0 ? shownWorkspaces[index - 1]?.root?.path : shownWorkspaces[index + 2]?.root?.path
+  moveWorkspace(path, before ?? null)
+}
 
 /** A folder shown from elsewhere stands out for a moment. */
 const highlightedProject = ref<string | null>(null)
 let highlightTimer: ReturnType<typeof setTimeout> | undefined
 
-// A folder in the dashboard: open it with its account and scroll to it, without search or filters.
+/** Reads what the list needs once: the sessions and the workspaces. */
+function loadOnce(): Promise<unknown> {
+  return Promise.all([sessions.loaded ? null : sessions.load(), workspaces.loaded ? null : workspaces.load()])
+}
+
+// A folder in the dashboard, or a new workspace: open it and scroll to it, without search or filters.
 watch(
   () => ui.folderToShow,
   (target) => {
@@ -396,14 +481,16 @@ watch(
     resetFilters()
     stopSelecting()
     if (target.accountId === SYSTEM_ACCOUNT_ID) showStandard.value = true
-    const id = projectId(target.accountId, { cwd: target.path, worktree: null, projectKey: target.projectKey })
-    closedAccounts.value = toggled(closedAccounts.value, target.accountId, false)
-    openedProjects.value = toggled(openedProjects.value, id, true)
-    highlightedProject.value = id
-    clearTimeout(highlightTimer)
-    highlightTimer = setTimeout(() => (highlightedProject.value = null), 2000)
-    void (sessions.loaded ? Promise.resolve() : sessions.load()).then(
-      () => nextTick(() => list.value?.querySelector(`[data-project-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'start' })),
+    void loadOnce().then(
+      () => {
+        const place = placeFolder(target.path, target.projectKey ?? '', roots.value)
+        revealPlace(place)
+        const id = place.projectId ?? place.rootId ?? FOLDERS_SECTION_ID
+        highlightedProject.value = id
+        clearTimeout(highlightTimer)
+        highlightTimer = setTimeout(() => (highlightedProject.value = null), 2000)
+        return nextTick(() => list.value?.querySelector(`[data-project-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'start' }))
+      },
       () => undefined,
     )
   },
@@ -423,7 +510,7 @@ watch(
     const session = { accountId: target.accountId, sessionId: target.sessionId }
     selected.value = session
     // Its folder stays open once the search is cleared.
-    void (sessions.loaded ? Promise.resolve() : sessions.load()).then(
+    void loadOnce().then(
       () => reveal(session),
       () => undefined,
     )
@@ -435,10 +522,10 @@ watch(
   { immediate: true },
 )
 
-const load = () => attempt(() => sessions.load(), 'Sessions konnten nicht geladen werden')
+const load = () => attempt(() => Promise.all([sessions.load(), workspaces.load()]), 'Sessions konnten nicht geladen werden')
 onMounted(load)
 onActivated(() => {
-  if (!sessions.loaded) void load()
+  if (!sessions.loaded || !workspaces.loaded) void load()
 })
 </script>
 
@@ -476,6 +563,14 @@ onActivated(() => {
               </Button>
             </TooltipTrigger>
             <TooltipContent>{{ selecting ? 'Auswahl beenden' : 'Mehrere auswählen (Umschalt+Klick für Bereiche)' }}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button variant="outline" aria-label="Neuer Workspace" :class="TOOL_BUTTON" @click="ui.workspaceRequest = { mode: 'create' }">
+                <FolderPlusIcon class="size-[16px]" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Neuer Workspace</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger as-child>
@@ -522,7 +617,7 @@ onActivated(() => {
 
         <div class="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
           <span class="min-w-0 flex-1 truncate tabular-nums">
-            {{ total }} {{ total === 1 ? 'Session' : 'Sessions' }} · {{ projects.length }} Ordner · {{ formatBytes(totalBytes) }}
+            {{ total }} {{ total === 1 ? 'Session' : 'Sessions' }} · {{ folderCount }} Ordner · {{ formatBytes(totalBytes) }}
           </span>
           <DropdownMenu>
             <DropdownMenuTrigger as-child>
@@ -559,19 +654,29 @@ onActivated(() => {
         </div>
       </div>
 
-      <div ref="list" class="min-h-0 flex-1 overflow-y-auto p-2">
+      <!-- Room for the scrollbar is kept, so the rows don't move when it comes; the padding evens out its width. -->
+      <div ref="list" class="min-h-0 flex-1 overflow-y-auto py-2 pr-0.5 pl-2.5 [scrollbar-gutter:stable]">
         <div v-if="!sessions.loaded" class="flex flex-col gap-3 p-2">
           <Skeleton v-for="i in 8" :key="i" class="h-8 w-full" />
         </div>
         <div v-else class="flex flex-col gap-3">
-          <SessionGroupSection
-            v-for="group in tree"
-            :key="group.accountId"
-            :account-id="group.accountId"
-            :projects="group.projects"
-            :count="group.count"
-            :error="group.error"
-            :open="!closedAccounts.has(group.accountId)"
+          <p
+            v-for="failure in accountErrors"
+            :key="failure.accountId"
+            class="flex items-center gap-2 px-3 py-1 text-xs text-destructive"
+          >
+            <TriangleAlertIcon class="size-3.5 shrink-0" />
+            <span class="min-w-0">{{ failure.name }}: {{ failure.error }}</span>
+          </p>
+          <SessionRootSection
+            v-for="section in sections"
+            :key="section.id"
+            :root="section.root"
+            :workspace="section.root ? workspaceByPath.get(section.root.path) : null"
+            :title="tree.workspaces.length ? 'Weitere Ordner' : 'Ordner'"
+            :projects="section.projects"
+            :count="section.count"
+            :open="isOpen(section.id)"
             :open-projects="openProjects"
             :selected="selected"
             :now="now"
@@ -580,8 +685,12 @@ onActivated(() => {
             :selecting="selecting"
             :checked="checked"
             :highlighted="highlightedProject"
-            @update:open="setAccountOpen(group.accountId, $event)"
-            @open-project="setProjectOpen"
+            :sortable="section.root?.kind === 'workspace' && workspaceSections.length > 1"
+            :can-move-up="section.root?.kind === 'workspace' && workspaceSections.indexOf(section) > 0"
+            :can-move-down="section.root?.kind === 'workspace' && workspaceSections.indexOf(section) < workspaceSections.length - 1"
+            @update:open="setOpen(section.id, $event)"
+            @move="moveSection(section, $event)"
+            @open-project="(project, open) => setOpen(project.id, open)"
             @select="select"
             @toggle="toggle"
             @check="checkProject"
@@ -589,21 +698,24 @@ onActivated(() => {
           <p v-if="emptyMessage && total === 0" class="px-3 py-6 text-center text-sm text-muted-foreground">
             {{ emptyMessage }}
           </p>
+          <p v-else-if="sections.length === 0" class="px-3 py-6 text-center text-sm text-muted-foreground">
+            Noch keine Sessions.
+          </p>
           <div
-            v-if="hiddenStandard || (severalAccounts && showStandard && accountFilter === 'all')"
+            v-if="hiddenStandardCount > 0 || (severalAccounts && showStandard && accountFilter === 'all')"
             class="flex items-center gap-2 rounded-lg bg-muted/40 py-1 pr-1 pl-3 text-xs text-muted-foreground"
           >
-            <EyeOffIcon v-if="hiddenStandard" class="size-3.5 shrink-0" />
+            <EyeOffIcon v-if="hiddenStandardCount > 0" class="size-3.5 shrink-0" />
             <EyeIcon v-else class="size-3.5 shrink-0" />
             <span class="min-w-0 flex-1 truncate tabular-nums">
-              <template v-if="hiddenStandard">
+              <template v-if="hiddenStandardCount > 0">
                 „{{ standardName }}“ ausgeblendet ·
-                {{ hiddenStandard.count }} {{ filtering ? 'Treffer' : hiddenStandard.count === 1 ? 'Session' : 'Sessions' }}
+                {{ hiddenStandardCount }} {{ filtering ? 'Treffer' : hiddenStandardCount === 1 ? 'Session' : 'Sessions' }}
               </template>
               <template v-else>„{{ standardName }}“ wird angezeigt</template>
             </span>
-            <Button variant="ghost" size="xs" @click="showStandard = !!hiddenStandard">
-              {{ hiddenStandard ? 'Anzeigen' : 'Ausblenden' }}
+            <Button variant="ghost" size="xs" @click="showStandard = hiddenStandardCount > 0">
+              {{ hiddenStandardCount > 0 ? 'Anzeigen' : 'Ausblenden' }}
             </Button>
           </div>
         </div>

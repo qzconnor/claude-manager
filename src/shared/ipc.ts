@@ -41,6 +41,8 @@ import type {
   SessionSearchHit,
   SettingsImportResult,
   TerminalCreateOptions,
+  Workspace,
+  WorkspaceCreateInput,
   TerminalInfo,
   TranscriptToolDetail,
   ReleaseNote,
@@ -119,6 +121,15 @@ export const IpcInvoke = {
   sessionsSearch: 'sessions:search',
   sessionsContinueWith: 'sessions:continue-with',
   sessionsRemove: 'sessions:remove',
+
+  workspacesList: 'workspaces:list',
+  workspacesCreate: 'workspaces:create',
+  workspacesAdopt: 'workspaces:adopt',
+  workspacesRemove: 'workspaces:remove',
+  workspacesReorder: 'workspaces:reorder',
+  workspacesCreateProject: 'workspaces:create-project',
+  workspacesReadPrompt: 'workspaces:read-prompt',
+  workspacesWritePrompt: 'workspaces:write-prompt',
 
   usageGet: 'usage:get',
   usageRefresh: 'usage:refresh',
@@ -215,6 +226,8 @@ export const IpcEvent = {
   filesChanged: 'event:files-changed',
   filesTouched: 'event:files-touched',
   sessionsChanged: 'event:sessions-changed',
+  /** Workspaces came or went, or the folders in one of them changed. */
+  workspacesChanged: 'event:workspaces-changed',
   apiStatusChanged: 'event:api-status-changed',
   updatesChanged: 'event:updates-changed',
   /** The update notification was clicked. */
@@ -408,6 +421,25 @@ export interface ManagerApi {
      */
     remove(sessions: SessionRef[]): Promise<SessionRemoveResult>
     onChanged(cb: (accountId: string) => void): Unsubscribe
+  }
+  /** Folders whose projects (subfolders) share a system prompt, `cm_prompts.md` in the folder. */
+  workspaces: {
+    list(): Promise<Workspace[]>
+    /** Makes the folder `parent\name` with a `cm_prompts.md` holding `prompt`. */
+    create(input: WorkspaceCreateInput): Promise<Workspace>
+    /** Makes an existing folder a workspace; `prompt` null keeps the text of a `cm_prompts.md` that is there. */
+    adopt(path: string, prompt: string | null): Promise<Workspace>
+    /** Takes the folder off the list of workspaces; the folder stays as it is. */
+    remove(path: string): Promise<void>
+    /** Puts the workspaces in this order, as the session list shows them; ones left out go after them. */
+    reorder(paths: string[]): Promise<void>
+    /** Makes the folder `name` in the workspace, a new project; resolves to its path. */
+    createProject(workspace: string, name: string): Promise<string>
+    /** The text of `cm_prompts.md` in the folder (also of one that isn't a workspace yet), empty without one. */
+    readPrompt(path: string): Promise<string>
+    /** Counts for the sessions that start from now on. */
+    writePrompt(path: string, text: string): Promise<void>
+    onChanged(cb: () => void): Unsubscribe
   }
   notifications: {
     /** Shows an example notification with the current settings. */

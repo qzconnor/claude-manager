@@ -8,6 +8,7 @@ import UsageRing from '@/components/common/UsageRing.vue'
 import UsageMeter from '@/components/dashboard/UsageMeter.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ButtonGroup } from '@/components/ui/button-group'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
@@ -20,10 +21,12 @@ import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUsageStore } from '@/stores/usage'
+import TitleBarContext from './TitleBarContext.vue'
 
 /**
- * Plan limits of the account behind the active terminal (beside a browser: its tab's terminal), shown in the title bar.
- * Hidden when no terminal is open or the account has no limit data (tokens, API keys).
+ * Plan limits of the account behind the active terminal (beside a browser: its tab's terminal), shown in the title bar,
+ * after how full the context of its session is. The limits are hidden when the account has none (tokens, API keys),
+ * the context when the tab runs no Claude Code session.
  */
 const router = useRouter()
 const accounts = useAccountsStore()
@@ -35,6 +38,10 @@ const open = ref(false)
 const account = computed(() => {
   const terminal = terminals.workingTerminal
   return terminal ? accounts.get(terminal.authAccountId) : undefined
+})
+const session = computed(() => {
+  const terminal = terminals.workingTerminal
+  return terminal?.mode === 'session' && terminal.status === 'running' && terminal.context ? terminal : null
 })
 const usage = computed(() => (account.value ? usageStore.byAccount.get(account.value.id) : undefined))
 const summary = computed(() => {
@@ -62,6 +69,7 @@ const extra = computed(() => (usage.value?.extra?.enabled ? usage.value.extra : 
 const currency = computed(
   () => new Intl.NumberFormat('de', { style: 'currency', currency: extra.value?.currency || 'USD', maximumFractionDigits: 2 }),
 )
+const limits = computed(() => Boolean(account.value && usage.value && summary.value.length))
 const problem = computed(() => (usage.value && usage.value.status !== 'ok' ? usage.value.message : null))
 
 function refresh() {
@@ -82,9 +90,10 @@ function openDashboard() {
     enter-active-class="transition-opacity duration-200"
     leave-active-class="transition-opacity duration-150"
   >
-    <!-- Wrapper element: Transition needs one root, the popover renders trigger + portal. -->
-    <div v-if="account && usage && summary.length" class="app-no-drag flex shrink-0">
-      <Popover v-model:open="open">
+    <!-- Wrapper element: Transition needs one root, the popovers render trigger + portal. -->
+    <ButtonGroup v-if="session || limits" class="app-no-drag shrink-0">
+      <TitleBarContext v-if="session?.context" :context="session.context" :compacting="session.compacting" />
+      <Popover v-if="limits && account && usage" v-model:open="open">
         <PopoverTrigger as-child>
           <Button
             variant="outline"
@@ -162,6 +171,6 @@ function openDashboard() {
           </div>
         </PopoverContent>
       </Popover>
-    </div>
+    </ButtonGroup>
   </Transition>
 </template>

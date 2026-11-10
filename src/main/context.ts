@@ -14,6 +14,8 @@ import type { SettingsService } from './services/settings-service'
 import type { TerminalService } from './services/terminal-service'
 import type { UpdateService } from './services/update-service'
 import type { UsageService } from './services/usage-service'
+import type { WorkspaceService } from './services/workspace-service'
+import type { WorkspaceTrust } from './services/workspace-trust'
 import type { AppInfo } from '@shared/types'
 
 /** All services of the app — shared by the IPC layer and the local HTTP API. */
@@ -43,5 +45,9 @@ export interface AppContext {
   command: CommandIntegration
   /** App updates from the GitHub releases. */
   updates: UpdateService
+  /** Folders whose projects share a system prompt (`cm_prompts.md`). */
+  workspaces: WorkspaceService
+  /** Claude Code's trust in folders, asked in the app before a session starts. */
+  trust: WorkspaceTrust
   appInfo(): Promise<AppInfo>
 }

@@ -81,6 +81,10 @@ const MAX_CREDENTIAL_LENGTH = 4096
 /** The most file trees watched at once, and open folders per tree. */
 const MAX_FILE_TREES = 64
 const MAX_TREE_DIRS = 2000
+/** A workspace prompt goes with every request of its sessions; this is far more than makes sense. */
+const MAX_PROMPT_LENGTH = 100_000
+/** More workspaces than anyone keeps; a longer list to reorder is no list of them. */
+const MAX_WORKSPACES = 10_000
 /** Longer paths exist on no file system the app runs on. */
 const MAX_PATH_LENGTH = 32_767
 
@@ -89,6 +93,13 @@ function requirePath(value: unknown, name: string): string {
   const path = requireString(value, name)
   if (path.length > MAX_PATH_LENGTH || !isAbsolute(path) || path.includes('\0')) throw new Error(`Ungültiger Parameter: ${name}`)
   return path
+}
+
+/** The text of a workspace prompt; null for none (not a string). */
+function promptOf(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  if (value.length > MAX_PROMPT_LENGTH) throw new Error('Der Prompt ist zu lang.')
+  return value
 }
 
 /** A folder of a tree relative to its root: `/`-separated, without `..` and empty parts. */
@@ -369,6 +380,32 @@ export function registerIpc(ctx: AppContext): void {
     return ctx.sessions.remove(refs)
   })
   ctx.sessions.on('changed', (accountId) => broadcast(IpcEvent.sessionsChanged, accountId))
+
+  // --- workspaces ----------------------------------------------------------
+  ipcMain.handle(IpcInvoke.workspacesList, () => ctx.workspaces.list())
+  ipcMain.handle(IpcInvoke.workspacesCreate, (_e, input: unknown) => {
+    const { parent, name, prompt } = (input ?? {}) as Record<string, unknown>
+    return ctx.workspaces.create({ parent: requirePath(parent, 'parent'), name: requireString(name, 'name'), prompt: promptOf(prompt) ?? '' })
+  })
+  ipcMain.handle(IpcInvoke.workspacesAdopt, (_e, path: unknown, prompt: unknown) =>
+    ctx.workspaces.adopt(requirePath(path, 'path'), promptOf(prompt)),
+  )
+  ipcMain.handle(IpcInvoke.workspacesRemove, (_e, path: unknown) => ctx.workspaces.remove(requirePath(path, 'path')))
+  ipcMain.handle(IpcInvoke.workspacesReorder, (_e, paths: unknown) => {
+    if (!Array.isArray(paths) || paths.length > MAX_WORKSPACES) throw new Error('Ungültiger Parameter: paths')
+    return ctx.workspaces.reorder(paths.map((path) => requirePath(path, 'paths')))
+  })
+  ipcMain.handle(IpcInvoke.workspacesCreateProject, async (_e, workspace: unknown, name: unknown) => {
+    const path = await ctx.workspaces.createProject(requirePath(workspace, 'workspace'), requireString(name, 'name'))
+    // The user made the folder in the app: Claude Code may work in it without asking.
+    await ctx.trust.grant(path)
+    return path
+  })
+  ipcMain.handle(IpcInvoke.workspacesReadPrompt, (_e, path: unknown) => ctx.workspaces.readPrompt(requirePath(path, 'path')))
+  ipcMain.handle(IpcInvoke.workspacesWritePrompt, (_e, path: unknown, text: unknown) =>
+    ctx.workspaces.writePrompt(requirePath(path, 'path'), promptOf(text) ?? ''),
+  )
+  ctx.workspaces.on('changed', () => broadcast(IpcEvent.workspacesChanged))
 
   // --- usage ---------------------------------------------------------------
   ipcMain.handle(IpcInvoke.usageGet, () => ctx.usage.getAll())

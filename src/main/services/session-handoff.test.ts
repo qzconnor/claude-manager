@@ -66,6 +66,7 @@ function tab(overrides: Partial<TerminalInfo>): TerminalInfo {
     authAccountId: 'own',
     sessionId: S,
     limit: null,
+    context: null,
     busy: false,
     attention: null,
     muted: false,

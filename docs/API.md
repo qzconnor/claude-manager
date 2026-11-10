@@ -82,6 +82,12 @@ Mit `hooks: true` meldet Claude Code seinen Zustand über Hooks an die App (Eins
 
 Ohne Hooks liest die App den Zustand aus Fenstertitel und Transcript. `activity` bleibt dann `null`, `subagents` `0` und `compacting` `false`.
 
+`context` sagt, wie voll der Kontext einer Session ist, ab ihrem Start (bei Shells, Anmeldungen und Browser-Tabs `null`):
+- `tokens`: Tokens im Kontext nach der letzten Antwort, nach einem Compact die Zusammenfassung; `null` vor der ersten Antwort.
+- `compactAt`: ab hier fasst Claude Code den Verlauf von selbst zusammen, `null`, wenn Auto-Compact aus ist.
+- `window`: das Auto-Compact-Fenster, per `/autocompact` gesetzt (`configured: true`), sonst das Kontextfenster des Modells. `compactAt` liegt 33k darunter, als Platz für Antwort und Zusammenfassung.
+- `model`: z. B. `claude-opus-5-5`, vor der ersten Antwort das in Claude Code gewählte Modell.
+
 Browser-Tabs der App stehen mit in der Liste, mit `mode: "browser"` und der angezeigten Adresse in `url` (bei Terminals `null`). Sie haben keinen Prozess, keinen Account und keinen Ordner: Eingaben, Ausgabe und `kill` bewirken bei ihnen nichts, umbenennen, aktivieren und schließen geht wie bei Terminals. Geöffnet werden sie in der App.
 
 ### Ausgabe lesen
