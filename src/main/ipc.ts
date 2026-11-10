@@ -5,6 +5,8 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell, typ
 import { inFolder } from '@shared/folders'
 import { IpcEvent, IpcInvoke, IpcSend } from '@shared/ipc'
 import { parsePaneNode } from '@shared/panes'
+import { parseThemeFile } from '@shared/themes/file'
+import type { ThemeContent } from '@shared/themes/types'
 import type {
   AccountCreateInput,
   AccountUpdateInput,
@@ -36,6 +38,9 @@ const MAX_REMOVE = 10_000
 const MAX_FAVICON_URL_LENGTH = 400_000
 
 const SETTINGS_FILE_FILTERS = [{ name: 'Claude-Manager-Einstellungen', extensions: ['json'] }]
+const THEME_FILE_FILTERS = [{ name: 'Claude-Manager-Theme', extensions: ['json'] }]
+/** Theme files taken over in one go. */
+const MAX_THEME_IMPORT = 100
 
 /** To the app's windows only: a popup of a browser page is a window too, and a page of the web. */
 function broadcast(channel: string, ...args: unknown[]): void {
@@ -99,6 +104,13 @@ function requirePath(value: unknown, name: string): string {
   const path = requireString(value, name)
   if (path.length > MAX_PATH_LENGTH || !isAbsolute(path) || path.includes('\0')) throw new Error(`Ungültiger Parameter: ${name}`)
   return path
+}
+
+/** A theme from the window, checked like a file: colors it lacks come from the built-in theme of its mode. */
+function requireTheme(value: unknown): ThemeContent {
+  if (typeof value !== 'object' || value === null) throw new Error('Ungültiger Parameter: theme')
+  const { name, mode, colors, terminal } = value as Record<string, unknown>
+  return parseThemeFile({ name, mode, colors, terminal }, 'Eigenes Theme')
 }
 
 /** The text of a workspace prompt; null for none (not a string). */
@@ -437,6 +449,56 @@ export function registerIpc(ctx: AppContext): void {
     return followMove(source, target)
   })
   ctx.workspaces.on('changed', () => broadcast(IpcEvent.workspacesChanged))
+
+  // --- themes --------------------------------------------------------------
+  ipcMain.handle(IpcInvoke.themesList, () => ctx.themes.list())
+  ipcMain.handle(IpcInvoke.themesCreate, (_e, theme: unknown) => ctx.themes.create(requireTheme(theme)))
+  ipcMain.handle(IpcInvoke.themesSave, (_e, id: unknown, theme: unknown) =>
+    ctx.themes.save(requireString(id, 'id'), requireTheme(theme)),
+  )
+  ipcMain.handle(IpcInvoke.themesRemove, (_e, id: unknown) => ctx.themes.remove(requireString(id, 'id')))
+  ipcMain.handle(IpcInvoke.themesExport, async (event, id: unknown) => {
+    const themeId = requireString(id, 'id')
+    const { canceled, filePath } = await dialog.showSaveDialog(senderWindow(event), {
+      title: 'Theme exportieren',
+      defaultPath: join(app.getPath('documents'), basename(ctx.themes.fileOf(themeId))),
+      filters: THEME_FILE_FILTERS,
+    })
+    if (canceled || !filePath) return null
+    await ctx.themes.exportTo(themeId, filePath)
+    return filePath
+  })
+  ipcMain.handle(IpcInvoke.themesImport, async (event, files: unknown) => {
+    if (Array.isArray(files)) {
+      if (files.length === 0 || files.length > MAX_THEME_IMPORT) throw new Error('Ungültiger Parameter: files')
+      return ctx.themes.importFrom(files.map((file) => requirePath(file, 'files')))
+    }
+    const { canceled, filePaths } = await dialog.showOpenDialog(senderWindow(event), {
+      title: 'Themes importieren',
+      defaultPath: app.getPath('documents'),
+      properties: ['openFile', 'multiSelections'],
+      filters: THEME_FILE_FILTERS,
+    })
+    return canceled || filePaths.length === 0 ? null : ctx.themes.importFrom(filePaths.slice(0, MAX_THEME_IMPORT))
+  })
+  ipcMain.handle(IpcInvoke.themesOpenFile, async (_e, id: unknown) => {
+    const file = ctx.themes.fileOf(requireString(id, 'id'))
+    if (!existsSync(file)) throw new Error('Die Datei des Themes gibt es nicht mehr.')
+    // Without a program for JSON files, the file is shown in Explorer instead.
+    if (!(await shell.openPath(file))) return true
+    shell.showItemInFolder(file)
+    return false
+  })
+  ipcMain.handle(IpcInvoke.themesShowFile, (_e, id: unknown) => {
+    const file = ctx.themes.fileOf(requireString(id, 'id'))
+    if (!existsSync(file)) throw new Error('Die Datei des Themes gibt es nicht mehr.')
+    shell.showItemInFolder(file)
+  })
+  ipcMain.handle(IpcInvoke.themesOpenFolder, async () => {
+    const error = await shell.openPath(ctx.themes.dir)
+    if (error) throw new Error(error)
+  })
+  ctx.themes.on('changed', () => broadcast(IpcEvent.themesChanged))
   // Moved outside the app, e.g. in Explorer: the sessions go along, and the window learns of it.
   ctx.workspaces.follow(async (from, to) => {
     const sessions = await followMove(from, to)

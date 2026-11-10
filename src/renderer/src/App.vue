@@ -4,6 +4,7 @@ import CommandPalette from '@/components/common/CommandPalette.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import DefaultFolderDialog from '@/components/common/DefaultFolderDialog.vue'
 import ProjectDialog from '@/components/common/ProjectDialog.vue'
+import ThemeEditorDialog from '@/components/themes/ThemeEditorDialog.vue'
 import WorkspaceDialog from '@/components/common/WorkspaceDialog.vue'
 import WorktreeDialog from '@/components/common/WorktreeDialog.vue'
 import AppShell from '@/components/layout/AppShell.vue'
@@ -19,6 +20,7 @@ import { useAccountsStore } from '@/stores/accounts'
 import { useAppStore } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
+import { useThemesStore } from '@/stores/themes'
 import { useUpdatesStore } from '@/stores/updates'
 import { useUsageStore } from '@/stores/usage'
 
@@ -28,6 +30,7 @@ const app = useAppStore()
 const terminals = useTerminalsStore()
 const usage = useUsageStore()
 const updates = useUpdatesStore()
+const themes = useThemesStore()
 
 const ready = ref(false)
 const fatal = ref<string | null>(null)
@@ -37,8 +40,9 @@ useShortcuts()
 
 onMounted(async () => {
   try {
-    // Settings and app info first: terminals need the Windows build and font settings on mount.
-    await Promise.all([settings.load(), app.load()])
+    // Settings, themes and app info first: terminals need the Windows build, font settings and colors on mount.
+    // A themes folder that can't be read leaves the built-in themes.
+    await Promise.all([settings.load(), app.load(), themes.load().catch((error) => console.error('[themes] list could not be read', error))])
     await Promise.all([accounts.load(), terminals.load(), usage.load(), updates.load()])
     ready.value = true
   } catch (error) {
@@ -65,6 +69,7 @@ onMounted(async () => {
     <WorktreeDialog v-if="ready" />
     <WorkspaceDialog v-if="ready" />
     <ProjectDialog v-if="ready" />
+    <ThemeEditorDialog v-if="ready" />
     <Toaster :theme="theme.mode" position="bottom-right" close-button />
     <AppTooltip />
   </TooltipProvider>

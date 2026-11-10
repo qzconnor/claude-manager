@@ -140,6 +140,18 @@ const api: ManagerApi = {
     onChanged: (cb) => subscribe(IpcEvent.workspacesChanged, cb),
     onMoved: (cb) => subscribe(IpcEvent.workspacesMoved, cb),
   },
+  themes: {
+    list: () => invoke(IpcInvoke.themesList),
+    create: (theme) => invoke(IpcInvoke.themesCreate, theme),
+    save: (id, theme) => invoke(IpcInvoke.themesSave, id, theme),
+    remove: (id) => invoke(IpcInvoke.themesRemove, id),
+    export: (id) => invoke(IpcInvoke.themesExport, id),
+    import: (files) => invoke(IpcInvoke.themesImport, files ?? null),
+    openFile: (id) => invoke(IpcInvoke.themesOpenFile, id),
+    showFile: (id) => invoke(IpcInvoke.themesShowFile, id),
+    openFolder: () => invoke(IpcInvoke.themesOpenFolder),
+    onChanged: (cb) => subscribe(IpcEvent.themesChanged, cb),
+  },
   notifications: {
     test: () => invoke(IpcInvoke.notificationsTest),
   },

@@ -15,7 +15,7 @@ import { urlLinks } from '@/lib/url-links'
 import { useAppStore } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
-import type { TerminalPalette } from '@/themes/types'
+import type { TerminalPalette } from '@shared/themes/types'
 import { buildFontStack, ensureFontLoaded, useTerminalAppearance } from './useTerminalAppearance'
 
 export interface UseTerminalOptions {

@@ -46,3 +46,24 @@ export interface AppTheme {
   colors: ThemeColors
   terminal: TerminalPalette
 }
+
+/** A theme's colors without its id, e.g. as read from a file or being edited. */
+export type ThemeContent = Omit<AppTheme, 'id'>
+
+/** A file in the themes folder of the app's data. */
+export interface CustomThemeEntry {
+  /** `custom:` and the file's name without `.json`; what the settings keep. */
+  id: string
+  /** Absolute path of the file. */
+  file: string
+  /** The theme, null while the file can't be used. */
+  theme: AppTheme | null
+  /** Why the file can't be used (invalid JSON, a wrong color …). */
+  error: string | null
+}
+
+/** Themes taken over from files: the new ones, and the files that could not be read. */
+export interface ThemeImportResult {
+  imported: CustomThemeEntry[]
+  failed: { file: string; error: string }[]
+}

@@ -34,8 +34,9 @@ async function reset() {
     <CardHeader>
       <CardTitle><HighlightText :text="title" :terms="filter.terms.value" /></CardTitle>
       <CardDescription v-if="description"><HighlightText :text="description" :terms="filter.terms.value" /></CardDescription>
-      <CardAction v-if="resetSection">
-        <Button variant="ghost" size="sm" @click="reset">
+      <CardAction v-if="resetSection || $slots.actions" class="flex items-center gap-1">
+        <slot name="actions" />
+        <Button v-if="resetSection" variant="ghost" size="sm" @click="reset">
           <RotateCcwIcon data-icon="inline-start" />
           Zurücksetzen
         </Button>

@@ -2,6 +2,7 @@
 import type { FileTreeSide, TabPosition, WindowMaterial } from '@shared/types'
 import { Switch } from '@/components/ui/switch'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import ThemeToolbar from '@/components/themes/ThemeToolbar.vue'
 import { useSetting } from '@/composables/useSetting'
 import { supportsMaterial } from '@/lib/platform'
 import SettingField from './SettingField.vue'
@@ -74,6 +75,7 @@ function onMaterial(value: unknown) {
 <template>
   <div class="flex flex-col gap-4">
     <SettingsSection anchor="appearance.theme" title="Theme" description="Farben für App und Terminal.">
+      <template #actions><ThemeToolbar /></template>
       <ThemePicker v-model="themeId" />
     </SettingsSection>
 

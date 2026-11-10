@@ -1,5 +1,5 @@
 import type { DiffColors, PanelBackground } from '@shared/types'
-import type { TerminalPalette } from '@/themes/types'
+import type { TerminalPalette } from '@shared/themes/types'
 
 /**
  * Claude Code paints some areas with fixed background colors from its own themes. With

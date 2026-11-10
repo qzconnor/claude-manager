@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { createDefaultSettings } from '@shared/defaults'
-import { parseHex } from '@/lib/claude-backgrounds'
-import { DEFAULT_THEME_ID, findTheme, THEMES } from './themes'
+import { createDefaultSettings } from '../defaults'
+import { DEFAULT_THEME_ID, findTheme, THEMES } from './builtin'
+import { parseColor } from './colors'
 import type { TerminalPalette, ThemeColors } from './types'
 
 const COLOR_KEYS: (keyof ThemeColors)[] = [
@@ -43,6 +43,13 @@ const PALETTE_KEYS: (keyof TerminalPalette)[] = [
 
 /** `rgba(r, g, b, a)` with channels 0–255 and alpha 0–1. */
 const RGBA_RE = /^rgba\(\s*(\d{1,3}),\s*(\d{1,3}),\s*(\d{1,3}),\s*(0|1|0?\.\d+)\s*\)$/
+
+/** `[r, g, b]` of a `#rgb` or `#rrggbb` color; null for anything else. */
+function parseHex(color: string): [number, number, number] | null {
+  if (!/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(color)) return null
+  const { r, g, b } = parseColor(color)!
+  return [r, g, b]
+}
 
 /** Relative luminance (WCAG) of a hex color. */
 function luminance(hex: string): number {
@@ -102,6 +109,13 @@ describe('THEMES', () => {
 describe('findTheme', () => {
   it('finds a theme by id', () => {
     for (const theme of THEMES) expect(findTheme(theme.id)).toBe(theme)
+  })
+
+  it('finds a custom theme, the built-in ones first', () => {
+    const custom = { ...THEMES[1], id: 'custom:mine' }
+    expect(findTheme('custom:mine', [custom])).toBe(custom)
+    expect(findTheme(THEMES[2].id, [{ ...custom, id: THEMES[2].id }])).toBe(THEMES[2])
+    expect(findTheme('custom:gone', [custom]).id).toBe(DEFAULT_THEME_ID)
   })
 
   it('falls back to the default theme', () => {

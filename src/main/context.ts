@@ -12,6 +12,7 @@ import type { SessionHandoff } from './services/session-handoff'
 import type { SessionService } from './services/session-service'
 import type { SettingsService } from './services/settings-service'
 import type { TerminalService } from './services/terminal-service'
+import type { ThemeService } from './services/theme-service'
 import type { UpdateService } from './services/update-service'
 import type { UsageService } from './services/usage-service'
 import type { WorkspaceService } from './services/workspace-service'
@@ -47,6 +48,8 @@ export interface AppContext {
   updates: UpdateService
   /** Folders whose projects share a system prompt (`cm_prompts.md`). */
   workspaces: WorkspaceService
+  /** The user's own themes, files in the folder `themes` of the app's data. */
+  themes: ThemeService
   /** Claude Code's trust in folders, asked in the app before a session starts. */
   trust: WorkspaceTrust
   appInfo(): Promise<AppInfo>

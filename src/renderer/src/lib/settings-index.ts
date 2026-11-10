@@ -39,7 +39,18 @@ const TREE = [
     tab: 'appearance',
     label: 'Darstellung',
     sections: [
-      { id: 'appearance.theme', title: 'Theme', keywords: 'Farben Farbschema hell dunkel Design' },
+      {
+        id: 'appearance.theme',
+        title: 'Theme',
+        keywords: 'Farben Farbschema hell dunkel Design',
+        fields: [
+          {
+            id: 'appearance.customThemes',
+            label: 'Eigene Themes',
+            keywords: 'Theme erstellen bearbeiten Editor Farbwähler Color Picker anpassen kopieren importieren exportieren teilen JSON Datei löschen',
+          },
+        ],
+      },
       {
         id: 'appearance.tabs',
         title: 'Tabs',

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TerminalSettings } from '@shared/types'
 import { createDefaultSettings } from '@shared/defaults'
 import { slotPalette, themeSlotTints } from '@/lib/claude-backgrounds'
-import { findTheme } from '@/themes/themes'
+import { findTheme } from '@shared/themes/builtin'
 import { buildFontStack } from './useTerminalAppearance'
 import { placeColumns, terminalOptions, toXtermTheme } from './useTerminal'
 

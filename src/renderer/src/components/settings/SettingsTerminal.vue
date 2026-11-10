@@ -1,11 +1,14 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { CursorStyle, DiffColors, PanelBackground, TerminalPadding, TerminalRenderer, TerminalSettings, UnicodeMode } from '@shared/types'
-import { Select, SelectContent, SelectGroup, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useSetting } from '@/composables/useSetting'
 import { isWindows, supportsMaterial } from '@/lib/platform'
-import { THEMES } from '@/themes/themes'
+import { THEMES } from '@shared/themes/builtin'
+import { customThemeStem } from '@shared/themes/file'
+import { useThemesStore } from '@/stores/themes'
 import FontPicker from './FontPicker.vue'
 import NumberControl from './NumberControl.vue'
 import SettingField from './SettingField.vue'
@@ -75,6 +78,13 @@ const DIFF_COLORS: { value: DiffColors; label: string }[] = [
   { value: 'original', label: 'Original' },
 ]
 const FOLLOW_APP = '__app__'
+
+const themes = useThemesStore()
+/** The chosen scheme's file is gone: it stays chosen (the app theme's colors show) until it is back. */
+const missingScheme = computed(() => {
+  const stem = customThemeStem(colorSchemeId.value)
+  return stem && !themes.exists(colorSchemeId.value) ? stem : null
+})
 
 function onCursor(value: unknown) {
   const match = CURSORS.find((c) => c.value === value)
@@ -155,6 +165,14 @@ function onScheme(value: unknown) {
             <SelectGroup>
               <SelectItem v-for="theme in THEMES" :key="theme.id" :value="theme.id">{{ theme.name }}</SelectItem>
             </SelectGroup>
+            <template v-if="themes.custom.length || missingScheme">
+              <SelectSeparator />
+              <SelectGroup>
+                <SelectLabel>Eigene Themes</SelectLabel>
+                <SelectItem v-for="theme in themes.custom" :key="theme.id" :value="theme.id">{{ theme.name }}</SelectItem>
+                <SelectItem v-if="missingScheme" :value="colorSchemeId!" disabled>„{{ missingScheme }}“ (fehlt)</SelectItem>
+              </SelectGroup>
+            </template>
           </SelectContent>
         </Select>
       </SettingField>

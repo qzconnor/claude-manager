@@ -444,7 +444,17 @@ export const THEMES: AppTheme[] = [
 ]
 
 export const DEFAULT_THEME_ID = 'ember'
+/** The light theme that fills in what a light theme file lacks. */
+const LIGHT_BASE_ID = 'paper'
 
-export function findTheme(id: string | null | undefined): AppTheme {
-  return THEMES.find((t) => t.id === id) ?? THEMES.find((t) => t.id === DEFAULT_THEME_ID)!
+/** The theme `id` among the built-in and the `custom` themes; the default theme if there is none. */
+export function findTheme(id: string | null | undefined, custom: readonly AppTheme[] = []): AppTheme {
+  return (
+    THEMES.find((t) => t.id === id) ?? custom.find((t) => t.id === id) ?? THEMES.find((t) => t.id === DEFAULT_THEME_ID)!
+  )
+}
+
+/** The built-in theme whose colors fill in the ones a theme file of this mode lacks. */
+export function baseTheme(mode: AppTheme['mode']): AppTheme {
+  return findTheme(mode === 'light' ? LIGHT_BASE_ID : DEFAULT_THEME_ID)
 }

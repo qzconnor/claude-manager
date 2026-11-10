@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { findTheme } from '@/themes/themes'
+import { findTheme } from '@shared/themes/builtin'
 import {
   backgroundReplacements,
   createBackgroundFilter,

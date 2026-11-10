@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { THEMES } from '@/themes/themes'
+import { THEMES } from '@shared/themes/builtin'
 import { codeColor } from './code-colors'
 
 /** WCAG contrast of two hex colours. */
