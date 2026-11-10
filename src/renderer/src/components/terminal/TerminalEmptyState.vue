@@ -67,7 +67,7 @@ onMounted(recent.load)
           v-for="folder in recent.folders.value"
           :key="folder.path"
           type="button"
-          :title="`Neue Session in ${folder.path}`"
+          v-tooltip="`Neue Session in ${folder.path}`"
           class="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-sm transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
           @click="launcher.newSession(undefined, folder.path)"
         >

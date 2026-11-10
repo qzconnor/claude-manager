@@ -38,7 +38,7 @@ import { attempt } from '@/lib/errors'
 import { formatRelative, shortenPath } from '@/lib/format'
 import { PAGE_INFO } from '@/lib/pages'
 import type { SettingsEntry } from '@/lib/settings-index'
-import { PAGES } from '@/lib/workspace'
+import { BROWSER_TAB, PAGES } from '@/lib/workspace'
 import { NOTIFICATIONS_ROUTE, UPDATES_ROUTE } from '@/router'
 import { useAccountsStore } from '@/stores/accounts'
 import { useAppStore } from '@/stores/app'
@@ -105,6 +105,10 @@ function openSetting(entry: SettingsEntry) {
 /** The group with the keyboard, with the tabs in groups. */
 const group = computed(() => (terminals.grouped ? terminals.activeGroup : null))
 const canMoveTab = computed(() => !!group.value && group.value.tabs.length > 1 && !!terminals.focusedTab)
+/** The browser tab has the keyboard, or shows the pages of the session with it: close it rather than open it. */
+const closesBrowser = computed(
+  () => terminals.focusedTab === BROWSER_TAB || terminals.browserShownFor(terminals.sessionFor(terminals.active)?.id),
+)
 </script>
 
 <template>
@@ -131,14 +135,18 @@ const canMoveTab = computed(() => !!group.value && group.value.tabs.length > 1 &
           <FolderGit2Icon />
           Neue Session in Worktree…
         </CommandItem>
-        <!-- In groups a browser always belongs to a session: only beside the one with the keyboard. -->
+        <!-- In groups a browser always belongs to a session: the browser tab with the one with the keyboard. -->
         <CommandItem v-if="!terminals.grouped" value="browser" @select="run(() => launcher.browser())">
           <GlobeIcon />
           Browser öffnen
         </CommandItem>
-        <CommandItem v-if="terminals.grouped && terminals.sessionFor(terminals.active)" value="browser-beside" @select="run(() => launcher.browserFor(terminals.active))">
+        <CommandItem v-if="terminals.grouped && closesBrowser" value="browser-close" filter-text="Browser schließen Tab" @select="run(() => terminals.closeBrowserTab())">
+          <XIcon />
+          Browser schließen
+        </CommandItem>
+        <CommandItem v-else-if="terminals.grouped && terminals.sessionFor(terminals.active)" value="browser-beside" @select="run(() => launcher.browserFor(terminals.active))">
           <GlobeIcon />
-          Browser daneben öffnen
+          Browser öffnen
         </CommandItem>
         <template v-else-if="!terminals.grouped && terminals.active">
           <CommandItem

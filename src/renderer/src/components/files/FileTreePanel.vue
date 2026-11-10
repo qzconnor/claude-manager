@@ -590,7 +590,7 @@ const iconButton =
   >
     <!-- The folder, like a section of VS Code's Explorer, with the tree's actions. -->
     <div class="flex h-[38px] shrink-0 items-center gap-0.5 pr-2 pl-3">
-      <span class="min-w-0 flex-1 truncate text-[11px] font-semibold tracking-wider text-muted-foreground uppercase" :title="target.root">
+      <span class="min-w-0 flex-1 truncate text-[11px] font-semibold tracking-wider text-muted-foreground uppercase" v-tooltip="target.root">
         {{ rootName }}
       </span>
       <Tooltip>
@@ -645,7 +645,7 @@ const iconButton =
 
     <!-- Branch with how far it is from its upstream, and the changes by kind, like the plugin's branch row. -->
     <div v-if="git" class="-mt-1 flex h-[22px] shrink-0 items-center gap-1.5 px-3 text-xs text-muted-foreground">
-      <span class="flex min-w-0 items-center gap-2" :title="branchTooltip">
+      <span class="flex min-w-0 items-center gap-2" v-tooltip="branchTooltip">
         <GitCommitHorizontalIcon v-if="!git.branch" class="size-3.5 shrink-0" />
         <GitBranchIcon v-else class="size-3.5 shrink-0" />
         <span :class="cn('truncate', !git.branch && 'font-mono')">{{ branchLabel }}</span>
@@ -767,7 +767,7 @@ const iconButton =
                 draggable="true"
                 class="group/row absolute inset-x-0 top-0 cursor-pointer"
                 :style="{ transform: `translateY(${view.index * rowHeight}px)`, height: `${rowHeight}px` }"
-                :title="view.row.path"
+                v-tooltip="view.row.path"
                 @click="onRowClick(view.row)"
                 @dblclick="onRowDoubleClick(view.row)"
                 @dragstart="onDragStart($event, view.row)"
@@ -842,7 +842,7 @@ const iconButton =
                     class="relative ml-2 flex w-[12px] shrink-0 items-center justify-center"
                     role="status"
                     :aria-label="TOUCH_INSIDE[view.touchInside]"
-                    :title="TOUCH_INSIDE[view.touchInside]"
+                    v-tooltip="TOUCH_INSIDE[view.touchInside]"
                   >
                     <span class="file-tree-touch-dot absolute size-[8px] animate-ping rounded-full opacity-70 motion-reduce:hidden" />
                     <span class="file-tree-touch-dot relative size-[6px] rounded-full" />
@@ -850,7 +850,7 @@ const iconButton =
                   <span
                     v-else-if="view.state"
                     :class="cn('ml-2 w-[12px] shrink-0 text-center font-mono text-[0.75rem] font-semibold', STATUS_CLASS[view.state.status])"
-                    :title="STATUS_LABEL[view.state.status] + (view.state.staged ? ', vorgemerkt' : '')"
+                    v-tooltip="STATUS_LABEL[view.state.status] + (view.state.staged ? ', vorgemerkt' : '')"
                   >
                     {{ STATUS_LETTER[view.state.status] }}
                   </span>

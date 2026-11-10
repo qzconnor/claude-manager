@@ -61,13 +61,13 @@ defineExpose({ focus, step, query })
       />
       <InputGroupAddon align="inline-end">
         <span v-if="count" class="pr-1 text-xs text-muted-foreground tabular-nums" aria-live="polite">{{ count }}</span>
-        <InputGroupButton size="icon-xs" aria-label="Vorheriger Treffer" title="Vorheriger Treffer (Umschalt+Enter)" @click="step(false)">
+        <InputGroupButton size="icon-xs" aria-label="Vorheriger Treffer" v-tooltip="'Vorheriger Treffer (Umschalt+Enter)'" @click="step(false)">
           <ChevronUpIcon />
         </InputGroupButton>
-        <InputGroupButton size="icon-xs" aria-label="Nächster Treffer" title="Nächster Treffer (Enter)" @click="step(true)">
+        <InputGroupButton size="icon-xs" aria-label="Nächster Treffer" v-tooltip="'Nächster Treffer (Enter)'" @click="step(true)">
           <ChevronDownIcon />
         </InputGroupButton>
-        <InputGroupButton size="icon-xs" aria-label="Suche schließen" title="Suche schließen (Esc)" @click="emit('close')">
+        <InputGroupButton size="icon-xs" aria-label="Suche schließen" v-tooltip="'Suche schließen (Esc)'" @click="emit('close')">
           <XIcon />
         </InputGroupButton>
       </InputGroupAddon>

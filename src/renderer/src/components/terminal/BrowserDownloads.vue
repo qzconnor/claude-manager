@@ -84,7 +84,7 @@ function act(download: BrowserDownload, action: BrowserDownloadAction) {
         variant="ghost"
         size="icon-sm"
         :aria-label="running.length ? `Downloads, ${running.length} laufen` : 'Downloads'"
-        :title="running.length ? `Downloads (${running.length} laufen)` : 'Downloads'"
+        v-tooltip="running.length ? `Downloads (${running.length} laufen)` : 'Downloads'"
         :class="cn('relative', open && 'bg-muted text-foreground')"
       >
         <DownloadIcon :class="cn(running.length > 0 && 'text-primary')" />
@@ -118,7 +118,7 @@ function act(download: BrowserDownload, action: BrowserDownloadAction) {
           size="xs"
           class="ml-auto text-muted-foreground"
           :disabled="!finished"
-          title="Beendete Downloads aus der Liste nehmen, die Dateien bleiben"
+          v-tooltip="'Beendete Downloads aus der Liste nehmen, die Dateien bleiben'"
           @click="browsers.clearDownloads()"
         >
           Liste leeren
@@ -130,7 +130,7 @@ function act(download: BrowserDownload, action: BrowserDownloadAction) {
             type="button"
             class="flex min-w-0 flex-1 items-center gap-2.5 text-left outline-none disabled:cursor-default"
             :disabled="download.state !== 'completed'"
-            :title="download.state === 'completed' ? `${download.path} öffnen` : download.path"
+            v-tooltip="download.state === 'completed' ? `${download.path} öffnen` : download.path"
             @click="act(download, 'open')"
           >
             <FileDownIcon v-if="download.state === 'progressing'" class="size-5 shrink-0 text-primary" />
@@ -155,7 +155,7 @@ function act(download: BrowserDownload, action: BrowserDownloadAction) {
             variant="ghost"
             size="icon-xs"
             aria-label="Im Ordner zeigen"
-            title="Im Ordner zeigen"
+            v-tooltip="'Im Ordner zeigen'"
             @click="act(download, 'show')"
           >
             <FolderOpenIcon />
@@ -164,7 +164,7 @@ function act(download: BrowserDownload, action: BrowserDownloadAction) {
             variant="ghost"
             size="icon-xs"
             :aria-label="download.state === 'progressing' ? 'Download abbrechen' : 'Aus der Liste nehmen'"
-            :title="download.state === 'progressing' ? 'Download abbrechen' : 'Aus der Liste nehmen'"
+            v-tooltip="download.state === 'progressing' ? 'Download abbrechen' : 'Aus der Liste nehmen'"
             @click="act(download, download.state === 'progressing' ? 'cancel' : 'remove')"
           >
             <XIcon />

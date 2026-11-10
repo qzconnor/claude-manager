@@ -135,7 +135,7 @@ function shortModel(model: string): string {
             </TableHeader>
             <TableBody>
               <TableRow v-for="model in stats.models" :key="model.model">
-                <TableCell class="max-w-40 truncate font-mono text-xs" :title="model.model">{{ shortModel(model.model) }}</TableCell>
+                <TableCell class="max-w-40 truncate font-mono text-xs" v-tooltip="model.model">{{ shortModel(model.model) }}</TableCell>
                 <TableCell class="text-right tabular-nums">{{ formatTokens(model.output) }}</TableCell>
                 <TableCell class="text-right tabular-nums">{{ formatNumber(model.messages) }}</TableCell>
               </TableRow>

@@ -22,6 +22,7 @@ import { groupTabs, type TerminalTabGroup } from '@/lib/tabs'
 import {
   addTab,
   allTabs,
+  BROWSER_TAB,
   createWorkspace,
   diffOfTab,
   diffTab,
@@ -53,11 +54,12 @@ export interface TerminalTab extends TerminalTabGroup {
   focused: TerminalInfo
 }
 
-/** With the tabs in groups, a tab of a group: a terminal, one of the app's pages, or a file's changes. */
+/** With the tabs in groups, a tab of a group: a terminal, one of the app's pages, a file's changes, or the browser tab. */
 export type GroupTabItem =
-  | { id: string; terminal: TerminalInfo; page?: undefined; diff?: undefined }
-  | { id: string; page: PageName; terminal?: undefined; diff?: undefined }
-  | { id: string; diff: DiffFile; terminal?: undefined; page?: undefined }
+  | { id: string; terminal: TerminalInfo; page?: undefined; diff?: undefined; browser?: undefined }
+  | { id: string; page: PageName; terminal?: undefined; diff?: undefined; browser?: undefined }
+  | { id: string; diff: DiffFile; terminal?: undefined; page?: undefined; browser?: undefined }
+  | { id: string; browser: true; terminal?: undefined; page?: undefined; diff?: undefined }
 
 /** A group with what its tabs show, in the order of its tab bar. */
 export interface GroupView {
@@ -160,6 +162,27 @@ export const useTerminalsStore = defineStore('terminals', () => {
 
   const byId = computed(() => new Map(terminals.value.map((t) => [t.id, t])))
 
+  /**
+   * The session (or shell) each browser belongs to, by the browser: the one it was opened beside, as
+   * main keeps it in the same split, also over a restart (see `ownerOf`). A browser on its own has none.
+   * The browsers go with their session when it closes (main does that).
+   */
+  const owners = computed(() => {
+    const map = new Map<string, string>()
+    const isOwner = (id: string) => {
+      const terminal = byId.value.get(id)
+      return !!terminal && terminal.mode !== 'browser'
+    }
+    for (const split of splits.value) {
+      for (const id of paneIds(split)) {
+        if (byId.value.get(id)?.mode !== 'browser') continue
+        const owner = ownerOf(split, id, isOwner)
+        if (owner) map.set(id, owner)
+      }
+    }
+    return map
+  })
+
   /** Of some terminals (at least one), the one that last had the keyboard. */
   const lastFocused = (list: TerminalInfo[]) =>
     list.reduce((best, t) => ((focusedAt.get(t.id) ?? 0) > (focusedAt.get(best.id) ?? 0) ? t : best))
@@ -189,6 +212,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
         const group = findGroup(workspace.value, id)
         if (!group) return []
         const items = group.tabs.flatMap<GroupTabItem>((tab) => {
+          if (tab === BROWSER_TAB) return [{ id: tab, browser: true }]
           const page = pageOfTab(tab)
           if (page) return [{ id: tab, page }]
           const diff = diffOfTab(tab)
@@ -202,8 +226,13 @@ export const useTerminalsStore = defineStore('terminals', () => {
     ),
   )
   const activeGroup = computed(() => groups.value.find((g) => g.id === workspace.value.activeGroup) ?? groups.value[0] ?? null)
-  /** The terminals on screen with the tabs in groups: what each group shows. */
-  const visibleIds = computed(() => groups.value.flatMap((g) => (g.active && byId.value.has(g.active) ? [g.active] : [])))
+  /** The terminals on screen with the tabs in groups: what each group shows (for the browser tab, its page). */
+  const visibleIds = computed(() =>
+    groups.value.flatMap((g) => {
+      const shown = terminalOfTab(g.active)
+      return shown ? [shown] : []
+    }),
+  )
 
   function groupOf(tab: string): GroupView | null {
     return groups.value.find((g) => g.tabs.some((t) => t.id === tab)) ?? null
@@ -242,29 +271,28 @@ export const useTerminalsStore = defineStore('terminals', () => {
   function focus(id: string | null): void {
     activeId.value = id
     if (id) focusedAt.set(id, ++focusCount)
+    follow(id)
   }
 
   // ── Browsers and their sessions ──
 
-  /**
-   * The session (or shell) a browser belongs to: the one it was opened beside, as main keeps it in the
-   * same split, also over a restart (see `ownerOf`). Null for a browser on its own. The browsers go
-   * with their session when it closes (main does that).
-   */
+  /** The session (or shell) a browser belongs to (see `owners`); null for a browser on its own. */
   function sessionOf(browserId: string): TerminalInfo | null {
-    const split = splits.value.find((s) => hasPane(s, browserId))
-    const owner = split ? ownerOf(split, browserId, (id) => !!byId.value.get(id) && byId.value.get(id)!.mode !== 'browser') : null
+    const owner = owners.value.get(browserId)
     return owner ? (byId.value.get(owner) ?? null) : null
   }
+
+  /** A browser that belongs to a session: with the tabs in groups a page of the browser tab, not a tab of its own. */
+  const isSessionPage = (id: string | null | undefined) => !!id && owners.value.has(id)
 
   /** When the terminal last had the keyboard (0: never). */
   function focusedAtOf(id: string): number {
     return focusedAt.get(id) ?? 0
   }
 
-  /** The browsers that belong to a session (see `sessionOf`). */
+  /** The browsers that belong to a session (see `sessionOf`), in the order of main's list. */
   function browsersOf(sessionId: string): TerminalInfo[] {
-    return terminals.value.filter((t) => t.mode === 'browser' && sessionOf(t.id)?.id === sessionId)
+    return terminals.value.filter((t) => t.mode === 'browser' && owners.value.get(t.id) === sessionId)
   }
 
   /** The terminal itself, or for a browser its session; null for a browser on its own. */
@@ -272,13 +300,117 @@ export const useTerminalsStore = defineStore('terminals', () => {
     return terminal?.mode === 'browser' ? sessionOf(terminal.id) : terminal
   }
 
-  /** The tabs that go with a tab: a session's browsers, a browser's session. */
+  // ── The browser tab ──
+
+  /** The session whose pages the browser tab shows: the one that had the keyboard last, or the one picked there. */
+  const browserSessionId = ref<string | null>(null)
+  /** The page the browser tab shows of a session, by the session; without one the page that had the keyboard last. */
+  const shownPages = reactive(new Map<string, string>())
+  /** Browsers of the last run that aren't loaded yet; with the tabs in groups they load once shown or driven by Claude. */
+  const sleeping = reactive(new Set<string>())
+  /** The session pages seen so far: a new one brings the browser tab back. */
+  const knownPages = new Set<string>()
+
+  const browserSession = computed(() => (browserSessionId.value ? (byId.value.get(browserSessionId.value) ?? null) : null))
+  /**
+   * The browser of a session is open: the browser tab is in front in its group and shows the session's
+   * pages. Its menus offer to close it then, else to open it (for another session: show it there).
+   */
+  function browserShownFor(sessionId: string | null | undefined): boolean {
+    if (!sessionId || browserSessionId.value !== sessionId || browsersOf(sessionId).length === 0) return false
+    return groupOfTab(workspace.value, BROWSER_TAB)?.active === BROWSER_TAB
+  }
+
+  /** The page of a session the browser tab shows when it shows the session; null while it has none. */
+  function shownPageOf(sessionId: string): TerminalInfo | null {
+    const pages = browsersOf(sessionId)
+    if (pages.length === 0) return null
+    const chosen = shownPages.get(sessionId)
+    return pages.find((p) => p.id === chosen) ?? lastFocused(pages)
+  }
+
+  /** The page the browser tab shows; null while its session has none. */
+  const browserPage = computed(() => (browserSession.value ? shownPageOf(browserSession.value.id) : null))
+
+  /** The terminal a tab of a group shows: itself, for the browser tab its page; null for the others. */
+  function terminalOfTab(tab: string | null | undefined): string | null {
+    if (tab === BROWSER_TAB) return browserPage.value?.id ?? null
+    return tab && byId.value.has(tab) ? tab : null
+  }
+
+  /**
+   * The browser tab follows the terminal that gets the keyboard: a session or shell, or a page and its
+   * session. A browser on its own and a login leave it as it is.
+   */
+  function follow(id: string | null): void {
+    const terminal = id ? byId.value.get(id) : undefined
+    if (!terminal || terminal.mode === 'login') return
+    const session = terminal.mode === 'browser' ? owners.value.get(terminal.id) : terminal.id
+    if (!session) return
+    browserSessionId.value = session
+    if (terminal.mode === 'browser') shownPages.set(session, terminal.id)
+  }
+
+  /**
+   * The workspace with the browser tab: as it is, else in a new group right of the session's group (where
+   * a browser opened before), else in the group with the keyboard.
+   */
+  function withBrowserTab(ws: Workspace, sessionId: string | null): Workspace {
+    if (groupOfTab(ws, BROWSER_TAB)) return ws
+    const group = sessionId ? groupOfTab(ws, sessionId) : undefined
+    if (group) return splitGroup(ws, group.id, 'right', newGroupId(), [BROWSER_TAB])
+    return addTab(ws, ws.activeGroup, BROWSER_TAB, { activate: true })
+  }
+
+  /** Shows a session's page in the browser tab and gives it the keyboard; a closed browser tab comes back. */
+  function showPage(pageId: string): void {
+    const session = owners.value.get(pageId)
+    if (!session) return
+    const ws = withBrowserTab(workspace.value, session)
+    focus(pageId)
+    workspace.value = showLinked(setActive(ws, groupOfTab(ws, BROWSER_TAB)!.id, BROWSER_TAB), BROWSER_TAB)
+  }
+
+  /**
+   * With the tabs in groups: the browser tab with the pages of a session, with the keyboard; a closed
+   * browser tab comes back. Without pages it asks for an address.
+   */
+  function showBrowser(sessionId: string): void {
+    if (!byId.value.has(sessionId)) return
+    const page = shownPageOf(sessionId)
+    if (page) return showPage(page.id)
+    const ws = withBrowserTab(workspace.value, sessionId)
+    browserSessionId.value = sessionId
+    workspace.value = setActive(ws, groupOfTab(ws, BROWSER_TAB)!.id, BROWSER_TAB)
+  }
+
+  /** The browser tab shows the pages of another session for a while, until the next session gets the keyboard. */
+  function peekBrowser(sessionId: string): void {
+    if (byId.value.has(sessionId)) browserSessionId.value = sessionId
+  }
+
+  /** Closes the browser tab; the pages stay with their sessions and come back with it. */
+  function closeBrowserTab(): void {
+    workspace.value = removeTab(workspace.value, BROWSER_TAB)
+    settle()
+  }
+
+  /** A browser of the last run is about to be shown or driven: its page loads. */
+  function wake(id: string): void {
+    sleeping.delete(id)
+  }
+
+  /**
+   * The tabs that go with a tab: for a session with pages the browser tab, for the browser tab the
+   * session it shows, for a session's page that session.
+   */
   function linked(tab: string): string[] {
+    if (tab === BROWSER_TAB) return browserSession.value ? [browserSession.value.id] : []
     const terminal = byId.value.get(tab)
     if (!terminal) return []
-    if (terminal.mode !== 'browser') return browsersOf(tab).map((b) => b.id)
-    const session = sessionOf(tab)
-    return session ? [session.id] : []
+    if (terminal.mode !== 'browser') return browsersOf(tab).length > 0 ? [BROWSER_TAB] : []
+    const session = owners.value.get(tab)
+    return session ? [session] : []
   }
 
   /**
@@ -303,8 +435,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
    * the last terminal keeps its claim, as long as it is open.
    */
   function settle(): void {
-    const shown = activeGroup.value?.active ?? null
-    if (shown && byId.value.has(shown)) {
+    const shown = terminalOfTab(activeGroup.value?.active)
+    if (shown) {
       if (activeId.value !== shown) focus(shown)
       return
     }
@@ -312,6 +444,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     const visible = visibleIds.value.flatMap((id) => byId.value.get(id) ?? [])
     const candidates = visible.length ? visible : terminals.value
     activeId.value = candidates.length ? lastFocused(candidates).id : null
+    follow(activeId.value)
   }
 
   /**
@@ -392,13 +525,36 @@ export const useTerminalsStore = defineStore('terminals', () => {
     if (!sameData(toRaw(mainOrder.value), order)) mainOrder.value = order
     const ids = new Set(list.map((t) => t.id))
     for (const id of focusedAt.keys()) if (!ids.has(id)) focusedAt.delete(id)
+    for (const id of sleeping) if (!ids.has(id)) sleeping.delete(id)
+    for (const id of knownPages) if (!ids.has(id)) knownPages.delete(id)
+    for (const [session, page] of shownPages) if (!ids.has(session) || !ids.has(page)) shownPages.delete(session)
 
     let ws = workspace.value
-    for (const tab of allTabs(ws)) if (!isViewTab(tab) && !ids.has(tab)) ws = removeTab(ws, tab)
+    for (const tab of allTabs(ws)) {
+      if (isViewTab(tab)) continue
+      if (!ids.has(tab)) ws = removeTab(ws, tab)
+      // A session's page with a tab of its own (left by an older version, or a browser that went to a
+      // session in one tab bar): the browser tab takes its place.
+      else if (owners.value.has(tab)) ws = groupOfTab(ws, BROWSER_TAB) ? removeTab(ws, tab) : replaceTab(ws, tab, BROWSER_TAB)
+    }
+    const newPages: string[] = []
     for (const terminal of list) {
+      if (owners.value.has(terminal.id)) {
+        if (!knownPages.has(terminal.id)) newPages.push(terminal.id)
+        continue
+      }
       if (groupOfTab(ws, terminal.id)) continue
       // By main's order: a terminal that replaces another comes right before it there.
       ws = place(ws, terminal, placementOf(ws, terminal, next, splitsBefore, nextSplits))
+    }
+    // A new page (Claude's or the user's) is the one its session shows. It brings the browser tab back,
+    // and forward while the tab shows that session.
+    for (const id of newPages) {
+      knownPages.add(id)
+      const session = owners.value.get(id)!
+      shownPages.set(session, id)
+      ws = withBrowserTab(ws, session)
+      if (session === browserSessionId.value) ws = showTab(ws, groupOfTab(ws, BROWSER_TAB)!.id, BROWSER_TAB)
     }
     workspace.value = ws
 
@@ -439,7 +595,11 @@ export const useTerminalsStore = defineStore('terminals', () => {
         map = new Map(order.map((entry, i) => [entry.id, current[i].id]))
       }
     }
-    return { workspace: mapTabs(ws, (tab) => (isViewTab(tab) ? tab : (map.get(tab) ?? null))), ids: map }
+    // The browser tab shows the pages of a session: with none back (not restored) it goes too.
+    const modes = new Map(list.map((t) => [t.id, t.mode]))
+    const sessionBack = [...map.values()].some((id) => modes.get(id) !== 'browser')
+    const kept = (tab: string) => (tab === BROWSER_TAB ? sessionBack : isViewTab(tab))
+    return { workspace: mapTabs(ws, (tab) => (kept(tab) ? tab : (map.get(tab) ?? null))), ids: map }
   }
 
   /** Set once the terminals are loaded; the setting loads before them. */
@@ -449,6 +609,12 @@ export const useTerminalsStore = defineStore('terminals', () => {
     const [list, layouts] = await Promise.all([window.api.terminals.list(), window.api.terminals.layouts()])
     const restored = restore(list)
     workspace.value = restored?.workspace ?? createWorkspace(newGroupId())
+    for (const terminal of list) {
+      if (terminal.mode !== 'browser') continue
+      sleeping.add(terminal.id)
+      // With the groups of the last run the browser tab stays as it was left, also closed.
+      if (restored) knownPages.add(terminal.id)
+    }
     sync(list, layouts)
     loaded = true
     restoredIds.value = restored?.ids ?? new Map()
@@ -469,12 +635,12 @@ export const useTerminalsStore = defineStore('terminals', () => {
   })
 
   // Switched to groups (not the setting arriving at the start): the pages and files open there last time
-  // stay closed, only the page shown now comes along (see GroupShell). The terminal with the keyboard
-  // keeps it, in its group.
+  // stay closed, only the page shown now comes along (see GroupShell); the browser tab stays with the
+  // sessions' pages. The terminal with the keyboard keeps it, in its group.
   watch(grouped, (on) => {
     if (!on || !loaded) return
     let ws = workspace.value
-    for (const tab of allTabs(ws)) if (isViewTab(tab)) ws = removeTab(ws, tab)
+    for (const tab of allTabs(ws)) if (isViewTab(tab) && tab !== BROWSER_TAB) ws = removeTab(ws, tab)
     workspace.value = ws
     if (activeId.value && groupOfTab(ws, activeId.value)) activateTab(activeId.value)
     else settle()
@@ -498,22 +664,28 @@ export const useTerminalsStore = defineStore('terminals', () => {
     return split ? { beside: split.terminalId, side: sideOf(split.direction) } : null
   }
 
-  /** Shows a new terminal and gives it the keyboard; main's report may have placed it already. */
+  /**
+   * Shows a new terminal and gives it the keyboard; main's report may have placed it already. A
+   * session's page goes into the browser tab.
+   */
   function show(info: TerminalInfo, placement: Placement = null): void {
     if (!terminals.value.some((t) => t.id === info.id)) terminals.value = [...terminals.value, info]
-    if (!groupOfTab(workspace.value, info.id)) workspace.value = place(workspace.value, info, placement)
+    if (!owners.value.has(info.id) && !groupOfTab(workspace.value, info.id)) workspace.value = place(workspace.value, info, placement)
     activate(info.id)
   }
 
   /**
-   * Shows the tab in its group and gives that group the keyboard; a terminal gets the keyboard itself.
-   * A session's browser comes forward with it, and a browser's session.
+   * Shows the tab in its group and gives that group the keyboard; a terminal gets the keyboard itself,
+   * for the browser tab its page. A session's browser tab comes forward with it, and the session of the
+   * browser tab. A session's page is shown in the browser tab.
    */
   function activateTab(tab: string): void {
+    if (owners.value.has(tab)) return showPage(tab)
     const group = groupOfTab(workspace.value, tab)
     if (!group) return
+    const terminal = terminalOfTab(tab)
+    if (terminal) focus(terminal)
     workspace.value = showLinked(setActive(workspace.value, group.id, tab), tab)
-    if (byId.value.has(tab)) focus(tab)
   }
 
   /** Selects the terminal's tab and gives the terminal the keyboard. */
@@ -528,8 +700,9 @@ export const useTerminalsStore = defineStore('terminals', () => {
     const group = findGroup(workspace.value, groupId)
     if (!group) return
     workspace.value = setActive(workspace.value, groupId)
+    const terminal = terminalOfTab(group.active)
+    if (terminal) focus(terminal)
     if (group.active) workspace.value = showLinked(workspace.value, group.active)
-    if (group.active && byId.value.has(group.active)) focus(group.active)
   }
 
   /**
@@ -646,6 +819,13 @@ export const useTerminalsStore = defineStore('terminals', () => {
   function replace(oldId: string, info: TerminalInfo, select = true): void {
     if (!retired.has(oldId)) for (const listener of replacedListeners) listener(oldId, info.id)
     retired.add(oldId)
+    // The new terminal takes the old one's place in main's split, and so its pages.
+    if (browserSessionId.value === oldId) browserSessionId.value = info.id
+    const page = shownPages.get(oldId)
+    if (page) {
+      shownPages.delete(oldId)
+      shownPages.set(info.id, page)
+    }
     const list = terminals.value.filter((t) => t.id !== info.id)
     const index = list.findIndex((t) => t.id === oldId)
     if (index !== -1 || list.length === terminals.value.length) {
@@ -913,9 +1093,20 @@ export const useTerminalsStore = defineStore('terminals', () => {
     workingTerminal,
     workingTerminalOf,
     sessionOf,
+    isSessionPage,
     browsersOf,
     sessionFor,
     linked,
+    browserSession,
+    browserShownFor,
+    browserPage,
+    shownPageOf,
+    showPage,
+    showBrowser,
+    peekBrowser,
+    closeBrowserTab,
+    sleeping,
+    wake,
     focusedAt: focusedAtOf,
     runningCount,
     load,

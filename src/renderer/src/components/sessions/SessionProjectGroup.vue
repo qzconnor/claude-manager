@@ -119,7 +119,7 @@ async function copyPath() {
             </template>
           </Checkbox>
           <CollapsibleTrigger
-            :title="details"
+            v-tooltip="details"
             class="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             <ChevronRightIcon :class="cn('size-3.5 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')" />

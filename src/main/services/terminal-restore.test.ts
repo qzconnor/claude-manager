@@ -151,6 +151,8 @@ describe('TerminalRestore on start', () => {
         { accountId: 'acc-b', authAccountId: 'gone', cwd: other, mode: 'session', sessionId: S2, title: 'Custom', muted: true },
         { accountId: 'acc-a', authAccountId: 'acc-b', cwd: project, mode: 'session', sessionId: null, title: 'Mine', fixedTitle: false },
         { accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', sessionId: null, title: 'Build', fixedTitle: true },
+        // Today's default titles name the folder, not the account.
+        { accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', sessionId: null, title: 'Shell · other' },
       ]),
     )
     await start().init()
@@ -159,6 +161,7 @@ describe('TerminalRestore on start', () => {
       { accountId: 'acc-b', authAccountId: 'acc-b', cwd: other, mode: 'session', resumeSessionId: null, title: 'Custom', muted: true },
       { accountId: 'acc-a', authAccountId: 'acc-b', cwd: project, mode: 'session', resumeSessionId: null, title: null, muted: false },
       { accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', resumeSessionId: null, title: 'Build', muted: false },
+      { accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', resumeSessionId: null, title: null, muted: false },
     ])
   })
 

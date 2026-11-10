@@ -499,11 +499,20 @@ export class TerminalService extends TypedEmitter<Events> {
   browsersOf(id: string): string[] {
     const split = this.splits.find((s) => hasPane(s, id))
     if (!split) return []
-    const isOwner = (pane: string) => {
-      const mode = this.terminals.get(pane)?.info.mode
-      return mode !== undefined && mode !== 'browser'
-    }
-    return paneIds(split).filter((pane) => this.terminals.get(pane)?.info.mode === 'browser' && ownerOf(split, pane, isOwner) === id)
+    return paneIds(split).filter((pane) => this.terminals.get(pane)?.info.mode === 'browser' && ownerOf(split, pane, this.isOwner) === id)
+  }
+
+  /** The terminal a browser belongs to (see `browsersOf`); null for a browser on its own. */
+  browserOwner(id: string): string | null {
+    if (this.terminals.get(id)?.info.mode !== 'browser') return null
+    const split = this.splits.find((s) => hasPane(s, id))
+    return split ? ownerOf(split, id, this.isOwner) : null
+  }
+
+  /** A terminal browsers can belong to: any but a browser. */
+  private readonly isOwner = (pane: string): boolean => {
+    const mode = this.terminals.get(pane)?.info.mode
+    return mode !== undefined && mode !== 'browser'
   }
 
   /**
@@ -1186,11 +1195,20 @@ function followTitle(info: TerminalInfo, autoTitle: string): boolean {
   return true
 }
 
-/** Tab title when none was given; the account is the one whose limits the tab uses. */
+/**
+ * Tab title when none was given: the folder. The account (the one whose limits the tab uses) shows as
+ * the tab's colour and in its card, not in the title; only a login is about it.
+ */
 export function defaultTerminalTitle(mode: TerminalInfo['mode'], accountName: string, cwd: string): string {
   if (mode === 'login') return `Anmeldung · ${accountName}`
-  if (mode === 'shell') return `Shell · ${accountName}`
   if (mode === 'browser') return fallbackTitle(null)
+  const folder = basename(cwd) || cwd
+  return mode === 'shell' ? `Shell · ${folder}` : folder
+}
+
+/** The default title of older versions, with the account in it: a saved tab with it had no name of its own. */
+export function legacyTerminalTitle(mode: TerminalInfo['mode'], accountName: string, cwd: string): string {
+  if (mode === 'shell') return `Shell · ${accountName}`
   return `${accountName} · ${basename(cwd) || cwd}`
 }
 

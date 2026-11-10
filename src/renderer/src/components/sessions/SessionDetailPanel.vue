@@ -76,14 +76,14 @@ async function copyId() {
           <h2 class="selectable font-heading text-base leading-snug font-semibold">{{ summary.title }}</h2>
           <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <AccountBadge :account-id="summary.accountId" />
-            <span v-if="folder" class="flex min-w-0 items-center gap-1" :title="folder">
+            <span v-if="folder" class="flex min-w-0 items-center gap-1" v-tooltip="folder">
               <FolderIcon class="size-3.5 shrink-0" />
               <span class="selectable truncate font-mono">{{ shortenPath(folder, app.info?.homeDir) }}</span>
             </span>
             <span
               v-if="summary.worktree"
               class="flex min-w-0 items-center gap-1"
-              :title="`Worktree in ${summary.worktree.path}`"
+              v-tooltip="`Worktree in ${summary.worktree.path}`"
             >
               <FolderGit2Icon class="size-3.5 shrink-0" />
               <span class="selectable truncate">Worktree {{ summary.worktree.name }}</span>

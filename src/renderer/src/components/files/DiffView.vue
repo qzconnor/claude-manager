@@ -334,15 +334,15 @@ const iconButton =
     <!-- The file, its state in git and what changed; how much of it to show. -->
     <header class="flex h-[34px] shrink-0 items-center gap-1.5 border-b pr-1.5 pl-3 text-xs text-foreground">
       <component :is="icon.icon" :class="cn('size-[16px] shrink-0', icon.class)" />
-      <span class="shrink-0 font-medium" :title="absolute">{{ name }}</span>
-      <span v-if="dir" class="min-w-0 truncate text-muted-foreground" :title="absolute">{{ dir }}</span>
+      <span class="shrink-0 font-medium" v-tooltip="absolute">{{ name }}</span>
+      <span v-if="dir" class="min-w-0 truncate text-muted-foreground" v-tooltip="absolute">{{ dir }}</span>
       <!-- Why the whole file shows, beside its name. -->
-      <span v-if="notice" class="min-w-0 truncate text-muted-foreground/80" :title="notice">· {{ notice }}</span>
+      <span v-if="notice" class="min-w-0 truncate text-muted-foreground/80" v-tooltip="notice">· {{ notice }}</span>
       <span class="flex-1" />
       <span
         v-if="state"
         :class="cn('shrink-0 font-mono text-[11px] font-semibold', STATUS_CLASS[state.status])"
-        :title="STATUS_LABEL[state.status] + (state.staged ? ', vorgemerkt' : '')"
+        v-tooltip="STATUS_LABEL[state.status] + (state.staged ? ', vorgemerkt' : '')"
       >
         {{ STATUS_LETTER[state.status] }}
       </span>

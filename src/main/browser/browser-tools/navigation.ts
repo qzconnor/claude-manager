@@ -54,7 +54,7 @@ export const navigationTools: ToolDefinition<never>[] = [
     name: 'browser_tabs',
     title: 'Browser tabs',
     description:
-      "The browser tabs of Claude Manager; they share one profile (cookies, logins). list: all of them; new: opens one below your current browser (with url: opens it there); select: your next actions go to that tab; close: closes a tab you opened (without index: your current one). The user's own tabs stay open. When you are done with the browser, close the tabs you opened, unless the user wants to look at what they show.",
+      "Your browser tabs in Claude Manager, and the user's own; other sessions' tabs are theirs and not listed. All share one profile (cookies, logins). list: all of them; new: opens one below your current browser (with url: opens it there); select: your next actions go to that tab; close: closes a tab you opened (without index: your current one). The user's own tabs stay open. When you are done with the browser, close the tabs you opened, unless the user wants to look at what they show.",
     properties: {
       action: { type: 'string', enum: ['list', 'new', 'select', 'close'] },
       index: { type: 'number', description: 'For select: the tab from the list (0-based). For close: that tab, or your current one without index.' },

@@ -83,7 +83,7 @@ function onFolderKey(event: KeyboardEvent, path: string) {
       <DropdownMenuGroup>
         <DropdownMenuSub v-for="folder in recent.folders.value" :key="folder.path">
           <DropdownMenuSubTrigger
-            :title="folder.path"
+            v-tooltip.left="folder.path"
             :text-value="folder.name"
             @click.capture="startIn($event, folder.path)"
             @keydown.capture="onFolderKey($event, folder.path)"
@@ -163,11 +163,13 @@ function onFolderKey(event: KeyboardEvent, path: string) {
     </DropdownMenuGroup>
     <DropdownMenuSeparator />
     <DropdownMenuGroup>
-      <!-- In groups a browser always belongs to a session: beside the one with the keyboard. -->
-      <DropdownMenuItem v-if="terminals.grouped" :disabled="!terminals.sessionFor(terminals.active)" @select="launcher.browserFor(terminals.active)">
-        <GlobeIcon />
-        Browser daneben öffnen
-      </DropdownMenuItem>
+      <!-- In groups a browser always belongs to a session: the browser tab with the one with the keyboard; not while it shows its pages. -->
+      <template v-if="terminals.grouped">
+        <DropdownMenuItem v-if="!terminals.browserShownFor(terminals.sessionFor(terminals.active)?.id)" :disabled="!terminals.sessionFor(terminals.active)" @select="launcher.browserFor(terminals.active)">
+          <GlobeIcon />
+          Browser öffnen
+        </DropdownMenuItem>
+      </template>
       <DropdownMenuItem v-else @select="launcher.browser()">
         <GlobeIcon />
         Browser öffnen

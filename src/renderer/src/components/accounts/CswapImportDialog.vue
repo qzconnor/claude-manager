@@ -115,12 +115,12 @@ async function submit() {
                     <Badge
                       v-if="entry.active"
                       variant="secondary"
-                      title="cswap hat ~/.claude gerade auf diesen Account geschaltet (Standard-Account)."
+                      v-tooltip="'cswap hat ~/.claude gerade auf diesen Account geschaltet (Standard-Account).'"
                     >
                       Aktiv
                     </Badge>
                   </FieldTitle>
-                  <FieldDescription class="truncate" :title="login(entry)">{{ login(entry) }}</FieldDescription>
+                  <FieldDescription class="truncate" v-tooltip="login(entry)">{{ login(entry) }}</FieldDescription>
                   <FieldDescription v-if="entry.existingAccountId">
                     Schon vorhanden{{ existingName(entry) ? ` als „${existingName(entry)}“` : '' }}
                   </FieldDescription>
