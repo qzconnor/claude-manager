@@ -137,7 +137,7 @@ async function copyId() {
           <!-- The folder is the node above in the list. -->
           <ItemDescription class="flex min-w-0 items-center gap-2 text-xs">
             <!-- A worktree has a branch of its own: the name says enough, the rest is in the tooltip. -->
-            <span v-if="session.worktree" class="flex min-w-0 items-center gap-1" :title="worktreeTitle">
+            <span v-if="session.worktree" class="flex min-w-0 items-center gap-1" v-tooltip="worktreeTitle">
               <FolderGit2Icon class="size-3 shrink-0" />
               <span class="truncate">{{ session.worktree.name }}</span>
             </span>

@@ -337,9 +337,13 @@ function openFolder() {
             Neue Session unten
             <ContextMenuShortcut>Alt+Umschalt+Minus</ContextMenuShortcut>
           </ContextMenuItem>
-          <ContextMenuItem :disabled="!terminals.sessionFor(terminal)" @select="launcher.browserFor(terminal)">
+          <ContextMenuItem v-if="terminals.browserShownFor(terminals.sessionFor(terminal)?.id)" @select="terminals.closeBrowserTab()">
+            <XIcon />
+            Browser schließen
+          </ContextMenuItem>
+          <ContextMenuItem v-else :disabled="!terminals.sessionFor(terminal)" @select="launcher.browserFor(terminal)">
             <GlobeIcon />
-            Browser daneben öffnen
+            Browser öffnen
           </ContextMenuItem>
           <ContextMenuItem :disabled="others.length === 0" @select="terminals.dropTab(terminal.id, groupId, 'right')">
             <PanelRightIcon />

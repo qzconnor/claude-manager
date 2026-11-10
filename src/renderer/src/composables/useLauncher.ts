@@ -72,16 +72,21 @@ export function useLauncher() {
     split,
     browser,
     /**
-     * A browser for the session of `terminal` (for a browser, the session it belongs to): below the
-     * browser the session had last, so in groups it comes as a tab beside it, else beside the session.
-     * Nothing without a session: with the tabs in groups a browser always belongs to one.
+     * With the tabs in groups, the browser tab with the pages of the session of `terminal` (for a page,
+     * the session it belongs to); without pages it asks for an address. Nothing without a session: with
+     * the tabs in groups a browser always belongs to one.
      */
     browserFor(terminal: TerminalInfo | null) {
       const session = terminals.sessionFor(terminal)
-      if (!session) return undefined
-      const own = terminals.browsersOf(session.id)
-      const last = own.length ? own.reduce((best, b) => (terminals.focusedAt(b.id) > terminals.focusedAt(best.id) ? b : best)) : null
-      return browser(null, last ? { terminalId: last.id, direction: 'column' } : { terminalId: session.id, direction: 'row' })
+      if (session) terminals.showBrowser(session.id)
+    },
+    /**
+     * Another page for a session, after its last one (in main's split below it, so it belongs to the
+     * session too), else beside the session. With the tabs in groups it shows in the browser tab.
+     */
+    newPage(sessionId: string, url?: string | null) {
+      const last = terminals.browsersOf(sessionId).at(-1)
+      return browser(url ?? null, last ? { terminalId: last.id, direction: 'column' } : { terminalId: sessionId, direction: 'row' })
     },
     /**
      * Splits the terminal with the keyboard, while the terminals are shown. In groups: a new group

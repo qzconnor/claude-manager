@@ -20,7 +20,7 @@ const label = computed(() => identityLabel(props.identity))
 </script>
 
 <template>
-  <span v-if="label" :class="cn('flex min-w-0', props.class)" :title="label">
+  <span v-if="label" :class="cn('flex min-w-0', props.class)" v-tooltip="label">
     <span v-if="identity.email" class="truncate">{{ identity.email }}</span>
     <template v-if="organization">
       <span v-if="identity.email" aria-hidden="true" class="shrink-0 px-1">·</span>

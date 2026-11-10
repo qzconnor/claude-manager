@@ -6,7 +6,7 @@ import { readJsonSync, writeJsonAtomicSync } from '../lib/json-file'
 import { locateTranscript, SESSION_ID_RE } from '../lib/session-files'
 import type { AccountService } from './account-service'
 import type { SettingsService } from './settings-service'
-import { defaultTerminalTitle, type TerminalService } from './terminal-service'
+import { defaultTerminalTitle, legacyTerminalTitle, type TerminalService } from './terminal-service'
 
 /** What is remembered of a terminal. Login tabs are not. */
 interface SavedTerminal {
@@ -95,8 +95,9 @@ export class TerminalRestore {
       if (!isSavedTerminal(tab) || !accounts.has(tab.accountId)) continue
       // Without the lending account the session runs with its own login again.
       const auth = accounts.get(tab.authAccountId) ?? accounts.get(tab.accountId)!
-      // Older versions saved no flag: a title other than the default was chosen.
-      const fixedTitle = tab.fixedTitle ?? tab.title !== defaultTerminalTitle(tab.mode, auth.name, tab.cwd)
+      // Older versions saved no flag: a title other than the default (theirs had the account in it) was chosen.
+      const defaults = [defaultTerminalTitle(tab.mode, auth.name, tab.cwd), legacyTerminalTitle(tab.mode, auth.name, tab.cwd)]
+      const fixedTitle = tab.fixedTitle ?? !defaults.includes(tab.title)
       // In the folder the session is in now: `/cd` may have moved it after the tab was saved.
       const located = tab.sessionId ? await this.locate(tab.accountId, tab.sessionId, tab.cwd) : null
       try {

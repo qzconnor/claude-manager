@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useElementSize } from '@vueuse/core'
-import { computed, ref, type Component } from 'vue'
+import { computed, ref, watch, type Component } from 'vue'
 import { layoutPanes, type PaneDivider, type PaneRect } from '@shared/panes'
 import DiffView from '@/components/files/DiffView.vue'
 import FileTreePanel from '@/components/files/FileTreePanel.vue'
@@ -8,7 +8,7 @@ import { PAGE_INFO } from '@/lib/pages'
 import { dockRect } from '@/lib/tab-drag'
 import { cn } from '@/lib/utils'
 import { baseName } from '@/lib/file-tree'
-import { diffOfTab, PAGES, pageTab, TAB_BAR_HEIGHT, type DiffFile, type PageName } from '@/lib/workspace'
+import { BROWSER_BAR_HEIGHT, BROWSER_TAB, diffOfTab, PAGES, pageTab, TAB_BAR_HEIGHT, type DiffFile, type PageName } from '@/lib/workspace'
 import { useBrowsersStore } from '@/stores/browsers'
 import { MAX_TREE_SHARE, useFileTreeStore, type TreeTarget } from '@/stores/file-tree'
 import { useSettingsStore } from '@/stores/settings'
@@ -18,6 +18,8 @@ import AccountsView from '@/views/AccountsView.vue'
 import DashboardView from '@/views/DashboardView.vue'
 import SessionsView from '@/views/SessionsView.vue'
 import SettingsView from '@/views/SettingsView.vue'
+import BrowserBar from './BrowserBar.vue'
+import BrowserEmpty from './BrowserEmpty.vue'
 import BrowserPane from './BrowserPane.vue'
 import GroupTabBar from './GroupTabBar.vue'
 import TerminalEmptyState from './TerminalEmptyState.vue'
@@ -30,6 +32,10 @@ import TerminalPane from './TerminalPane.vue'
  * would start xterm anew. Pages that are open as tabs are kept alive while hidden. A group whose tab
  * has its file tree open shares its content with the tree, on the side the settings name; a file's
  * changes opened from the tree are a tab of the group, with the tree still beside them.
+ *
+ * The sessions' browsers are pages of the one browser tab: all of them lie where it shows its page,
+ * the one of the session it follows is shown. A page Claude drives is drawn there unseen, in the same
+ * size, so its screenshots look as the page would.
  */
 const terminals = useTerminalsStore()
 const browsers = useBrowsersStore()
@@ -62,13 +68,16 @@ function areaStyle(rect: PaneRect) {
 function barStyle(rect: PaneRect) {
   return { left: percent(rect.left), top: percent(rect.top), width: percent(rect.width) }
 }
-/** Below the group's tab bar; beside the file tree (`tree` px wide) if the group shows one. */
-function contentStyle(rect: PaneRect, tree = 0) {
+/**
+ * Below the group's tab bar (and `below` px more); beside the file tree (`tree` px wide) if the group
+ * shows one.
+ */
+function contentStyle(rect: PaneRect, tree = 0, below = 0) {
   return {
     left: tree && treeSide.value === 'left' ? `calc(${percent(rect.left)} + ${tree}px)` : percent(rect.left),
     width: tree ? `calc(${percent(rect.width)} - ${tree}px)` : percent(rect.width),
-    top: `calc(${percent(rect.top)} + ${TAB_BAR_HEIGHT}px)`,
-    height: `calc(${percent(rect.height)} - ${TAB_BAR_HEIGHT}px)`,
+    top: `calc(${percent(rect.top)} + ${TAB_BAR_HEIGHT + below}px)`,
+    height: `calc(${percent(rect.height)} - ${TAB_BAR_HEIGHT + below}px)`,
   }
 }
 
@@ -126,12 +135,37 @@ function focusTab(tab: string) {
   if (terminals.focusedTab !== tab) terminals.activateTab(tab)
 }
 
+/** The group of the browser tab: the sessions' pages lie in it, below the tab's bar, also while hidden. */
+const browserGroup = computed(() => tabGroups.value.all.get(BROWSER_TAB))
+const browserShown = computed(() => isShown(BROWSER_TAB))
+/** The page the browser tab shows right now; null while it is hidden or its session has none. */
+const pageShown = computed(() => (browserShown.value ? (terminals.browserPage?.id ?? null) : null))
+/** Where the sessions' pages lie; without the browser tab in the whole window, for those Claude drives. */
+const pageStyle = computed(() => contentStyle(rectOf(browserGroup.value), 0, BROWSER_BAR_HEIGHT))
+/** The browser tab's bar, at the top of its content. */
+const browserBarStyle = computed(() => {
+  const rect = rectOf(browserGroup.value)
+  return { left: percent(rect.left), width: percent(rect.width), top: `calc(${percent(rect.top)} + ${TAB_BAR_HEIGHT}px)`, height: `${BROWSER_BAR_HEIGHT}px` }
+})
+
+/** A terminal on screen: shown by its group, a session's page shown by the browser tab. */
+const onScreen = (id: string) => (terminals.isSessionPage(id) ? pageShown.value === id : isShown(id))
+/** A terminal with the keyboard: its tab has it, a session's page while the browser tab shows it. */
+const hasKeyboard = (id: string) =>
+  terminals.isSessionPage(id) ? terminals.focusedTab === BROWSER_TAB && pageShown.value === id : terminals.focusedTab === id
+const placeOf = (id: string) => (terminals.isSessionPage(id) ? pageStyle.value : contentOf(id))
+
 /**
  * A browser Claude drives in a hidden tab is drawn, unseen: a page that isn't drawn has no size,
  * and neither its screenshots nor the clicks on it would work.
  */
 const driven = (id: string) => browsers.controls.get(id)?.active === true
-const inBackground = (id: string) => !isShown(id) && driven(id)
+const inBackground = (id: string) => !onScreen(id) && driven(id)
+
+/** Browsers of the last run load once they are shown or Claude drives them (see `terminals.sleeping`). */
+const mounted = computed(() => terminals.terminals.filter((t) => !terminals.sleeping.has(t.id)))
+const waking = computed(() => [...terminals.sleeping].filter((id) => onScreen(id) || browsers.controls.get(id)?.busy === true || driven(id)))
+watch(waking, (ids) => ids.forEach((id) => terminals.wake(id)), { immediate: true })
 
 const openPages = computed(() =>
   PAGES.flatMap((page) => {
@@ -192,7 +226,9 @@ const dockPreview = computed(() => {
     ? PAGE_INFO[page].label
     : diff
       ? baseName(diff.path)
-      : (terminals.terminals.find((t) => t.id === dock.tabId)?.title ?? '')
+      : dock.tabId === BROWSER_TAB
+        ? 'Browser'
+        : (terminals.terminals.find((t) => t.id === dock.tabId)?.title ?? '')
   return { rect: dock.side === 'center' ? rect : dockRect(rect, dock.side), title }
 })
 </script>
@@ -221,20 +257,32 @@ const dockPreview = computed(() => {
       <TerminalEmptyState v-if="group.tabs.length === 0" />
     </div>
 
-    <!-- A browser tab shows its page instead of a terminal. -->
+    <!-- A browser shows its page instead of a terminal; a session's page lies in the browser tab. -->
     <component
       :is="terminal.mode === 'browser' ? BrowserPane : TerminalPane"
-      v-for="terminal in terminals.terminals"
-      v-show="isShown(terminal.id) || inBackground(terminal.id)"
+      v-for="terminal in mounted"
+      v-show="onScreen(terminal.id) || inBackground(terminal.id)"
       :key="terminal.id"
       :class="cn('absolute', inBackground(terminal.id) && 'pointer-events-none -z-10 opacity-0')"
       :aria-hidden="inBackground(terminal.id) || undefined"
-      :style="contentOf(terminal.id)"
+      :style="placeOf(terminal.id)"
       :terminal="terminal"
-      :active="terminals.focusedTab === terminal.id"
-      :dimmed="several && terminals.focusedTab !== terminal.id"
+      :active="hasKeyboard(terminal.id)"
+      :dimmed="several && !hasKeyboard(terminal.id)"
       @focus="terminals.activate(terminal.id)"
     />
+
+    <!-- The browser tab: its bar with the session and its pages, and while the session has none, the way to one. -->
+    <template v-if="browserShown">
+      <BrowserBar class="absolute" :style="browserBarStyle" />
+      <BrowserEmpty
+        v-if="!pageShown"
+        class="absolute"
+        :style="pageStyle"
+        :active="terminals.focusedTab === BROWSER_TAB"
+        @pointerdown.capture="focusTab(BROWSER_TAB)"
+      />
+    </template>
 
     <!-- The file trees, by their tab: each tab comes back to its own place in the tree. -->
     <FileTreePanel

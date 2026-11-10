@@ -70,7 +70,7 @@ const activity = computed(() => {
         size="icon-xs"
         class="-my-1 -mr-1 text-muted-foreground"
         aria-label="Tab umbenennen"
-        title="Tab umbenennen"
+        v-tooltip="'Tab umbenennen'"
         @click="$emit('rename')"
       >
         <PencilIcon class="size-3.5" />
@@ -122,7 +122,7 @@ const activity = computed(() => {
           size="icon-xs"
           class="-my-1 -mr-1 text-muted-foreground"
           :aria-label="openLabel"
-          :title="openLabel"
+          v-tooltip="openLabel"
           @click="$emit('openFolder')"
         >
           <FolderOpenIcon class="size-3.5" />

@@ -1,6 +1,5 @@
 import { webContents, type WebContents } from 'electron'
 import { BLANK_PAGE } from '@shared/browser'
-import { hasPane, paneIds } from '@shared/panes'
 import type { BrowserActivity, BrowserControlState, BrowserDownload, BrowserEmulation, BrowserHighlight, BrowserLoginRequest, BrowserViewport } from '@shared/types'
 import { TypedEmitter } from '../lib/typed-emitter'
 import { browserDownloads } from '../window/browser-downloads'
@@ -532,29 +531,47 @@ export class BrowserControl extends TypedEmitter<Events> {
   }
 
   /**
-   * The browser of a session: the one it used last, else one in its tab, else a new one next to it.
-   * Synchronous, so two calls of a session at once don't open two browsers.
+   * The browser of a session: the one it used last, else one that belongs to it (opened beside it,
+   * also by the user), else a new one next to it. Synchronous, so two calls of a session at once don't
+   * open two browsers.
    */
   private browserFor(sessionId: string): string {
     const list = this.terminals.list()
-    const isBrowser = (id: string) => list.find((t) => t.id === id)?.mode === 'browser'
-    const known = this.sessionBrowsers.get(sessionId)
-    if (known && isBrowser(known)) return known
+    const current = this.currentOf(sessionId, list)
+    if (current) {
+      this.sessionBrowsers.set(sessionId, current)
+      return current
+    }
     if (!list.some((t) => t.id === sessionId)) throw new ToolError('This session is no longer open in Claude Manager.')
-    const split = this.terminals.layouts().find((s) => hasPane(s, sessionId))
-    const beside = split ? paneIds(split).find(isBrowser) : undefined
-    const id = beside ?? this.terminals.openBrowser({ split: { terminalId: sessionId, direction: 'row' } }).id
-    if (!beside) this.openedBy.set(id, sessionId)
+    const { id } = this.terminals.openBrowser({ split: { terminalId: sessionId, direction: 'row' } })
+    this.openedBy.set(id, sessionId)
     this.sessionBrowsers.set(sessionId, id)
     return id
   }
 
-  /** The browser tabs of the app in their order, as browser_tabs shows them to a session. */
+  /** The browser the session's next action goes to, if it has one: the one it used last, else its first own. */
+  private currentOf(sessionId: string, list = this.terminals.list()): string | null {
+    const known = this.sessionBrowsers.get(sessionId)
+    if (known && this.isTabOf(sessionId, known, list)) return known
+    return this.terminals.browsersOf(sessionId)[0] ?? null
+  }
+
+  /** A browser the session may use: one of its own, or one of the user's that belongs to no session. */
+  private isTabOf(sessionId: string, browserId: string, list = this.terminals.list()): boolean {
+    if (list.find((t) => t.id === browserId)?.mode !== 'browser') return false
+    const owner = this.terminals.browserOwner(browserId)
+    return owner === null || owner === sessionId
+  }
+
+  /**
+   * The browser tabs a session sees in browser_tabs, in the app's order: its own and the user's that
+   * belong to no session. The pages of other sessions are theirs; they don't show up.
+   */
   tabs(sessionId: string): BrowserTab[] {
     const list = this.terminals.list()
-    const current = this.sessionBrowsers.get(sessionId)
+    const current = this.currentOf(sessionId, list)
     return list
-      .filter((t) => t.mode === 'browser')
+      .filter((t) => this.isTabOf(sessionId, t.id, list))
       .map((t, index) => {
         const control = this.browsers.get(t.id)?.control
         const other = control && control.sessionId !== sessionId && this.isActive(this.browsers.get(t.id)!) ? control.sessionId : null
@@ -572,16 +589,16 @@ export class BrowserControl extends TypedEmitter<Events> {
 
   /**
    * Opens another browser tab for the session and makes it the current one: below its current
-   * browser, or next to the session when it has none yet.
+   * browser (or its last one, while it uses one of the user's), or next to the session when it has
+   * none yet. So the tab belongs to the session too.
    */
   openTab(sessionId: string): BrowserTab {
     const list = this.terminals.list()
     if (!list.some((t) => t.id === sessionId)) throw new ToolError('This session is no longer open in Claude Manager.')
     const current = this.sessionBrowsers.get(sessionId)
-    const split =
-      current && list.some((t) => t.id === current)
-        ? { terminalId: current, direction: 'column' as const }
-        : { terminalId: sessionId, direction: 'row' as const }
+    const own = this.terminals.browsersOf(sessionId)
+    const anchor = current && own.includes(current) ? current : own.at(-1)
+    const split = anchor ? { terminalId: anchor, direction: 'column' as const } : { terminalId: sessionId, direction: 'row' as const }
     const { id } = this.terminals.openBrowser({ split })
     this.openedBy.set(id, sessionId)
     this.sessionBrowsers.set(sessionId, id)

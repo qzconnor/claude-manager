@@ -95,7 +95,7 @@ function show(folder: FolderTokenStats) {
               :key="row.folder.path ?? `#${row.folder.projectKey}`"
               class="cursor-pointer"
               tabindex="0"
-              :title="`${row.folder.path ?? row.folder.projectKey}\n${breakdown(row.folder)}\nKlicken, um die Sessions zu zeigen`"
+              v-tooltip="`${row.folder.path ?? row.folder.projectKey}\n${breakdown(row.folder)}\nKlicken, um die Sessions zu zeigen`"
               @click="show(row.folder)"
               @keydown.enter="show(row.folder)"
             >

@@ -42,7 +42,7 @@ async function switchTo(accountId: string) {
     class="glass flex max-w-full items-center gap-3 rounded-xl py-2 pr-2 pl-4 shadow-lg ring-1 ring-foreground/10"
   >
     <TriangleAlertIcon class="size-4 shrink-0 text-warning" />
-    <span class="min-w-0 truncate text-sm" :title="limit.message">
+    <span class="min-w-0 truncate text-sm" v-tooltip="limit.message">
       {{ limitLabel(limit.type) }} von „{{ accountName }}“ erreicht
       <span v-if="limit.resetsAt" class="text-muted-foreground">· frei {{ formatReset(limit.resetsAt, now) }}</span>
     </span>

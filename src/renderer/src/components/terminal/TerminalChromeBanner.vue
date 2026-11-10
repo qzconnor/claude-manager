@@ -78,7 +78,7 @@ async function dismiss() {
       variant="ghost"
       class="shrink-0"
       aria-label="Nicht mehr anzeigen"
-      title="Nicht mehr anzeigen"
+      v-tooltip="'Nicht mehr anzeigen'"
       @click="dismiss"
     >
       <XIcon />

@@ -8,6 +8,7 @@ import AppShell from '@/components/layout/AppShell.vue'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Toaster } from '@/components/ui/sonner'
 import { Spinner } from '@/components/ui/spinner'
+import AppTooltip from '@/components/common/AppTooltip.vue'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useShortcuts } from '@/composables/useShortcuts'
 import { useThemeSync } from '@/composables/useThemeSync'
@@ -61,5 +62,6 @@ onMounted(async () => {
     <CommandPalette v-if="ready" />
     <WorktreeDialog v-if="ready" />
     <Toaster :theme="theme.mode" position="bottom-right" close-button />
+    <AppTooltip />
   </TooltipProvider>
 </template>

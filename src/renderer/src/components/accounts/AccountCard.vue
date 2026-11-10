@@ -141,7 +141,7 @@ function keepLogin() {
           Gedacht für {{ expectedLabel }}. Melde dich neu an und wähl im Browser den passenden Login.
         </AlertDescription>
         <AlertAction>
-          <Button variant="ghost" size="xs" title="Login behalten und nicht mehr vergleichen" @click="keepLogin">
+          <Button variant="ghost" size="xs" v-tooltip="'Login behalten und nicht mehr vergleichen'" @click="keepLogin">
             Ignorieren
           </Button>
         </AlertAction>
@@ -156,12 +156,12 @@ function keepLogin() {
             <dd class="truncate font-mono">{{ account.secretHint }}</dd>
           </template>
           <dt class="text-muted-foreground">Konfiguration</dt>
-          <dd class="selectable truncate font-mono" :title="account.configDir">
+          <dd class="selectable truncate font-mono" v-tooltip="account.configDir">
             {{ shortenPath(account.configDir, app.info?.homeDir) }}
           </dd>
           <template v-if="account.defaultCwd">
             <dt class="text-muted-foreground">Arbeitsordner</dt>
-            <dd class="selectable truncate font-mono" :title="account.defaultCwd">
+            <dd class="selectable truncate font-mono" v-tooltip="account.defaultCwd">
               {{ shortenPath(account.defaultCwd, app.info?.homeDir) }}
             </dd>
           </template>

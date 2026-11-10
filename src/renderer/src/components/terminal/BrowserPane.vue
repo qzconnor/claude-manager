@@ -685,7 +685,7 @@ watch(
         variant="ghost"
         size="icon-sm"
         :aria-label="logOpen ? 'Protokoll ausblenden' : unseenProblem ? 'Protokoll zeigen, neue Fehler' : 'Protokoll zeigen'"
-        :title="logOpen ? 'Protokoll ausblenden' : unseenProblem ? 'Protokoll zeigen (neue Fehler)' : 'Protokoll zeigen'"
+        v-tooltip="logOpen ? 'Protokoll ausblenden' : unseenProblem ? 'Protokoll zeigen (neue Fehler)' : 'Protokoll zeigen'"
         :aria-pressed="logOpen"
         :class="cn('relative', logOpen && 'bg-muted text-foreground')"
         @click="logOpen = !logOpen"
@@ -702,7 +702,7 @@ watch(
         variant="ghost"
         size="icon-sm"
         aria-label="Im Standardbrowser öffnen"
-        title="Im Standardbrowser öffnen"
+        v-tooltip="'Im Standardbrowser öffnen'"
         :disabled="!external"
         @click="openExternal"
       >
@@ -863,7 +863,7 @@ watch(
             size="icon-xs"
             class="shrink-0 rounded-full"
             aria-label="Originalgröße"
-            title="Originalgröße wiederherstellen"
+            v-tooltip="'Originalgröße wiederherstellen'"
             @click="resetViewport"
           >
             <XIcon />
@@ -872,7 +872,7 @@ watch(
         <div
           v-if="emulation.length"
           class="pointer-events-auto flex min-w-0 items-center gap-1.5 rounded-full border bg-popover/90 py-0.5 pr-0.5 pl-2.5 text-[11px] text-popover-foreground shadow-sm backdrop-blur-md animate-in fade-in slide-in-from-bottom-1 duration-200"
-          :title="`Claude emuliert: ${emulation.join(', ')}`"
+          v-tooltip="`Claude emuliert: ${emulation.join(', ')}`"
         >
           <FlaskConicalIcon class="size-3.5 shrink-0 text-muted-foreground" />
           <span class="truncate font-medium">{{ emulation.join(' · ') }}</span>
@@ -881,7 +881,7 @@ watch(
             size="icon-xs"
             class="shrink-0 rounded-full"
             aria-label="Emulation beenden"
-            title="Emulation beenden"
+            v-tooltip="'Emulation beenden'"
             @click="resetEmulation"
           >
             <XIcon />
@@ -890,7 +890,7 @@ watch(
         <div
           v-if="routes.length"
           class="pointer-events-auto flex min-w-0 items-center gap-1.5 rounded-full border bg-popover/90 py-0.5 pr-0.5 pl-2.5 text-[11px] text-popover-foreground shadow-sm backdrop-blur-md animate-in fade-in slide-in-from-bottom-1 duration-200"
-          :title="`Claude beantwortet Anfragen selbst:\n${routes.join('\n')}`"
+          v-tooltip="`Claude beantwortet Anfragen selbst:\n${routes.join('\n')}`"
         >
           <RouteIcon class="size-3.5 shrink-0 text-muted-foreground" />
           <span class="truncate font-medium">{{ routes.length === 1 ? routes[0] : `${routes.length} Routen` }}</span>
@@ -899,7 +899,7 @@ watch(
             size="icon-xs"
             class="shrink-0 rounded-full"
             aria-label="Routen beenden"
-            title="Routen beenden"
+            v-tooltip="'Routen beenden'"
             @click="resetRoutes"
           >
             <XIcon />
@@ -926,7 +926,7 @@ watch(
                 control.takenOver ? 'bg-warning/15 text-warning' : 'bg-primary/15 text-primary',
               )
             "
-            :title="statusCompact ? `Claude · ${control.sessionTitle}` : undefined"
+            v-tooltip="statusCompact ? `Claude · ${control.sessionTitle}` : undefined"
           >
             <span
               v-if="control.busy"
@@ -940,7 +940,7 @@ watch(
             <button
               type="button"
               class="flex min-w-0 flex-1 flex-col items-start gap-px pr-4 text-left leading-tight outline-none"
-              :title="logOpen ? 'Protokoll ausblenden' : 'Protokoll zeigen'"
+              v-tooltip="logOpen ? 'Protokoll ausblenden' : 'Protokoll zeigen'"
               @click="logOpen = !logOpen"
             >
               <!-- Transitions only: the shimmer is an animation without end, the swap would wait for it. -->
@@ -967,7 +967,7 @@ watch(
               :variant="control.takenOver ? 'default' : 'secondary'"
               size="xs"
               class="shrink-0 rounded-full"
-              :title="control.takenOver ? 'Claude darf den Browser wieder bedienen' : 'Selbst bedienen, Claude wartet so lange'"
+              v-tooltip="control.takenOver ? 'Claude darf den Browser wieder bedienen' : 'Selbst bedienen, Claude wartet so lange'"
               @click="takeOver"
             >
               <PlayIcon v-if="control.takenOver" data-icon="inline-start" />

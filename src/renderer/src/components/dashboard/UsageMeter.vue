@@ -47,7 +47,7 @@ const reset = computed(() =>
       <span>{{ reset }}</span>
       <span
         v-if="hint"
-        :title="hint.title"
+        v-tooltip="hint.title"
         :class="cn('shrink-0 tabular-nums', hint.warn && cn('font-medium', usageTextClass.high))"
       >
         {{ hint.text }}

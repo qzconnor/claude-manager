@@ -5,9 +5,15 @@ import type { PaneNode } from '@shared/types'
 /**
  * The window as in VS Code: its space is shared by groups (a tree of splits like the parts of a tab
  * used to be), and every group has a tab bar of its own. A tab is a terminal (by its id), one of the
- * app's pages (`page:settings`) or a file's changes from the file tree (`diff:[root, path]`). Like
- * `@shared/panes`, nothing is changed in place.
+ * app's pages (`page:settings`), a file's changes from the file tree (`diff:[root, path]`) or the
+ * browser of the sessions (`BROWSER_TAB`). Like `@shared/panes`, nothing is changed in place.
  */
+
+/**
+ * The one tab that shows the sessions' browsers: the pages of the session with the keyboard. The pages
+ * of the other sessions go on in the background, without tabs of their own.
+ */
+export const BROWSER_TAB = 'view:browser'
 
 export const PAGES = ['sessions', 'dashboard', 'accounts', 'settings'] as const
 export type PageName = (typeof PAGES)[number]
@@ -44,8 +50,8 @@ export function diffOfTab(tab: string | null | undefined): DiffFile | null {
   return null
 }
 
-/** A tab without a terminal: a page or a file's changes. */
-export const isViewTab = (tab: string) => pageOfTab(tab) !== null || diffOfTab(tab) !== null
+/** A tab without a terminal: a page, a file's changes or the browser tab. */
+export const isViewTab = (tab: string) => tab === BROWSER_TAB || pageOfTab(tab) !== null || diffOfTab(tab) !== null
 
 /** A part of the window with tabs of its own. */
 export interface TabGroup {
@@ -255,3 +261,6 @@ export function groupDropSpot(
 
 /** Height of a group's tab bar (px); the group's content starts below it. */
 export const TAB_BAR_HEIGHT = 36
+
+/** Height of the browser tab's bar with the session and its pages (px); the pages start below it. */
+export const BROWSER_BAR_HEIGHT = 34

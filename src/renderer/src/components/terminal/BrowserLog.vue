@@ -48,13 +48,13 @@ watch(
         size="icon-xs"
         class="ml-auto"
         aria-label="Protokoll leeren"
-        title="Protokoll leeren"
+        v-tooltip="'Protokoll leeren'"
         :disabled="entries.length === 0"
         @click="browsers.clearLog(terminalId)"
       >
         <Trash2Icon />
       </Button>
-      <Button variant="ghost" size="icon-xs" aria-label="Protokoll schließen" title="Protokoll schließen" @click="emit('close')">
+      <Button variant="ghost" size="icon-xs" aria-label="Protokoll schließen" v-tooltip="'Protokoll schließen'" @click="emit('close')">
         <XIcon />
       </Button>
     </div>
@@ -83,7 +83,7 @@ watch(
           <p
             v-if="entry.detail"
             :class="cn('mt-0.5 line-clamp-3 break-words text-muted-foreground', entry.status === 'error' && 'text-destructive')"
-            :title="entry.detail"
+            v-tooltip="entry.detail"
           >
             {{ entry.detail }}
           </p>
