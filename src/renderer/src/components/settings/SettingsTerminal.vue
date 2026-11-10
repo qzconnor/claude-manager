@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { CursorStyle, DiffColors, PanelBackground, TerminalPadding, TerminalRenderer, TerminalSettings, UnicodeMode } from '@shared/types'
+import type { CursorStyle, DiffColors, LogoColor, PanelBackground, TerminalPadding, TerminalRenderer, TerminalSettings, UnicodeMode } from '@shared/types'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -52,6 +52,7 @@ const minimumContrastRatio = t('minimumContrastRatio', 150)
 const colorSchemeId = t('colorSchemeId')
 const panelBackground = t('panelBackground')
 const diffColors = t('diffColors')
+const logoColor = t('logoColor')
 const modernConpty = t('modernConpty')
 
 const WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900]
@@ -75,6 +76,10 @@ const PANEL_BACKGROUNDS: { value: PanelBackground; label: string }[] = [
 ]
 const DIFF_COLORS: { value: DiffColors; label: string }[] = [
   { value: 'theme', label: 'Theme' },
+  { value: 'original', label: 'Original' },
+]
+const LOGO_COLORS: { value: LogoColor; label: string }[] = [
+  { value: 'theme', label: 'Akzentfarbe' },
   { value: 'original', label: 'Original' },
 ]
 const FOLLOW_APP = '__app__'
@@ -199,6 +204,13 @@ function onScheme(value: unknown) {
         description="Grün und Rot hinter geänderten Zeilen, etwa bei Update. Theme: durchscheinend in den Farben des Farbschemas. Original: die deckenden Farben von Claude Code. Ein Wechsel dieser Option wirkt auf alles, was Claude danach zeichnet."
       >
         <SegmentedControl v-model="diffColors" :options="DIFF_COLORS" aria-label="Diff-Farben" />
+      </SettingField>
+      <SettingField
+        anchor="terminal.logoColor"
+        label="Claude-Logo"
+        description="Die Krabbe oben in Claude Code, auch wenn sie sich bewegt. Akzentfarbe: in der Akzentfarbe des Farbschemas, folgt auch einem Wechsel des Themes. Original: im Orange von Claude Code. Ein Wechsel dieser Option wirkt auf alles, was Claude danach zeichnet."
+      >
+        <SegmentedControl v-model="logoColor" :options="LOGO_COLORS" aria-label="Claude-Logo" />
       </SettingField>
       <SettingField anchor="terminal.cursorStyle" label="Cursor">
         <SegmentedControl :model-value="cursorStyle" :options="CURSORS" aria-label="Cursor" @update:model-value="onCursor" />

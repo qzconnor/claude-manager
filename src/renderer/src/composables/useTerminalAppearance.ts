@@ -49,12 +49,14 @@ export function useTerminalAppearance() {
   const palette = computed<TerminalPalette>(() => theme.value.terminal)
   /** Whether the terminal's colors are dark: programs that ask (Claude Code's "Auto" theme) are told. */
   const dark = computed(() => theme.value.mode === 'dark')
-  /** See-through colors of the palette slots that Claude's backgrounds are exchanged for. */
-  const slotTints = computed<SlotTints>(() => themeSlotTints(palette.value))
+  /** See-through colors of the palette slots that Claude's backgrounds (and its crab) are exchanged for. */
+  const slotTints = computed<SlotTints>(() => themeSlotTints(palette.value, theme.value.colors.primary))
   /** Which of Claude's backgrounds the output filter exchanges, and for what. */
   const backgrounds = computed(() =>
     backgroundReplacements(store.settings.terminal.panelBackground, store.settings.terminal.diffColors),
   )
+  /** Whether the output filter gives Claude Code's crab the accent of the theme. */
+  const logo = computed(() => store.settings.terminal.logoColor)
 
   const containerBackground = computed(() => {
     const opacity = store.settings.terminal.backgroundOpacity
@@ -66,5 +68,5 @@ export function useTerminalAppearance() {
   /** Laid over the parts of a split tab without the keyboard, so the one with it stands out. */
   const inactiveVeil = computed(() => `color-mix(in oklab, ${palette.value.background} 45%, transparent)`)
 
-  return { palette, dark, slotTints, containerBackground, inactiveVeil, backgrounds }
+  return { palette, dark, slotTints, containerBackground, inactiveVeil, backgrounds, logo }
 }

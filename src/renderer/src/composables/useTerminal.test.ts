@@ -21,7 +21,7 @@ vi.mock('@/stores/app', () => ({ useAppStore: vi.fn() }))
 vi.mock('@/stores/settings', () => ({ useSettingsStore: vi.fn() }))
 
 const palette = findTheme('ember').terminal
-const tints = themeSlotTints(palette)
+const tints = themeSlotTints(palette, findTheme('ember').colors.primary)
 
 describe('toXtermTheme', () => {
   it('keeps the palette but leaves the background to the container', () => {

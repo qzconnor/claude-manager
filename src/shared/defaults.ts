@@ -89,6 +89,7 @@ export function createDefaultSettings(platform = 'win32'): AppSettings {
       minimumContrastRatio: 1,
       panelBackground: 'theme',
       diffColors: 'theme',
+      logoColor: 'theme',
       modernConpty: true,
     },
     claude: {
