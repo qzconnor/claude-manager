@@ -151,6 +151,7 @@ const api: ManagerApi = {
     showFile: (id) => invoke(IpcInvoke.themesShowFile, id),
     openFolder: () => invoke(IpcInvoke.themesOpenFolder),
     onChanged: (cb) => subscribe(IpcEvent.themesChanged, cb),
+    onSaved: (cb) => subscribe(IpcEvent.themesSaved, cb),
   },
   notifications: {
     test: () => invoke(IpcInvoke.notificationsTest),

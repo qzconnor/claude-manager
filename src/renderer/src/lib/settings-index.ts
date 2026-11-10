@@ -219,6 +219,7 @@ const TREE = [
           { id: 'claude.hookState', label: 'Zustand über Hooks melden', keywords: 'Hooks Benachrichtigungen Status Werkzeug Subagents Infokarte' },
           { id: 'claude.limitsTool', label: 'Eigene Limits lesen', keywords: 'Usage Nutzung Rate Limit Account' },
           { id: 'claude.sessionsTool', label: 'Sessions durchsuchen', keywords: 'Verlauf Transcript Chatverlauf frühere' },
+          { id: 'claude.themesTool', label: 'Themes erstellen', keywords: 'Farben Farbschema Theme-Editor Design Aussehen' },
           { id: 'claude.shellTools', label: 'Shell-Tabs steuern', keywords: 'Terminal Befehle Dev-Server Ausgabe PowerShell' },
           { id: 'claude.shellToolsAllowed', label: 'Ohne Nachfrage', keywords: 'Erlaubnis Berechtigung fragen Shell' },
         ],

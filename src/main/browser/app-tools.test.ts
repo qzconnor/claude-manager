@@ -63,9 +63,10 @@ describe('helpers', () => {
 
   it('knows the tools of each switch', () => {
     const claude = createDefaultSettings().claude
-    expect([...enabledAppGroups(claude)]).toEqual(['limits', 'sessions'])
+    expect([...enabledAppGroups(claude)]).toEqual(['limits', 'sessions', 'themes'])
     expect(appToolNames(enabledAppGroups({ ...claude, shellTools: true }))).toContain('shell_input')
     expect(appInstructions(new Set(['limits']))).not.toContain('shell_open')
+    expect(appInstructions(new Set(['themes']))).toContain('only when the user asks for it, never on your own')
   })
 })
 

@@ -108,6 +108,7 @@ export function createDefaultSettings(platform = 'win32'): AppSettings {
       hookState: true,
       limitsTool: true,
       sessionsTool: true,
+      themesTool: true,
       shellTools: false,
       shellToolsAllowed: false,
     },

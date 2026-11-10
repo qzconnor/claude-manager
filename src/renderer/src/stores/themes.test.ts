@@ -34,6 +34,7 @@ const api = {
     save: vi.fn(async (id: string, theme: ThemeContent) => entryFor(theme.name === 'Umbenannt' ? 'custom:umbenannt' : id, theme)),
     remove: vi.fn(async () => {}),
     onChanged: () => () => {},
+    onSaved: () => () => {},
   },
 }
 

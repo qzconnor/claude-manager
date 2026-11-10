@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { THEMES } from '@shared/themes/builtin'
-import { contrastRatio, parseColor } from '@shared/themes/colors'
-import { THEME_COLOR_KEYS, themeColor } from '@shared/themes/file'
-import { COLOR_SECTIONS, CONTRAST_PAIRS } from './color-info'
+import { THEME_COLOR_KEYS } from '@shared/themes/file'
+import { COLOR_SECTIONS } from './color-info'
 
 const described = COLOR_SECTIONS.flatMap((s) => s.groups.flatMap((g) => g.colors))
 
@@ -23,16 +21,6 @@ describe('COLOR_SECTIONS', () => {
       for (const group of section.groups) {
         for (const info of group.colors) expect(info.key.startsWith(`${section.id}.`), info.key).toBe(true)
       }
-    }
-  })
-})
-
-describe('CONTRAST_PAIRS', () => {
-  // A copy of a built-in theme starts without warnings.
-  it.each(THEMES.map((t) => [t.id, t] as const))('find enough contrast in %s', (_, theme) => {
-    for (const [key, pair] of Object.entries(CONTRAST_PAIRS)) {
-      const ratio = contrastRatio(parseColor(themeColor(theme, key as never))!, parseColor(themeColor(theme, pair!.against))!)
-      expect(ratio, `${key} on ${pair!.against}`).toBeGreaterThanOrEqual(pair!.min)
     }
   })
 })

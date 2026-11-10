@@ -248,6 +248,8 @@ export const IpcEvent = {
   workspacesMoved: 'event:workspaces-moved',
   /** A file in the themes folder came, went or changed (also by hand). */
   themesChanged: 'event:themes-changed',
+  /** The app wrote a theme (the window or Claude's theme tools), with the theme. */
+  themesSaved: 'event:themes-saved',
   apiStatusChanged: 'event:api-status-changed',
   updatesChanged: 'event:updates-changed',
   /** The update notification was clicked. */
@@ -492,6 +494,8 @@ export interface ManagerApi {
     showFile(id: string): Promise<void>
     openFolder(): Promise<void>
     onChanged(cb: () => void): Unsubscribe
+    /** A theme the app wrote, before the folder's watcher reports it (and before a setting that picks it). */
+    onSaved(cb: (entry: CustomThemeEntry) => void): Unsubscribe
   }
   notifications: {
     /** Shows an example notification with the current settings. */
