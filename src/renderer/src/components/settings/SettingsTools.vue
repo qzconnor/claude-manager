@@ -35,6 +35,10 @@ const hookState = useSetting(
   (s) => s.claude.hookState,
   (hookState) => ({ claude: { hookState } }),
 )
+const diffCommand = useSetting(
+  (s) => s.claude.diffCommand,
+  (diffCommand) => ({ claude: { diffCommand } }),
+)
 const limitsTool = useSetting(
   (s) => s.claude.limitsTool,
   (limitsTool) => ({ claude: { limitsTool } }),
@@ -147,6 +151,14 @@ async function clearBrowserData() {
         description="Claude Code meldet der App über Hooks, wann eine Antwort fertig ist, wann Claude auf dich wartet und was gerade läuft. Benachrichtigungen kommen dadurch ohne Verzögerung, die Infokarte des Tabs zeigt Werkzeug und Subagents. Deine eigenen Hooks laufen weiter, keine Tokens. Aus: Die App liest den Zustand wie bisher aus dem Verlauf."
       >
         <Switch id="hook-state" v-model="hookState" />
+      </SettingField>
+      <SettingField
+        anchor="claude.diffCommand"
+        for="diff-command"
+        label="/diff zeigt alle Änderungen"
+        description="/diff in einer Session öffnet die Ansicht „Alle Änderungen“ des Dateibaums statt Claude Codes Diff-Panel. Die App fängt das Enter ab und leert die Eingabe: In der Session erscheint nichts, Claude sieht den Befehl nicht, keine Tokens. Gilt sofort, auch für laufende Sessions."
+      >
+        <Switch id="diff-command" v-model="diffCommand" />
       </SettingField>
       <SettingField
         anchor="claude.limitsTool"

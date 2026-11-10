@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserOpenOptions, PaneSplit, TerminalInfo, TerminalMode } from '@shared/types'
-import { BROWSER_TAB, createWorkspace, type Workspace } from '@/lib/workspace'
+import { BROWSER_TAB, createWorkspace, diffTab, type Workspace } from '@/lib/workspace'
 
 /**
  * The browser tab with the tabs in groups: the sessions' browsers are its pages, not tabs of their
@@ -254,5 +254,39 @@ describe('the browser tab', () => {
     setActivePinia(createPinia())
     const back = await load([terminal('s1')], [], { workspace: saved, order })
     expect(tabsOf(back)).toEqual([['s1'], [BROWSER_TAB]])
+  })
+})
+
+describe('changes beside a session', () => {
+  const all = { root: 'C:\\dev', path: '' }
+
+  it('open in a new group on the right, with the keyboard', async () => {
+    const terminals = await load([terminal('s1'), terminal('s2')], [])
+    terminals.activate('s1')
+    terminals.openDiffBeside(all, 's1')
+    expect(tabsOf(terminals)).toEqual([['s1', 's2'], [diffTab(all)]])
+    expect(terminals.focusedTab).toBe(diffTab(all))
+    expect(terminals.groups[0].active).toBe('s1')
+  })
+
+  it('join the group on the right and are shown there, also once more', async () => {
+    const terminals = await load([terminal('s1'), terminal('b1', 'browser')], [beside('s1', 'b1')])
+    terminals.activate('s1')
+    terminals.openDiffBeside(all, 's1')
+    expect(tabsOf(terminals)).toEqual([['s1'], [BROWSER_TAB, diffTab(all)]])
+    expect(terminals.groups[1].active).toBe(diffTab(all))
+    expect(terminals.focusedTab).toBe(diffTab(all))
+    terminals.activate('s1')
+    terminals.openDiffBeside(all, 's1')
+    expect(tabsOf(terminals)).toEqual([['s1'], [BROWSER_TAB, diffTab(all)]])
+    expect(terminals.focusedTab).toBe(diffTab(all))
+  })
+
+  it('move out of the session’s own group', async () => {
+    const terminals = await load([terminal('s1')], [])
+    terminals.openDiff(all, terminals.groupOf('s1')!.id, true)
+    terminals.openDiffBeside(all, 's1')
+    expect(tabsOf(terminals)).toEqual([['s1'], [diffTab(all)]])
+    expect(terminals.groups[0].active).toBe('s1')
   })
 })

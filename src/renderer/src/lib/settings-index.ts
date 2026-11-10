@@ -218,6 +218,7 @@ const TREE = [
         fields: [
           { id: 'claude.appContext', label: 'Claude kennt die App', keywords: 'Systemprompt Prompt Kontext Tokens sparen' },
           { id: 'claude.hookState', label: 'Zustand über Hooks melden', keywords: 'Hooks Benachrichtigungen Status Werkzeug Subagents Infokarte' },
+          { id: 'claude.diffCommand', label: '/diff zeigt alle Änderungen', keywords: 'diff Befehl Slash-Command Review Git Änderungen Skill' },
           { id: 'claude.limitsTool', label: 'Eigene Limits lesen', keywords: 'Usage Nutzung Rate Limit Account' },
           { id: 'claude.sessionsTool', label: 'Sessions durchsuchen', keywords: 'Verlauf Transcript Chatverlauf frühere' },
           { id: 'claude.themesTool', label: 'Themes erstellen', keywords: 'Farben Farbschema Theme-Editor Design Aussehen' },

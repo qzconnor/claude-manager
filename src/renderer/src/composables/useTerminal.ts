@@ -8,6 +8,7 @@ import type { PastedImage, TerminalSettings } from '@shared/types'
 import { drawBlockGlyphs } from '@/lib/block-glyphs'
 import { drawLigatures, type Ligatures } from '@/lib/ligatures'
 import { createBackgroundFilter, slotPalette, type SlotTints } from '@/lib/claude-backgrounds'
+import { claudeInputAt } from '@/lib/claude-input'
 import { answerColorQueries } from '@/lib/color-queries'
 import { matchShortcut } from '@shared/shortcuts'
 import { addedImageRef, countImageRefs, pastedImageLinks } from '@/lib/pasted-image-links'
@@ -15,6 +16,7 @@ import { terminalBus } from '@/lib/terminal-bus'
 import { makeSlotsTranslucent, setSlotTints } from '@/lib/translucent-slots'
 import { urlLinks } from '@/lib/url-links'
 import { useAppStore } from '@/stores/app'
+import { useFileTreeStore } from '@/stores/file-tree'
 import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
 import type { TerminalPalette } from '@shared/themes/types'
@@ -206,6 +208,7 @@ export function useTerminal(options: UseTerminalOptions) {
   const settingsStore = useSettingsStore()
   const appStore = useAppStore()
   const terminalsStore = useTerminalsStore()
+  const fileTree = useFileTreeStore()
   const { palette, dark, slotTints, backgrounds, logo } = useTerminalAppearance()
   /** All output passes through here on its way to xterm. */
   const filterOutput = createBackgroundFilter(
@@ -474,6 +477,25 @@ export function useTerminal(options: UseTerminalOptions) {
     term?.focus()
   }
 
+  /**
+   * Enter on `/diff` in a Claude session shows all changes of its folder in the app instead of Claude
+   * Code's diff panel (setting `claude.diffCommand`): the Enter stays here and the input is emptied,
+   * so Claude Code shows nothing and Claude sees nothing. Emptied with Ctrl+E (to its end) and a
+   * backspace per character; Ctrl+U would leave the hint "Ctrl+Y to paste deleted text", Ctrl+C
+   * "Press Ctrl-C again to exit". Whether Enter would run `/diff` is read off the screen (see
+   * claudeInputAt); where that fails, the Enter goes on and Claude Code's own `/diff` runs.
+   */
+  function showChanges(): boolean {
+    if (!claudeSession || !term || !settingsStore.settings.claude.diffCommand) return false
+    const buffer = term.buffer.active
+    const lines = Array.from({ length: term.rows }, (_, y) => buffer.getLine(buffer.baseY + y)?.translateToString(true) ?? '')
+    const input = claudeInputAt(lines, buffer.cursorY)
+    if (input?.command !== '/diff') return false
+    write('\x05' + '\x7f'.repeat([...input.text].length))
+    fileTree.showAllChanges(terminalId)
+    return true
+  }
+
   function handleKey(e: KeyboardEvent): boolean {
     if (e.type !== 'keydown') return true
     // App shortcuts bubble up to the window listener instead of reaching the shell. Alt+arrow only
@@ -500,6 +522,10 @@ export function useTerminal(options: UseTerminalOptions) {
       // Claude Code inserts a newline on Ctrl+J (line feed) in every terminal.
       e.preventDefault()
       write('\n')
+      return false
+    }
+    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing && showChanges()) {
+      e.preventDefault()
       return false
     }
     return true
