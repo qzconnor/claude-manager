@@ -821,9 +821,8 @@ export interface ClaudeSettings {
    */
   hookState: boolean
   /**
-   * `/diff` in the sessions the app starts shows all changes of the session's folder in the app, not
-   * Claude Code's diff panel: a skill `diff` (`--add-dir`) takes the built-in command's place, and the
-   * app's hook stops the prompt before Claude sees it. Needs `hookState`.
+   * Enter on `/diff` in a Claude session shows all changes of the session's folder in the app, not
+   * Claude Code's diff panel: the app keeps the Enter and empties the input, Claude Code sees nothing.
    */
   diffCommand: boolean
   /** Sessions the app starts can read the limits of the account they run on (tool `limits`). */

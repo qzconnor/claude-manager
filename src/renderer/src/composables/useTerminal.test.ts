@@ -18,6 +18,7 @@ vi.mock('@/lib/terminal-bus', () => ({ terminalBus: {} }))
 vi.mock('@/lib/translucent-slots', () => ({ makeSlotsTranslucent: vi.fn(), setSlotTints: vi.fn() }))
 vi.mock('@/lib/platform', () => ({ supportsMaterial: true }))
 vi.mock('@/stores/app', () => ({ useAppStore: vi.fn() }))
+vi.mock('@/stores/file-tree', () => ({ useFileTreeStore: vi.fn() }))
 vi.mock('@/stores/settings', () => ({ useSettingsStore: vi.fn() }))
 
 const palette = findTheme('ember').terminal

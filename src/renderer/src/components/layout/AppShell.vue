@@ -3,7 +3,6 @@ import { onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAccountSwitch } from '@/composables/useAccountSwitch'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
-import { useFileTreeStore } from '@/stores/file-tree'
 import { useTerminalsStore } from '@/stores/terminals'
 import ClassicShell from './ClassicShell.vue'
 import GroupShell from './GroupShell.vue'
@@ -15,7 +14,6 @@ import GroupShell from './GroupShell.vue'
 const route = useRoute()
 const router = useRouter()
 const terminals = useTerminalsStore()
-const fileTree = useFileTreeStore()
 
 // Programs in the terminals hear when the theme turns dark or light (Claude Code's "Auto" theme).
 const { dark: terminalDark } = useTerminalAppearance()
@@ -28,10 +26,6 @@ const offActivate = window.api.terminals.onActivate((id) => {
   if (!terminals.grouped && route.name !== 'terminals') void router.push({ name: 'terminals' })
 })
 onBeforeUnmount(offActivate)
-
-// `/diff` in a session shows all changes of its folder (setting `claude.diffCommand`).
-const offShowChanges = window.api.terminals.onShowChanges((id) => fileTree.showAllChanges(id))
-onBeforeUnmount(offShowChanges)
 
 // A session at a limit went on with another account by itself (setting `claude.autoSwitch`).
 const accountSwitch = useAccountSwitch()

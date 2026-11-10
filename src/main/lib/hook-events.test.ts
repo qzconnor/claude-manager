@@ -5,7 +5,6 @@ import {
   fileActivity,
   HOOK_EVENTS,
   hookSettings,
-  isDiffCommand,
   mergeHookSettings,
   newHookState,
   parseHookCall,
@@ -173,26 +172,6 @@ describe('parseHookCall', () => {
     expect(call('FileChanged')).toBeNull()
     expect(parseHookCall(null)).toBeNull()
     expect(parseHookCall('Stop')).toBeNull()
-  })
-})
-
-describe('isDiffCommand', () => {
-  const prompt = (text: unknown, event = 'UserPromptSubmit') => isDiffCommand({ hook_event_name: event, prompt: text })
-
-  it('is the command /diff, with or without arguments', () => {
-    expect(prompt('/diff')).toBe(true)
-    expect(prompt('/diff HEAD~1')).toBe(true)
-    expect(prompt('  /diff\n')).toBe(true)
-  })
-
-  it('is no other prompt or event', () => {
-    expect(prompt('/diffs')).toBe(false)
-    expect(prompt('/diff-review')).toBe(false)
-    expect(prompt('zeig /diff')).toBe(false)
-    expect(prompt('diff')).toBe(false)
-    expect(prompt(42)).toBe(false)
-    expect(prompt('/diff', 'UserPromptExpansion')).toBe(false)
-    expect(isDiffCommand(null)).toBe(false)
   })
 })
 

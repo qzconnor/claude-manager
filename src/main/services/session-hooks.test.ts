@@ -16,7 +16,6 @@ let dir: string
 let server: SessionServer
 let settings: AppSettings
 let received: [string, HookCall][]
-let shown: string[]
 let hooks: SessionHooks
 
 beforeEach(async () => {
@@ -25,14 +24,7 @@ beforeEach(async () => {
   await server.start()
   settings = createDefaultSettings()
   received = []
-  shown = []
-  hooks = new SessionHooks(
-    server,
-    dir,
-    { get: () => settings } as SettingsService,
-    (id, event) => received.push([id, event]),
-    (id) => shown.push(id),
-  )
+  hooks = new SessionHooks(server, dir, { get: () => settings } as SettingsService, (id, event) => received.push([id, event]))
   hooks.init()
 })
 
@@ -42,9 +34,9 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-/** The settings file of the option `--settings=<file>`, the first of the session's. */
+/** The settings file of an option `--settings=<file>`. */
 function settingsOf(args: string[]): { hooks: Record<string, { hooks: { url: string; headers: Record<string, string> }[] }[]> } & Record<string, unknown> {
-  expect(args[0]).toMatch(/^--settings=/)
+  expect(args).toHaveLength(1)
   return JSON.parse(readFileSync(args[0]!.slice('--settings='.length), 'utf8'))
 }
 
@@ -119,47 +111,5 @@ describe('SessionHooks', () => {
   it('gives no hooks when the setting is off', () => {
     settings.claude.hookState = false
     expect(hooks.lastArgs('t1', [], dir)).toEqual([])
-  })
-
-  it('gives a session the skill that takes the place of /diff, after the hooks', () => {
-    const args = hooks.lastArgs('t1', [], dir)
-    expect(args).toHaveLength(2)
-    const folder = args[1]!.slice('--add-dir='.length)
-    expect(args[1]).toBe(`--add-dir=${join(dir, 'session-commands')}`)
-    const skill = readFileSync(join(folder, '.claude', 'skills', 'diff', 'SKILL.md'), 'utf8')
-    expect(skill).toMatch(/^---\nname: diff\n/)
-    expect(skill).toContain('\ndisable-model-invocation: true\n')
-  })
-
-  it('switches Claude Code’s own diff panel off with the skill, besides the user’s plugins', () => {
-    writeFileSync(join(dir, 'own.json'), JSON.stringify({ enabledPlugins: { 'x@market': true } }))
-    expect(settingsOf(hooks.lastArgs('t1', ['--settings', 'own.json'], dir)).enabledPlugins).toEqual({
-      'x@market': true,
-      'cc-plugin-diff@builtin': false,
-    })
-    settings.claude.diffCommand = false
-    expect(settingsOf(hooks.lastArgs('t2', [], dir)).enabledPlugins).toBeUndefined()
-  })
-
-  it('shows the changes for /diff and stops the prompt before Claude sees it', async () => {
-    const args = hooks.lastArgs('t1', [], dir)
-    const answer = await sendHook(args, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt: '/diff' })
-    expect(answer.status).toBe(200)
-    expect(JSON.parse(answer.body)).toMatchObject({
-      decision: 'block',
-      hookSpecificOutput: { hookEventName: 'UserPromptSubmit', suppressOriginalPrompt: true },
-    })
-    expect(shown).toEqual(['t1'])
-    expect(received).toEqual([])
-  })
-
-  it('leaves /diff to Claude Code without the setting', async () => {
-    settings.claude.diffCommand = false
-    const args = hooks.lastArgs('t1', [], dir)
-    expect(args).toHaveLength(1)
-    const answer = await sendHook(args, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt: '/diff' })
-    expect(answer).toEqual({ status: 204, body: '' })
-    await vi.waitFor(() => expect(received).toEqual([['t1', { sessionId: SESSION, event: { kind: 'prompt' } }]]))
-    expect(shown).toEqual([])
   })
 })

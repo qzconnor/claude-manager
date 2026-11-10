@@ -147,38 +147,6 @@ export function parseHookCall(body: unknown): HookCall | null {
   return { sessionId: sessionId && SESSION_ID_RE.test(sessionId) ? sessionId : null, event, ...(files && { files }) }
 }
 
-/** A prompt that is the command `/diff`, with or without arguments, as `UserPromptSubmit` brings it. */
-export function isDiffCommand(body: unknown): boolean {
-  return (
-    isPlainObject(body) &&
-    body.hook_event_name === 'UserPromptSubmit' &&
-    typeof body.prompt === 'string' &&
-    /^\/diff(?:\s|$)/.test(body.prompt.trimStart())
-  )
-}
-
-/**
- * The answer to `/diff` once the app shows the changes: Claude Code drops the prompt before Claude sees
- * it; no turn starts, no tokens. It always shows a line for it.
- */
-export const DIFF_COMMAND_ANSWER = {
-  decision: 'block',
-  reason: 'Alle Änderungen in Claude Manager geöffnet',
-  hookSpecificOutput: { hookEventName: 'UserPromptSubmit', suppressOriginalPrompt: true },
-}
-
-/**
- * Claude Code's own diff panel, a plugin it brings along (`enabledPlugins` key). It wants `/diff` for
- * itself and, with the app's skill there, tells so at every start of a session.
- */
-const DIFF_PANEL_PLUGIN = 'cc-plugin-diff@builtin'
-
-/** The settings with Claude Code's diff panel switched off, besides the user's other plugins. */
-export function withoutDiffPanel(settings: Record<string, unknown>): Record<string, unknown> {
-  const plugins = isPlainObject(settings.enabledPlugins) ? settings.enabledPlugins : {}
-  return { ...settings, enabledPlugins: { ...plugins, [DIFF_PANEL_PLUGIN]: false } }
-}
-
 /** Tools that read a file, and those that write one; the file is in `file_path` (`notebook_path` for notebooks). */
 const READING_TOOLS = new Set(['Read'])
 const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])

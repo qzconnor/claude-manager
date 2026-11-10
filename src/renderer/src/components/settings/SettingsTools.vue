@@ -156,9 +156,9 @@ async function clearBrowserData() {
         anchor="claude.diffCommand"
         for="diff-command"
         label="/diff zeigt alle Änderungen"
-        description="/diff in einer Session öffnet die Ansicht „Alle Änderungen“ des Dateibaums statt Claude Codes Diff-Panel. Claude sieht den Befehl nicht, keine Tokens. Dafür bekommt die Session einen Skill „diff“ aus den App-Daten (--add-dir), der Claude Codes /diff ersetzt. Braucht „Zustand über Hooks melden“."
+        description="/diff in einer Session öffnet die Ansicht „Alle Änderungen“ des Dateibaums statt Claude Codes Diff-Panel. Die App fängt das Enter ab und leert die Eingabe: In der Session erscheint nichts, Claude sieht den Befehl nicht, keine Tokens. Gilt sofort, auch für laufende Sessions."
       >
-        <Switch id="diff-command" v-model="diffCommand" :disabled="!hookState" />
+        <Switch id="diff-command" v-model="diffCommand" />
       </SettingField>
       <SettingField
         anchor="claude.limitsTool"
