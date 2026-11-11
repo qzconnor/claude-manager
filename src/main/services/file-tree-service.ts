@@ -34,6 +34,13 @@ const HIDDEN = new Set(['.git', '.svn', '.hg', 'CVS', '.DS_Store', 'Thumbs.db', 
 const MAX_ENTRIES = 5000
 /** The most changed and ignored paths of a status. */
 const MAX_STATUS_PATHS = 20_000
+/** A folder outside a repository is asked again after this long (ms), or at once when `.git` appears in it. */
+const NO_REPO_MS = 15_000
+/**
+ * What git keeps in its folder that tells nothing about the state the tree shows: objects (a fetch,
+ * a gc), the reflog, LFS's cache, hooks, notes of the last commit and fetch. Their refs come along.
+ */
+const GIT_NOISE = new Set(['objects', 'logs', 'lfs', 'hooks', 'COMMIT_EDITMSG', 'FETCH_HEAD', 'ORIG_HEAD', 'gc.log', 'gc.pid'])
 /** The most files the search goes through. */
 const MAX_SEARCH_FILES = 100_000
 /** A folder without git: how long and how deep the search may walk it. */
@@ -91,6 +98,8 @@ interface WatchedRoot {
   /** The repository's git folder, for commits, checkouts and staging. */
   gitDir: string | null
   git: FSWatcher | null
+  /** The folders the trees show (relative), as `watch` was told. */
+  shown: Set<string>
   /** Folders whose entries changed since the last report. */
   pending: Set<string>
   gitChanged: boolean
@@ -113,7 +122,7 @@ interface RunningShell {
 }
 
 type Events = {
-  /** Entries of these folders (relative, '' is the root) may have changed; `git`: also the repository's state. */
+  /** Entries of these folders (relative, '' is the root) may have changed; `git`: also what git sees (see `gitMayTell`). */
   changed: [root: string, dirs: string[], git: boolean]
   /** Files a session's Claude reads, searches, writes or commits. */
   touched: [terminalId: string, touches: FileTouch[]]
@@ -133,6 +142,10 @@ export class FileTreeService extends TypedEmitter<Events> {
   private readonly gitDirs = new Map<string, string>()
   /** By folder: the environment that switches off the filters its repository defines (see `filterGuard`). */
   private readonly guards = new Map<string, Promise<Record<string, string>>>()
+  /** Folders outside a repository, with when that was found out (see `NO_REPO_MS`). */
+  private readonly noRepo = new Map<string, number>()
+  /** By `folderKey`: the folders git ignores whole (`node_modules/`), from the last status. */
+  private readonly ignoredDirs = new Map<string, Set<string>>()
 
   async list(dir: string): Promise<FileListing> {
     const dirents = await readdir(dir, { withFileTypes: true })
@@ -155,7 +168,10 @@ export class FileTreeService extends TypedEmitter<Events> {
   /** Null outside a repository and without git. */
   async status(root: string): Promise<GitTreeStatus | null> {
     const prefix = await this.prefix(root)
-    if (prefix === null) return null
+    if (prefix === null) {
+      this.ignoredDirs.delete(folderKey(root))
+      return null
+    }
     const env = await this.guard(root)
     const [status, numstat] = await Promise.all([
       runGit(
@@ -167,7 +183,9 @@ export class FileTreeService extends TypedEmitter<Events> {
       runGit(root, ['--no-optional-locks', 'diff', '--numstat', '--no-textconv', '--no-ext-diff', '-z', 'HEAD', '--', '.'], env),
     ])
     if (status === null) return null
-    return parseGitStatus(status, numstat ?? '', prefix)
+    const result = parseGitStatus(status, numstat ?? '', prefix)
+    this.ignoredDirs.set(folderKey(root), new Set(result.ignored.filter((path) => path.endsWith('/'))))
+    return result
   }
 
   /**
@@ -397,6 +415,7 @@ export class FileTreeService extends TypedEmitter<Events> {
           dirs: new Map(),
           gitDir: null,
           git: null,
+          shown: dirs,
           pending: new Set(),
           gitChanged: false,
           timer: null,
@@ -408,6 +427,7 @@ export class FileTreeService extends TypedEmitter<Events> {
         this.findGitDir(key, fresh)
       }
       watched.roots = roots
+      watched.shown = dirs
       if (!RECURSIVE) this.watchDirs(key, watched, dirs)
     }
   }
@@ -424,15 +444,20 @@ export class FileTreeService extends TypedEmitter<Events> {
   private watchRecursive(key: string, watched: WatchedRoot): FSWatcher | null {
     const root = watched.path
     try {
-      const watcher = watch(root, { recursive: true }, (_event, file) => {
+      const watcher = watch(root, { recursive: true }, (event, file) => {
         if (!file) return this.note(key, '', true)
         const parts = file.toString().split(/[\\/]/)
         // The git folder inside the tree: its state, no entries the tree shows. `git init` makes it.
-        if (parts.includes('.git')) {
-          if (parts[0] === '.git' && !watched.git) this.findGitDir(key, watched)
-          return this.note(key, null, true)
+        const gitAt = parts.indexOf('.git')
+        if (gitAt >= 0) {
+          if (gitAt === 0 && !watched.git) this.repoAppeared(key, watched)
+          if (gitStateChange(parts.slice(gitAt + 1))) this.note(key, null, true)
+          return
         }
-        this.note(key, parts.slice(0, -1).join('/'), false)
+        const dir = parts.slice(0, -1).join('/')
+        const git = this.gitMayTell(key, parts.join('/'), event)
+        // In a folder git ignores whole and the tree doesn't show (`npm install`, a build): nothing to do.
+        if (git || watched.shown.has(dir)) this.note(key, dir, git)
         if (this.shells.size > 0) this.noteShellWrite(join(root, ...parts))
       })
       // Gone for a moment (a network drive, a folder replaced by a checkout): watched again later.
@@ -460,12 +485,12 @@ export class FileTreeService extends TypedEmitter<Events> {
       if (watched.dirs.has(dir)) continue
       try {
         const path = dir ? join(root, ...dir.split('/')) : root
-        const watcher = watch(path, (_event, file) => {
+        const watcher = watch(path, (event, file) => {
           const name = file?.toString()
           // `git init` in the tree: from now on its repository is watched too.
           const gitInit = !dir && name === '.git'
-          if (gitInit && !watched.git) this.findGitDir(key, watched)
-          this.note(key, dir, gitInit)
+          if (gitInit && !watched.git) this.repoAppeared(key, watched)
+          this.note(key, dir, gitInit || !name || this.gitMayTell(key, dir ? `${dir}/${name}` : name, event))
           if (name && this.shells.size > 0) this.noteShellWrite(join(path, name))
         })
         // Deleted or no longer readable: the tree lets go of it when it disappears there. Its own
@@ -481,6 +506,27 @@ export class FileTreeService extends TypedEmitter<Events> {
         if (!dir) this.retryWatch(key, watched)
       }
     }
+  }
+
+  /** `.git` appeared in the tree (`git init`, a clone): git is asked again at once. */
+  private repoAppeared(key: string, watched: WatchedRoot): void {
+    for (const root of watched.roots) this.noRepo.delete(root)
+    this.findGitDir(key, watched)
+  }
+
+  /**
+   * Whether a change at `path` (relative) may change what git sees; not inside a folder git ignores
+   * whole, whose entry the last status has already. The folder itself coming or going (`rename`) does,
+   * a `change` of it (Windows tells one whenever something inside changes) doesn't.
+   */
+  private gitMayTell(key: string, path: string, event: string): boolean {
+    const ignored = this.ignoredDirs.get(key)
+    if (!ignored || ignored.size === 0) return true
+    if (event === 'change' && ignored.has(`${path}/`)) return false
+    for (let at = path.indexOf('/'); at >= 0; at = path.indexOf('/', at + 1)) {
+      if (ignored.has(path.slice(0, at + 1))) return false
+    }
+    return true
   }
 
   /** Watches the tree's repository once there is one, also when `git init` makes it later. */
@@ -559,8 +605,15 @@ export class FileTreeService extends TypedEmitter<Events> {
   private async prefix(root: string): Promise<string | null> {
     const known = this.prefixes.get(root)
     if (known !== undefined) return known
+    // Outside a repository a busy folder (a dev server's logs) would ask git again for every change.
+    const missed = this.noRepo.get(root)
+    if (missed !== undefined && Date.now() - missed < NO_REPO_MS) return null
     const out = await runGit(root, ['rev-parse', '--show-prefix'])
-    if (out === null) return null
+    if (out === null) {
+      this.noRepo.set(root, Date.now())
+      return null
+    }
+    this.noRepo.delete(root)
     const prefix = out.trim()
     this.prefixes.set(root, prefix)
     return prefix
@@ -586,6 +639,18 @@ export class FileTreeService extends TypedEmitter<Events> {
     }
     return guard
   }
+}
+
+/**
+ * Whether a change in the git folder (`parts` below `.git`) may change what the tree shows: the index,
+ * HEAD, refs, config, a merge; not objects, the reflog, lock files and the like (a fetch writes
+ * hundreds). A submodule's git folder (`modules/<name>/…`) likewise.
+ */
+export function gitStateChange(parts: string[]): boolean {
+  const name = parts.at(-1) ?? ''
+  if (name.endsWith('.lock') || parts[0]?.startsWith('fsmonitor--daemon')) return false
+  if (parts[0] === 'modules') return !parts.includes('objects') && !parts.includes('logs') && !parts.includes('lfs')
+  return !GIT_NOISE.has(parts[0] ?? '')
 }
 
 /** A path from the top of the repository, as it is (no wildcards), wherever git runs in it. */

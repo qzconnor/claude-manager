@@ -557,7 +557,8 @@ export const useFileTreeStore = defineStore('file-tree', () => {
       if (model.listings.has(dir) || model.errors.has(dir)) void loadDir(model, dir)
     }
     if (dirs.length > 0) model.searchStale = true
-    if (dirs.length > 0 || git) scheduleStatus(model)
+    // Main tells whether git may see it: not for what changes in node_modules or dist.
+    if (git) scheduleStatus(model)
   })
 
   // Back in the window: git may have run elsewhere, a folder outside the watched ones changed.

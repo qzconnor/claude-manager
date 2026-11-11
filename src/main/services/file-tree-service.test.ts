@@ -3,7 +3,7 @@ import { chmod, mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { FileTreeService, filterGuard, isTreePath, parseGitStatus } from './file-tree-service'
+import { FileTreeService, filterGuard, gitStateChange, isTreePath, parseGitStatus } from './file-tree-service'
 
 describe('isTreePath', () => {
   it('takes paths inside the root, joined with /', () => {
@@ -105,6 +105,19 @@ describe('filterGuard', () => {
     expect(filterGuard('local\tfilter.x.clean', '2')).toMatchObject({ GIT_CONFIG_KEY_2: 'filter.x.clean', GIT_CONFIG_COUNT: '5' })
     expect(filterGuard(null)).toEqual({})
     expect(filterGuard('global\tfilter.lfs.clean')).toEqual({})
+  })
+})
+
+describe('gitStateChange', () => {
+  it('takes what git shows from its folder, not its objects, logs and locks', () => {
+    for (const path of ['index', 'HEAD', 'refs/heads/main', 'refs/remotes/origin/main', 'packed-refs', 'config', 'MERGE_HEAD', 'info/exclude', 'modules/lib/index']) {
+      expect(gitStateChange(path.split('/')), path).toBe(true)
+    }
+    for (const path of ['objects/ab/cdef', 'objects/pack/pack-1.pack', 'logs/HEAD', 'logs/refs/heads/main', 'index.lock', 'refs/heads/main.lock', 'FETCH_HEAD', 'ORIG_HEAD', 'COMMIT_EDITMSG', 'lfs/tmp/x', 'modules/lib/objects/ab/cd', 'fsmonitor--daemon.ipc']) {
+      expect(gitStateChange(path.split('/')), path).toBe(false)
+    }
+    // A branch may be called like git's folders.
+    expect(gitStateChange(['refs', 'heads', 'logs'])).toBe(true)
   })
 })
 
@@ -211,6 +224,47 @@ describe('FileTreeService with git', () => {
     expect(kept.patch).toContain('rename from b.txt')
     expect(kept.patch).not.toContain('@@')
     expect(kept.text).toBe(numbers)
+  })
+
+  it('asks git only about changes it may see', async () => {
+    const repo = join(dir, 'repo')
+    await mkdir(join(repo, 'node_modules', 'pkg'), { recursive: true })
+    git(repo, 'init', '-q')
+    await writeFile(join(repo, '.gitignore'), 'node_modules/\n')
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-qm', 'init')
+    expect((await service.status(repo))?.ignored).toEqual(['node_modules/'])
+    const told: { dirs: string[]; git: boolean }[] = []
+    service.on('changed', (_root, dirs, git) => told.push({ dirs, git }))
+    service.watch([{ root: repo, dirs: [''] }])
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    // An install in an ignored folder, objects of a fetch: nothing to do.
+    for (let i = 0; i < 20; i++) await writeFile(join(repo, 'node_modules', 'pkg', `f${i}.js`), 'x')
+    await mkdir(join(repo, '.git', 'objects', 'zz'), { recursive: true })
+    await writeFile(join(repo, '.git', 'objects', 'zz', 'object'), 'x')
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    expect(told.filter((t) => t.git)).toEqual([])
+
+    await writeFile(join(repo, 'app.ts'), 'x')
+    await expect.poll(() => told.some((t) => t.git && t.dirs.includes('')), { timeout: 3000 }).toBe(true)
+  })
+
+  it('asks git again outside a repository only after a while, at once when .git appears', async () => {
+    const plain = join(dir, 'plain')
+    const watched = join(dir, 'watched')
+    await mkdir(plain)
+    await mkdir(watched)
+    expect(await service.status(plain)).toBeNull()
+    git(plain, 'init', '-q')
+    // Still known as no repository: a busy folder doesn't start git for every change.
+    expect(await service.status(plain)).toBeNull()
+
+    service.watch([{ root: watched, dirs: [''] }])
+    expect(await service.status(watched)).toBeNull()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    git(watched, 'init', '-q')
+    await expect.poll(() => service.status(watched), { timeout: 3000 }).not.toBeNull()
   })
 
   it('reads a file whose mode alone changed', async () => {
