@@ -291,6 +291,20 @@ describe('changes beside a session', () => {
   })
 })
 
+describe('the keys', () => {
+  it('go to no terminal while a page such as the settings has the keyboard', async () => {
+    const terminals = await load([terminal('s1'), terminal('b1', 'browser')], [])
+    terminals.activate('b1')
+    expect(terminals.keyboardTerminal).toBe('b1')
+    terminals.openPage('settings')
+    // The browser stays the active terminal, hidden behind the page: F5 must not reload it.
+    expect(terminals.activeId).toBe('b1')
+    expect(terminals.keyboardTerminal).toBeNull()
+    terminals.activate('s1')
+    expect(terminals.keyboardTerminal).toBe('s1')
+  })
+})
+
 describe('dragging a divider', () => {
   it('keeps its share while main reports a working session, and takes main’s again once let go', async () => {
     const terminals = await load([terminal('s1'), terminal('s2')], [beside('s1', 's2')])

@@ -354,6 +354,12 @@ export const useTerminalsStore = defineStore('terminals', () => {
   }
 
   /**
+   * The terminal or browser the keys go to: in groups the one the tab with the keyboard shows (none for
+   * a page such as the settings), in one tab bar the active one.
+   */
+  const keyboardTerminal = computed(() => (grouped.value ? terminalOfTab(focusedTab.value) : activeId.value))
+
+  /**
    * The browser tab follows the terminal that gets the keyboard: a session or shell, or a page and its
    * session. A browser on its own and a login leave it as it is.
    */
@@ -1128,6 +1134,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     groups,
     activeGroup,
     focusedTab,
+    keyboardTerminal,
     focusedPage,
     activeId,
     active,

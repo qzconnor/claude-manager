@@ -35,8 +35,8 @@ export function useShortcuts() {
   const showTerminals = () => {
     if (!terminals.grouped && !onTerminals()) void router.push({ name: 'terminals' })
   }
-  /** The browser with the keyboard, if a browser has it. */
-  const activeBrowser = () => (onTerminals() ? browsers.get(terminals.activeId) : undefined)
+  /** The browser with the keyboard, if a browser has it; not one hidden behind a page or another tab. */
+  const activeBrowser = () => (onTerminals() ? browsers.get(terminals.keyboardTerminal) : undefined)
 
   /** `event`: the key in the window, which is kept from the page; a browser page's key has been already. */
   function run(shortcut: Shortcut, event?: KeyboardEvent): void {
@@ -61,8 +61,9 @@ export function useShortcuts() {
         void launcher.newSession()
         break
       case 'close-tab':
-        // The tab with the keyboard: the terminal, in groups also a page.
-        if (terminals.focusedTab) void closeTerminal(terminals.focusedTab)
+        // The tab with the keyboard: the terminal, in groups also a page. In one tab bar only while the
+        // terminals are shown: on another page the tab isn't to be seen.
+        if (terminals.focusedTab && (terminals.grouped || onTerminals())) void closeTerminal(terminals.focusedTab)
         break
       case 'next-tab':
       case 'previous-tab':
