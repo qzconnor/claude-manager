@@ -18,6 +18,7 @@ import { useUiStore } from '@/stores/ui'
 import TerminalChromeBanner from './TerminalChromeBanner.vue'
 import TerminalImageDialog from './TerminalImageDialog.vue'
 import TerminalImagePreview from './TerminalImagePreview.vue'
+import TerminalLinkHint from './TerminalLinkHint.vue'
 import TerminalLimitBanner from './TerminalLimitBanner.vue'
 import TerminalSearch from './TerminalSearch.vue'
 
@@ -37,7 +38,7 @@ const term = useTerminal({
   container,
   active: toRef(props, 'active'),
 })
-const { imagePreview, openedImage } = term
+const { imagePreview, openedImage, linkHint } = term
 const { containerBackground, inactiveVeil } = useTerminalAppearance()
 const settings = useSettingsStore()
 const ui = useUiStore()
@@ -170,6 +171,7 @@ function closeSearch() {
 
     <TerminalImagePreview v-if="imagePreview?.image" :id="imagePreview.id" :x="imagePreview.x" :y="imagePreview.y" :image="imagePreview.image" />
     <TerminalImageDialog :image="openedImage" @close="term.closeImage()" />
+    <TerminalLinkHint v-if="linkHint" :url="linkHint.url" :x="linkHint.x" :y="linkHint.y" :ctrl="linkHint.ctrl" />
 
     <div v-if="searchOpen" class="absolute top-3 right-5 z-10">
       <TerminalSearch ref="search" :find-next="term.findNext" :find-previous="term.findPrevious" @close="closeSearch" />

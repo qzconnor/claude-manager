@@ -2,10 +2,11 @@ import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { UnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { Terminal, type ITheme, type ITerminalOptions } from '@xterm/xterm'
+import { Terminal, type IBufferRange, type ITheme, type ITerminalOptions } from '@xterm/xterm'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import type { PastedImage, TerminalSettings } from '@shared/types'
 import { drawBlockGlyphs } from '@/lib/block-glyphs'
+import { linkText, showsTarget } from '@/lib/hyperlinks'
 import { drawLigatures, type Ligatures } from '@/lib/ligatures'
 import { createBackgroundFilter, slotPalette, type SlotTints } from '@/lib/claude-backgrounds'
 import { claudeInputAt } from '@/lib/claude-input'
@@ -61,6 +62,14 @@ export interface ImagePreview {
   x: number
   y: number
   image: PastedImage | null
+}
+
+/** A link (OSC 8) the mouse rests on: where it leads, where the mouse is, and whether only Ctrl+click opens it. */
+export interface LinkHint {
+  url: string
+  x: number
+  y: number
+  ctrl: boolean
 }
 
 /** A pasted image opened in full size. */
@@ -238,6 +247,7 @@ export function useTerminal(options: UseTerminalOptions) {
   const cleanups: (() => void)[] = []
 
   const imagePreview = ref<ImagePreview | null>(null)
+  const linkHint = ref<LinkHint | null>(null)
   const openedImage = ref<OpenedImage | null>(null)
   /** The numbers of the pasted images, as last asked for; `known` once they came. */
   let imageIds: { at: number; ids: Promise<ReadonlySet<number>>; known: ReadonlySet<number> | null } | null = null
@@ -283,6 +293,11 @@ export function useTerminal(options: UseTerminalOptions) {
         if (hover === imageHover) imagePreview.value = null
       },
     )
+  }
+
+  /** Whether the text of a link (OSC 8) in `range` is something else than the URL it opens. */
+  function hidesTarget(uri: string, range: IBufferRange): boolean {
+    return !term || !showsTarget(linkText(term.buffer.active, range), uri)
   }
 
   function hideImage(): void {
@@ -554,9 +569,20 @@ export function useTerminal(options: UseTerminalOptions) {
       rightClickSelectsWord: false,
       smoothScrollDuration: 0,
       ...(build ? { windowsPty: { backend: 'conpty' as const, buildNumber: build } } : {}),
+      // Links a program writes (OSC 8) show where they lead under the mouse. One whose text is something
+      // other than its URL may name another site than it opens: it opens only with Ctrl+click.
       linkHandler: {
-        activate: (_event, uri) => {
-          if (/^https?:\/\//i.test(uri)) void window.api.app.openExternal(uri)
+        activate: (event, uri, range) => {
+          if (!/^https?:\/\//i.test(uri)) return
+          if (!event.ctrlKey && !event.metaKey && hidesTarget(uri, range)) return
+          linkHint.value = null
+          void window.api.app.openExternal(uri)
+        },
+        hover: (event, uri, range) => {
+          linkHint.value = { url: uri, x: event.clientX, y: event.clientY, ctrl: hidesTarget(uri, range) }
+        },
+        leave: () => {
+          linkHint.value = null
         },
       },
     })
@@ -738,6 +764,8 @@ export function useTerminal(options: UseTerminalOptions) {
     imagePreview,
     /** The pasted image opened in full size by a click on its `[Image #N]`. */
     openedImage,
+    /** The link (OSC 8) under the mouse, with where it leads. */
+    linkHint,
     closeImage: () => (openedImage.value = null),
     focus,
     fit,
