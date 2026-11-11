@@ -20,11 +20,15 @@ export class WindowDialogs {
   private readonly pending = new Map<string, PendingDialog>()
   private readonly listening = new WeakSet<WebContents>()
   private readonly watched = new WeakSet<WebContents>()
+  /** Waiting for the page to listen (see `whenReady`). */
+  private readonly waiting = new Map<WebContents, (() => void)[]>()
 
   constructor() {
     ipcMain.on(IpcSend.dialogsReady, (event) => {
       this.watch(event.sender)
       this.listening.add(event.sender)
+      for (const resolve of this.waiting.get(event.sender) ?? []) resolve()
+      this.waiting.delete(event.sender)
       for (const entry of this.pending.values()) {
         if (entry.contents === event.sender && !entry.sent) this.deliver(entry)
       }
@@ -35,6 +39,13 @@ export class WindowDialogs {
       this.pending.delete(id as string)
       entry.resolve(confirmed === true)
     })
+  }
+
+  /** Resolves once the window's page shows dialogs itself, e.g. to ask something right after the start. */
+  whenReady(win: BrowserWindow): Promise<void> {
+    const contents = win.webContents
+    if (this.listening.has(contents)) return Promise.resolve()
+    return new Promise((resolve) => this.waiting.set(contents, [...(this.waiting.get(contents) ?? []), resolve]))
   }
 
   /** Resolves with true when the user confirmed (or acknowledged an alert). */

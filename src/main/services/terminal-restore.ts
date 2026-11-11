@@ -1,3 +1,4 @@
+import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isBrowsableUrl } from '@shared/browser'
 import { isSplit, mapPanes, paneIds, parsePaneNode, removePanes } from '@shared/panes'
@@ -23,6 +24,8 @@ interface SavedTerminal {
   fixedTitle?: boolean
   /** Missing in files of older versions. */
   muted?: boolean
+  /** Starts in a row it didn't open at: after `MAX_FAILED_STARTS` it is left out. */
+  failedStarts?: number
   /**
    * On the first terminal of a tab that holds several: how they share its space. Instead of ids its
    * parts name the terminals by their index in the file. Older versions open them in tabs of their own.
@@ -42,6 +45,19 @@ interface SavedBrowser {
 
 type SavedTab = SavedTerminal | SavedBrowser
 
+/** How often a tab may fail to open at the start before it is forgotten. */
+const MAX_FAILED_STARTS = 3
+/** How long the start waits for a tab's folder, e.g. on a network drive that is gone. */
+const FOLDER_TIMEOUT_MS = 4000
+
+/** A tab of the last run that didn't open, with the reason. */
+export interface RestoreFailure {
+  title: string
+  reason: string
+  /** Tried again on the next start; otherwise it failed too often and is gone. */
+  kept: boolean
+}
+
 /**
  * Remembers the open tabs and opens them again on the next start (setting `general.restoreTerminals`).
  * The file is rewritten on every change, so the tabs are also back after the app was ended abruptly.
@@ -52,6 +68,10 @@ export class TerminalRestore {
   private written: string
   private offs: (() => void)[] = []
   private disposed = false
+  /** Tabs that didn't open: they stay in the file for the next start, or a `retry`. */
+  private pending: { tab: SavedTerminal; reason: string }[] = []
+  /** What didn't open at the start, for the window to tell. */
+  private failed: RestoreFailure[] = []
 
   constructor(
     userDataDir: string,
@@ -83,10 +103,32 @@ export class TerminalRestore {
     this.offs = []
   }
 
+  /** The tabs of the last run that didn't open at the start; told once. */
+  takeFailures(): RestoreFailure[] {
+    const failed = this.failed
+    this.failed = []
+    return failed
+  }
+
+  /** Opens the tabs that didn't open at the start once more; returns those that still don't. */
+  async retry(): Promise<RestoreFailure[]> {
+    const pending = this.pending
+    this.pending = []
+    const failed: RestoreFailure[] = []
+    for (const { tab } of pending) {
+      const result = await this.openTerminal(tab)
+      if (typeof result === 'string') {
+        this.pending.push({ tab, reason: result })
+        failed.push({ title: tab.title, reason: result, kept: true })
+      }
+    }
+    this.save()
+    return failed
+  }
+
   private async restore(): Promise<void> {
     const saved = readJsonSync<unknown>(this.file)
     if (!Array.isArray(saved)) return
-    const accounts = new Map(this.accounts.list().map((a) => [a.id, a]))
     /** Index in the file → id of the terminal opened for it. */
     const opened = new Map<string, string>()
     for (const [index, tab] of saved.entries()) {
@@ -95,29 +137,18 @@ export class TerminalRestore {
         opened.set(String(index), info.id)
         continue
       }
-      if (!isSavedTerminal(tab) || !accounts.has(tab.accountId)) continue
-      // Without the lending account the session runs with its own login again.
-      const auth = accounts.get(tab.authAccountId) ?? accounts.get(tab.accountId)!
-      // Older versions saved no flag: a title other than the default (theirs had the account in it) was chosen.
-      const defaults = [defaultTerminalTitle(tab.mode, auth.name, tab.cwd), legacyTerminalTitle(tab.mode, auth.name, tab.cwd)]
-      const fixedTitle = tab.fixedTitle ?? !defaults.includes(tab.title)
-      // In the folder the session is in now: `/cd` may have moved it after the tab was saved.
-      const located = tab.sessionId ? await this.locate(tab.accountId, tab.sessionId, tab.cwd) : null
-      try {
-        const info = this.terminals.create({
-          accountId: tab.accountId,
-          authAccountId: auth.id,
-          cwd: located?.cwd ?? tab.cwd,
-          mode: tab.mode,
-          resumeSessionId: located ? tab.sessionId : null,
-          title: fixedTitle ? tab.title : null,
-          muted: tab.muted === true,
-          restoredFrom: savedId(tab),
-        })
-        opened.set(String(index), info.id)
-      } catch {
-        // e.g. the folder no longer exists: the tab is left out.
+      if (!isSavedTerminal(tab)) continue
+      const result = await this.openTerminal(tab)
+      if (result === null) continue
+      if (typeof result !== 'string') {
+        opened.set(String(index), result.id)
+        continue
       }
+      // Often only for a moment (a network drive, Claude Code updating itself): it is tried again.
+      const failedStarts = (tab.failedStarts ?? 0) + 1
+      const kept = failedStarts < MAX_FAILED_STARTS
+      if (kept) this.pending.push({ tab: { ...tab, layout: undefined, failedStarts }, reason: result })
+      this.failed.push({ title: tab.title, reason: result, kept })
     }
     for (const tab of saved) {
       const layout = parsePaneNode((tab as SavedTab | null)?.layout)
@@ -126,6 +157,42 @@ export class TerminalRestore {
       const missing = new Set(paneIds(layout).filter((index) => !opened.has(index)))
       const rest = removePanes(layout, missing)
       if (isSplit(rest)) this.terminals.arrange(mapPanes(rest, (index) => opened.get(index)!))
+    }
+  }
+
+  /**
+   * Opens a saved terminal: the id of the new one, the reason when it didn't open, null when it can't
+   * come back (its account is gone).
+   */
+  private async openTerminal(tab: SavedTerminal): Promise<string | null | { id: string }> {
+    const accounts = new Map(this.accounts.list().map((a) => [a.id, a]))
+    if (!accounts.has(tab.accountId)) return null
+    // Without the lending account the session runs with its own login again.
+    const auth = accounts.get(tab.authAccountId) ?? accounts.get(tab.accountId)!
+    // Older versions saved no flag: a title other than the default (theirs had the account in it) was chosen.
+    const defaults = [defaultTerminalTitle(tab.mode, auth.name, tab.cwd), legacyTerminalTitle(tab.mode, auth.name, tab.cwd)]
+    const fixedTitle = tab.fixedTitle ?? !defaults.includes(tab.title)
+    // In the folder the session is in now: `/cd` may have moved it after the tab was saved.
+    const located = tab.sessionId ? await this.locate(tab.accountId, tab.sessionId, tab.cwd) : null
+    const cwd = located?.cwd ?? tab.cwd
+    // Checked without blocking first: starting the terminal looks at the folder synchronously.
+    const folder = cwd ? await folderState(cwd) : 'ok'
+    if (folder === 'missing') return `Den Ordner „${cwd}“ gibt es nicht.`
+    if (folder === 'unreachable') return `Der Ordner „${cwd}“ war nicht erreichbar.`
+    try {
+      const info = this.terminals.create({
+        accountId: tab.accountId,
+        authAccountId: auth.id,
+        cwd,
+        mode: tab.mode,
+        resumeSessionId: located ? tab.sessionId : null,
+        title: fixedTitle ? tab.title : null,
+        muted: tab.muted === true,
+        restoredFrom: savedId(tab),
+      })
+      return { id: info.id }
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
     }
   }
 
@@ -160,7 +227,7 @@ export class TerminalRestore {
       const saved = removePanes(split, new Set(paneIds(split).filter((id) => !index.has(id))))
       if (isSplit(saved)) layouts.set(paneIds(saved)[0], mapPanes(saved, (id) => index.get(id)!))
     }
-    return terminals.map((t): SavedTab => {
+    const open = terminals.map((t): SavedTab => {
       const layout = layouts.has(t.id) ? { layout: layouts.get(t.id) } : {}
       if (t.mode === 'browser') {
         return { id: t.id, mode: 'browser', url: t.url ?? '', title: t.title, fixedTitle: t.fixedTitle, ...layout }
@@ -178,6 +245,25 @@ export class TerminalRestore {
         ...layout,
       }
     })
+    // Those that didn't open stay for the next start, as tabs of their own.
+    return [...open, ...this.pending.map(({ tab }) => tab)]
+  }
+}
+
+/** Whether a folder is there, without waiting long for one on a network drive that is gone. */
+async function folderState(dir: string): Promise<'ok' | 'missing' | 'unreachable'> {
+  let timer: NodeJS.Timeout | undefined
+  const timeout = new Promise<'unreachable'>((resolve) => {
+    timer = setTimeout(() => resolve('unreachable'), FOLDER_TIMEOUT_MS)
+  })
+  const check = stat(dir).then(
+    (info) => (info.isDirectory() ? ('ok' as const) : ('missing' as const)),
+    (error: NodeJS.ErrnoException) => (error.code === 'ENOENT' || error.code === 'ENOTDIR' ? ('missing' as const) : ('unreachable' as const)),
+  )
+  try {
+    return await Promise.race([check, timeout])
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -196,7 +282,8 @@ function isSavedTerminal(value: unknown): value is SavedTerminal {
     (t.sessionId === null || (typeof t.sessionId === 'string' && SESSION_ID_RE.test(t.sessionId))) &&
     typeof t.title === 'string' &&
     (t.fixedTitle === undefined || typeof t.fixedTitle === 'boolean') &&
-    (t.muted === undefined || typeof t.muted === 'boolean')
+    (t.muted === undefined || typeof t.muted === 'boolean') &&
+    (t.failedStarts === undefined || (typeof t.failedStarts === 'number' && Number.isInteger(t.failedStarts) && t.failedStarts >= 0))
   )
 }
 

@@ -142,6 +142,8 @@ describe('TerminalRestore on start', () => {
   it('opens the saved tabs again', async () => {
     const project = join(dir, 'project')
     const other = join(dir, 'other')
+    await mkdir(project)
+    await mkdir(other)
     await writeTranscript(S1, project)
     await writeFile(
       file,
@@ -169,6 +171,7 @@ describe('TerminalRestore on start', () => {
   it('resumes a session /cd moved after the tab was saved in its new folder', async () => {
     const project = join(dir, 'project')
     const moved = join(dir, 'moved')
+    await mkdir(moved)
     // Claude Code took the transcript along into the project folder of the new folder.
     await mkdir(join(configDir, 'projects', projectKey(project)), { recursive: true })
     const folder = join(configDir, 'projects', projectKey(moved))
@@ -209,6 +212,58 @@ describe('TerminalRestore on start', () => {
     })
     await start().init()
     expect(create.mock.calls.map(([options]) => options.title)).toEqual(['first', 'second'])
+  })
+
+  it('keeps a tab that did not open for the next starts, and tells why', async () => {
+    const tab = { accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'shell', sessionId: null, fixedTitle: true }
+    await writeFile(
+      file,
+      JSON.stringify([
+        { ...tab, title: 'opens' },
+        { ...tab, title: 'busy' },
+        { ...tab, title: 'gone', cwd: join(dir, 'missing') },
+        { ...tab, title: 'last try', failedStarts: 2 },
+      ]),
+    )
+    create.mockImplementation((options) => {
+      if (options.title !== 'opens') throw new Error('Claude Code wurde nicht gefunden.')
+      return info({ id: 'new-1', title: 'opens', mode: 'shell', cwd: dir, fixedTitle: true })
+    })
+    const restore = start()
+    await restore.init()
+    // A folder that isn't there is not even tried.
+    expect(create.mock.calls.map(([options]) => options.title)).toEqual(['opens', 'busy', 'last try'])
+    expect(restore.takeFailures()).toEqual([
+      { title: 'busy', reason: 'Claude Code wurde nicht gefunden.', kept: true },
+      { title: 'gone', reason: `Den Ordner „${join(dir, 'missing')}“ gibt es nicht.`, kept: true },
+      { title: 'last try', reason: 'Claude Code wurde nicht gefunden.', kept: false },
+    ])
+    expect(restore.takeFailures()).toEqual([])
+
+    // The file keeps them, counting the starts they failed at, also when the open tabs change.
+    terminalList = [create.mock.results[0]!.value as TerminalInfo]
+    terminalEvents.fire('changed', terminalList)
+    const saved = (await readSaved()) as { title: string; failedStarts?: number }[]
+    expect(saved.map((t) => [t.title, t.failedStarts])).toEqual([
+      ['opens', undefined],
+      ['busy', 1],
+      ['gone', 1],
+    ])
+  })
+
+  it('opens the tabs that did not open when asked to try again', async () => {
+    const tab = { accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'shell', sessionId: null, fixedTitle: true }
+    await writeFile(file, JSON.stringify([{ ...tab, title: 'busy' }, { ...tab, title: 'still busy' }]))
+    let ready = false
+    create.mockImplementation((options) => {
+      if (!ready || options.title === 'still busy') throw new Error('not yet')
+      return info({ id: 'new-1' })
+    })
+    const restore = start()
+    await restore.init()
+    ready = true
+    expect(await restore.retry()).toEqual([{ title: 'still busy', reason: 'not yet', kept: true }])
+    expect((await readSaved()) as unknown[]).toHaveLength(1)
   })
 
   it('puts the terminals of a split tab together again, without those that did not open', async () => {

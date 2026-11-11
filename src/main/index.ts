@@ -330,7 +330,8 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   })
 
   // Started by the system at login: with the tray icon the window stays hidden until it is opened.
-  const firstWindow = openWindow({ hidden: process.argv.includes(AUTOSTART_ARG) && tray.visible })
+  const startHidden = process.argv.includes(AUTOSTART_ARG) && tray.visible
+  const firstWindow = openWindow({ hidden: startHidden })
   // Accounts, settings … that were broken or locked at the start: the user learns what the app did.
   const problems = takeJsonProblems()
   if (problems.length > 0) {
@@ -342,6 +343,28 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
       code: dirname(problems[0].file),
     })
   }
+  // Tabs of the last run that didn't open: the user learns why and can try again right away. A window
+  // hidden in the tray stays hidden; those tabs come again on the next start.
+  void restored.then(async () => {
+    let failures = restore.takeFailures()
+    while (failures.length > 0 && !startHidden && !firstWindow.isDestroyed()) {
+      await dialogs.whenReady(firstWindow)
+      const again = failures.some((failure) => failure.kept)
+      const retry = await dialogs.show(firstWindow, {
+        kind: again ? 'confirm' : 'alert',
+        warning: true,
+        title: failures.length === 1 ? 'Ein Tab vom letzten Mal ging nicht auf' : `${failures.length} Tabs vom letzten Mal gingen nicht auf`,
+        description: again
+          ? 'Die App versucht es beim nächsten Start noch einmal, oder jetzt gleich.'
+          : 'Sie gingen schon bei mehreren Starts nicht auf, die App versucht es nicht mehr.',
+        code: failures.map((failure) => `${failure.title}: ${failure.reason}${failure.kept ? '' : ' (aufgegeben)'}`).join('\n'),
+        confirmText: again ? 'Erneut versuchen' : 'OK',
+        cancelText: 'Später',
+      })
+      if (!again || !retry) break
+      failures = await restore.retry()
+    }
+  })
   if (launchRequest) {
     // Wait for the page so it can select the new tab.
     firstWindow.webContents.once('did-finish-load', () => void openFromCommandLine(launchRequest))
