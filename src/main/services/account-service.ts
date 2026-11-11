@@ -289,7 +289,8 @@ export class AccountService extends TypedEmitter<Events> {
     // Only ever delete directories the app created itself.
     if (options.deleteConfigDir && !account.configDir) {
       const dir = join(this.profilesDir, id)
-      if (dir.startsWith(this.profilesDir) && existsSync(dir)) await rm(dir, { recursive: true, force: true })
+      // Sessions that were just closed may still hold a file for a moment (Windows).
+      if (dir.startsWith(this.profilesDir) && existsSync(dir)) await rm(dir, { recursive: true, force: true, maxRetries: 5 })
     }
     this.rebuild(true)
   }
