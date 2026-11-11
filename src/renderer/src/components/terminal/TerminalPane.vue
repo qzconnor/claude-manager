@@ -50,6 +50,12 @@ const exited = computed(() => props.terminal.status === 'exited')
 
 // Text from elsewhere in the window, e.g. a file the file tree mentions to Claude.
 onBeforeUnmount(terminalBus.onPaste(props.terminal.id, (text) => term.paste(text)))
+// Its tab clicked while it is the active one already: the keyboard comes back here.
+onBeforeUnmount(
+  terminalBus.onFocus(props.terminal.id, () => {
+    if (props.active) term.focus()
+  }),
+)
 
 // Files dropped on the terminal: their paths are pasted, like in Windows Terminal. Claude Code
 // attaches pasted image paths as images. Entries of the file tree come the same way.

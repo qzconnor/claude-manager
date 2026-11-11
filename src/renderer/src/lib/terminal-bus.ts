@@ -6,6 +6,8 @@ const dataHandlers = new Map<string, Set<DataHandler>>()
 const exitHandlers = new Map<string, Set<ExitHandler>>()
 /** The view of each terminal, which pastes into it. */
 const pasteHandlers = new Map<string, PasteHandler>()
+/** The view of each terminal or browser, which gives it the keyboard. */
+const focusHandlers = new Map<string, () => void>()
 let wired = false
 
 /** One IPC subscription for all terminals; views register per terminal id. */
@@ -49,5 +51,19 @@ export const terminalBus = {
     const handler = pasteHandlers.get(id)
     handler?.(text)
     return !!handler
+  },
+  /** The view of a terminal or browser gives it the keyboard when asked (see `focus`). */
+  onFocus(id: string, handler: () => void): () => void {
+    focusHandlers.set(id, handler)
+    return () => {
+      if (focusHandlers.get(id) === handler) focusHandlers.delete(id)
+    }
+  },
+  /**
+   * Gives the view the keyboard, also when its terminal is the active one already: a click on its tab
+   * took the keyboard to the tab, and nothing else changes that would give it back.
+   */
+  focus(id: string): void {
+    focusHandlers.get(id)?.()
   },
 }

@@ -20,6 +20,7 @@ import {
 import type { BrowserOpenOptions, PaneNode, PaneSplit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
 import { sameData } from '@shared/utils'
 import { groupTabs, type TerminalTabGroup } from '@/lib/tabs'
+import { terminalBus } from '@/lib/terminal-bus'
 import {
   addTab,
   allTabs,
@@ -280,9 +281,12 @@ export const useTerminalsStore = defineStore('terminals', () => {
   }
 
   function focus(id: string | null): void {
+    const again = id !== null && id === activeId.value
     activeId.value = id
     if (id) focusedAt.set(id, ++focusCount)
     follow(id)
+    // Its tab was clicked again: the click took the keyboard, which its view takes back.
+    if (again) terminalBus.focus(id)
   }
 
   // ── Browsers and their sessions ──
