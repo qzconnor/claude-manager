@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/context-menu'
 import { useLauncher } from '@/composables/useLauncher'
 import { attempt } from '@/lib/errors'
+import { openMenuBelow, tabKeyAction } from '@/lib/tab-keys'
 import { cn } from '@/lib/utils'
 import { BROWSER_TAB } from '@/lib/workspace'
 import { useBrowsersStore } from '@/stores/browsers'
@@ -49,6 +50,16 @@ function onPointerLeave() {
 }
 onBeforeUnmount(onPointerLeave)
 
+/** The keys of the tab with the keyboard (see `tabKeyAction`). */
+function onTabKey(event: KeyboardEvent) {
+  const action = tabKeyAction(event)
+  if (action !== 'select' && action !== 'close' && action !== 'menu') return
+  event.preventDefault()
+  if (action === 'menu') openMenuBelow(event.currentTarget as HTMLElement)
+  else if (action === 'select') emit('select', BROWSER_TAB)
+  else terminals.closeBrowserTab()
+}
+
 function onMouseDown(event: MouseEvent) {
   if (event.button !== 1) return
   event.preventDefault()
@@ -66,13 +77,14 @@ function openExternal() {
     <ContextMenuTrigger as-child>
       <div
         role="tab"
+        :tabindex="selected ? 0 : -1"
         :data-terminal-id="BROWSER_TAB"
         :data-linked-hover="linkedHover || undefined"
         :aria-selected="selected"
         v-tooltip="tooltip"
         :class="
           cn(
-            'app-no-drag group/tab relative flex h-full max-w-72 min-w-28 shrink-0 cursor-pointer items-center gap-2 rounded-t-lg border pr-1 pl-3 text-xs transition-colors data-docking:opacity-50',
+            'app-no-drag group/tab relative flex h-full max-w-72 min-w-28 shrink-0 cursor-pointer items-center gap-2 rounded-t-lg border pr-1 pl-3 text-xs transition-colors data-docking:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset',
             selected
               ? cn('border-border border-b-transparent', focused ? 'text-foreground' : 'text-muted-foreground')
               : 'border-transparent border-b-border text-muted-foreground hover:bg-accent/60 hover:text-foreground data-dragging:bg-surface-strong data-dragging:text-foreground data-dragging:shadow-md data-linked-hover:bg-accent/60 data-linked-hover:text-foreground',
@@ -81,6 +93,7 @@ function openExternal() {
         :style="selected ? joined : undefined"
         @click="emit('select', BROWSER_TAB)"
         @mousedown="onMouseDown"
+        @keydown="onTabKey"
         @pointerenter="ui.hoveredTab = BROWSER_TAB"
         @pointerleave="onPointerLeave"
       >

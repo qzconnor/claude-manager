@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { useEventListener, useMutationObserver } from '@vueuse/core'
-import { nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { OVERFLOW_FADE_PX, useOverflowFade } from '@/composables/useOverflowFade'
+import { useRovingTabs } from '@/composables/useRovingTabs'
 import { useTabDrag } from '@/composables/useTabDrag'
 import { dockSpot } from '@/lib/tab-drag'
 import { useTerminalsStore } from '@/stores/terminals'
@@ -22,6 +23,10 @@ const strip = ref<HTMLElement | null>(null)
 
 /** Fades out tabs cut by the edge of the strip instead of cutting them off hard. */
 const fade = useOverflowFade(strip)
+
+// The arrows go from tab to tab; Tab stops at the one in front (also while a page is shown), or the first.
+useRovingTabs(strip, props.vertical)
+const tabStop = computed(() => terminals.activeTab?.id ?? terminals.tabs[0]?.id ?? null)
 
 /** Tells the page below where the selected tab sits, clipped to the visible part of the strip. */
 function measureSelected() {
@@ -151,7 +156,9 @@ watch(
       v-if="terminals.terminals.length > 0"
       ref="strip"
       role="tablist"
+      aria-label="Tabs"
       aria-orientation="vertical"
+      data-terminal-tabs
       class="-mx-1 flex min-h-0 flex-col gap-1 overflow-y-auto p-1"
     >
       <TerminalTab
@@ -159,6 +166,7 @@ watch(
         :key="tab.id"
         :tab="tab"
         :selected="route.name === 'terminals' && tab.id === terminals.activeTab?.id"
+        :tab-stop="tab.id === tabStop"
         vertical
         @select="select"
       />
@@ -173,6 +181,8 @@ watch(
       v-show="terminals.terminals.length > 0"
       ref="strip"
       role="tablist"
+      aria-label="Tabs"
+      data-terminal-tabs
       class="no-scrollbar flex min-w-0 gap-0.5 overflow-x-auto"
       :style="fade.style.value"
     >
@@ -181,6 +191,7 @@ watch(
         :key="tab.id"
         :tab="tab"
         :selected="route.name === 'terminals' && tab.id === terminals.activeTab?.id"
+        :tab-stop="tab.id === tabStop"
         @select="select"
       />
     </div>

@@ -62,6 +62,8 @@ export const useUiStore = defineStore('ui', () => {
   const settingsSearchRequest = ref(0)
   /** Incremented to give the keyboard back to the active terminal, e.g. after a popup closed. */
   const focusTerminalRequest = ref(0)
+  /** The command palette closes and gives the keyboard to the tab in front instead of the terminal. */
+  const focusTabsRequest = ref(false)
   /** A session the sessions page should select, with the search that found it. */
   const sessionToShow = ref<(SessionRef & { query: string }) | null>(null)
   /**
@@ -133,6 +135,7 @@ export const useUiStore = defineStore('ui', () => {
     searchRequest,
     settingsSearchRequest,
     focusTerminalRequest,
+    focusTabsRequest,
     sessionToShow,
     folderToShow,
     worktreeRequest,

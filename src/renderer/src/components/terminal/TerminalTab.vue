@@ -44,6 +44,7 @@ import { useTerminalActions } from '@/composables/useTerminalActions'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
 import { attentionLook } from '@/lib/attention'
 import { attempt } from '@/lib/errors'
+import { openMenuBelow, tabKeyAction } from '@/lib/tab-keys'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
 import { useBrowsersStore } from '@/stores/browsers'
@@ -56,9 +57,10 @@ import TerminalTabCard from './TerminalTabCard.vue'
  * A tab shows each of its terminals: one fills it, the terminals of a split tab sit side by side in
  * it (one below the other in the sidebar), each with its own close button. Hover card and menu act on
  * the terminal under the pointer, else on the one that has (or last had) the keyboard.
- * `vertical`: a full-width entry in the sidebar, with the hover card beside it.
+ * `vertical`: a full-width entry in the sidebar, with the hover card beside it. `tabStop`: the tab
+ * Tab stops at in the strip (the one in front); the others are reached with the arrow keys.
  */
-const props = defineProps<{ tab: TerminalTab; selected: boolean; vertical?: boolean }>()
+const props = defineProps<{ tab: TerminalTab; selected: boolean; vertical?: boolean; tabStop?: boolean }>()
 /** A terminal of the tab was clicked. */
 const emit = defineEmits<{ select: [id: string] }>()
 
@@ -206,9 +208,15 @@ async function commitRename() {
   }
 }
 
+/** Renaming started with F2 on the tab: Enter or Escape give the keyboard back to the tab. */
+let renameFromTab = false
+
 function onRenameKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' && event.key !== 'Escape') return
   if (event.key === 'Enter') void commitRename()
-  else if (event.key === 'Escape') renaming.value = null
+  else renaming.value = null
+  if (renameFromTab) void nextTick(() => tabEl.value?.focus())
+  renameFromTab = false
 }
 
 /** Renaming from the menu: the closed menu gives the keyboard to the rename field instead of the page. */
@@ -216,6 +224,21 @@ function onMenuCloseAutoFocus(event: Event) {
   if (!renaming.value) return
   event.preventDefault()
   focusRenameField()
+}
+
+/** The keys of the tab with the keyboard (see `tabKeyAction`); in a split tab they act on the terminal in front. */
+function onTabKey(event: KeyboardEvent) {
+  const action = tabKeyAction(event)
+  if (!action) return
+  event.preventDefault()
+  if (action === 'menu') openMenuBelow(event.currentTarget as HTMLElement)
+  else if (action === 'select') emit('select', props.tab.focused.id)
+  else if (action === 'close') void closeTab(props.tab)
+  else if (action === 'rename') {
+    renameFromTab = true
+    startRename(props.tab.focused.id)
+  }
+  else ui.focusTerminalRequest++
 }
 
 function onMouseDown(event: MouseEvent, id: string) {
@@ -246,10 +269,11 @@ function openFolder() {
             role="tab"
             :data-terminal-id="tab.id"
             :aria-selected="selected"
+            :tabindex="tabStop ? 0 : -1"
             :class="
               cn(
                 // Dragged onto the page (data-docking) it fades in its place, the page shows where it goes.
-                'app-no-drag group/tab relative flex cursor-pointer text-xs transition-colors data-docking:opacity-50',
+                'app-no-drag group/tab relative flex cursor-pointer text-xs transition-colors data-docking:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset',
                 vertical
                   ? cn(
                       // While dragged (data-dragging, see useTabDrag) it looks lifted like the selected one.
@@ -273,6 +297,7 @@ function openFolder() {
             "
             :style="[joinedBackground, minWidth]"
             @pointerleave="onPointerLeave"
+            @keydown="onTabKey"
           >
             <template v-for="({ pane, color, attention, dimmed }, index) in entries" :key="pane.id">
               <span

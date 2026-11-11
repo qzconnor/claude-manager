@@ -14,6 +14,7 @@ import {
   Maximize2Icon,
   Minimize2Icon,
   PanelRightIcon,
+  PanelTopIcon,
   PencilIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -108,6 +109,12 @@ function toggleNotifications() {
  */
 function reloadWindow() {
   location.reload()
+}
+
+/** The palette closes and the tab in front gets the keyboard, to go on with the arrows (see CommandPalette). */
+function focusTabs() {
+  ui.focusTabsRequest = true
+  emit('done', false)
 }
 
 /** Shows a terminal's tab; in groups the route follows it by itself. */
@@ -270,6 +277,15 @@ const closesBrowser = computed(
           <BellOffIcon v-if="notificationsOn" />
           <BellIcon v-else />
           {{ notificationsOn ? 'Benachrichtigungen ausschalten' : 'Benachrichtigungen einschalten' }}
+        </CommandItem>
+        <CommandItem
+          v-if="terminals.tabs.length > 0"
+          value="focus-tabs"
+          filter-text="Tabs fokussieren Tab-Leiste Tastatur Fokus Pfeiltasten wechseln Barrierefreiheit"
+          @select="focusTabs"
+        >
+          <PanelTopIcon />
+          Tabs fokussieren
         </CommandItem>
         <CommandItem
           value="reload-window"

@@ -12,6 +12,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { fileIcon } from '@/lib/file-icons'
 import { baseName } from '@/lib/file-tree'
+import { openMenuBelow, tabKeyAction } from '@/lib/tab-keys'
 import { cn } from '@/lib/utils'
 import { diffTab, type DiffFile } from '@/lib/workspace'
 import { SEPARATOR } from '@/stores/file-tree'
@@ -37,6 +38,17 @@ const preview = computed(() => terminals.previewTabs.has(id.value))
 const fullPath = computed(() => (all.value ? props.file.root : `${props.file.root}${SEPARATOR}${props.file.path.replaceAll('/', SEPARATOR)}`))
 const alone = computed(() => (terminals.groups.find((g) => g.id === props.groupId)?.tabs.length ?? 0) < 2)
 
+/** The keys of the tab with the keyboard (see `tabKeyAction`); Enter keeps a preview as a double click does. */
+function onTabKey(event: KeyboardEvent) {
+  const action = tabKeyAction(event)
+  if (action !== 'select' && action !== 'close' && action !== 'menu') return
+  event.preventDefault()
+  if (action === 'menu') return openMenuBelow(event.currentTarget as HTMLElement)
+  if (action === 'close') return terminals.closeDiff(id.value)
+  emit('select', id.value)
+  if (event.key === 'Enter') terminals.keepDiff(id.value)
+}
+
 function onMouseDown(event: MouseEvent) {
   if (event.button !== 1) return
   event.preventDefault()
@@ -51,11 +63,12 @@ function onMouseDown(event: MouseEvent) {
         <TooltipTrigger as-child>
           <div
             role="tab"
+            :tabindex="selected ? 0 : -1"
             :data-terminal-id="id"
             :aria-selected="selected"
             :class="
               cn(
-                'app-no-drag group/tab relative flex h-full max-w-56 min-w-28 shrink-0 cursor-pointer items-center gap-2 rounded-t-lg border pr-1 pl-3 text-xs transition-colors data-docking:opacity-50',
+                'app-no-drag group/tab relative flex h-full max-w-56 min-w-28 shrink-0 cursor-pointer items-center gap-2 rounded-t-lg border pr-1 pl-3 text-xs transition-colors data-docking:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset',
                 selected
                   ? cn('border-border border-b-transparent', focused ? 'text-foreground' : 'text-muted-foreground')
                   : 'border-transparent border-b-border text-muted-foreground hover:bg-accent/60 hover:text-foreground data-dragging:bg-surface-strong data-dragging:text-foreground data-dragging:shadow-md',
@@ -65,6 +78,7 @@ function onMouseDown(event: MouseEvent) {
             @click="emit('select', id)"
             @dblclick="terminals.keepDiff(id)"
             @mousedown="onMouseDown"
+            @keydown="onTabKey"
           >
             <component :is="icon.icon" :class="cn('size-3.5 shrink-0', icon.class)" />
             <span :class="cn('min-w-0 flex-1 truncate', preview && 'italic')">{{ name }}</span>

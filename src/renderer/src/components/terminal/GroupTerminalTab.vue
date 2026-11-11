@@ -41,6 +41,7 @@ import { useLauncher } from '@/composables/useLauncher'
 import { useTerminalActions } from '@/composables/useTerminalActions'
 import { attentionLook } from '@/lib/attention'
 import { attempt } from '@/lib/errors'
+import { openMenuBelow, tabKeyAction } from '@/lib/tab-keys'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
 import { useBrowsersStore } from '@/stores/browsers'
@@ -154,15 +155,36 @@ async function commitRename() {
   }
 }
 
+/** Renaming started with F2 on the tab: Enter or Escape give the keyboard back to the tab. */
+let renameFromTab = false
+
 function onRenameKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' && event.key !== 'Escape') return
   if (event.key === 'Enter') void commitRename()
-  else if (event.key === 'Escape') renaming.value = false
+  else renaming.value = false
+  if (renameFromTab) void nextTick(() => tabEl.value?.focus())
+  renameFromTab = false
 }
 
 function onMenuCloseAutoFocus(event: Event) {
   if (!renaming.value) return
   event.preventDefault()
   focusRenameField()
+}
+
+/** The keys of the tab with the keyboard (see `tabKeyAction`). */
+function onTabKey(event: KeyboardEvent) {
+  const action = tabKeyAction(event)
+  if (!action) return
+  event.preventDefault()
+  if (action === 'menu') openMenuBelow(event.currentTarget as HTMLElement)
+  else if (action === 'select') emit('select', props.terminal.id)
+  else if (action === 'close') void closeTerminal(props.terminal.id)
+  else if (action === 'rename') {
+    renameFromTab = true
+    startRename()
+  }
+  else ui.focusTerminalRequest++
 }
 
 function onMouseDown(event: MouseEvent) {
@@ -188,12 +210,13 @@ function openFolder() {
           <div
             ref="tabEl"
             role="tab"
+            :tabindex="selected ? 0 : -1"
             :data-terminal-id="terminal.id"
             :data-linked-hover="linkedHover || undefined"
             :aria-selected="selected"
             :class="
               cn(
-                'app-no-drag group/tab relative flex h-full min-w-28 shrink-0 cursor-pointer items-center gap-2 rounded-t-lg border pr-1 pl-3 text-xs transition-colors data-docking:opacity-50',
+                'app-no-drag group/tab relative flex h-full min-w-28 shrink-0 cursor-pointer items-center gap-2 rounded-t-lg border pr-1 pl-3 text-xs transition-colors data-docking:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset',
                 // Room for the session's name too.
                 session ? 'max-w-72' : 'max-w-56',
                 selected
@@ -205,6 +228,7 @@ function openFolder() {
             @click="emit('select', terminal.id)"
             @dblclick="startRename"
             @mousedown="onMouseDown"
+            @keydown="onTabKey"
             @pointerenter="ui.hoveredTab = terminal.id"
             @pointerleave="onPointerLeave"
           >
