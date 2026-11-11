@@ -415,6 +415,19 @@ export interface PastedImage {
   sent: boolean
 }
 
+/** What a view of a tab starts with (see `terminals.attach`). */
+export interface TerminalAttach {
+  /** The output so far. */
+  data: string
+  /** The stream offset after `data`. */
+  end: number
+  /** An earlier view already answered the queries in `data`. */
+  answered: boolean
+  /** The terminal's size now: the output was last written for it. */
+  cols: number
+  rows: number
+}
+
 export interface TerminalInfo {
   id: string
   /** Account whose config dir holds the session. */

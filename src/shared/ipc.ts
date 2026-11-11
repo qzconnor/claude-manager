@@ -40,6 +40,7 @@ import type {
   SessionRemoveResult,
   SessionSearchHit,
   SettingsImportResult,
+  TerminalAttach,
   TerminalCreateOptions,
   FolderMovedEvent,
   FolderMoveResult,
@@ -344,8 +345,9 @@ export interface ManagerApi {
     /**
      * Output produced so far, for a view of the tab; `end` is the stream offset after `data`.
      * `answered`: an earlier view already answered the queries in it, they mustn't be answered again.
+     * `cols`/`rows`: the terminal's size now, the size the output was last written for.
      */
-    attach(id: string): Promise<{ data: string; end: number; answered: boolean }>
+    attach(id: string): Promise<TerminalAttach>
     /**
      * Ends the tab and continues its session in a new one with `accountId`'s limits.
      * Tokens and API keys run the session where it lies; for a browser login it is copied over.

@@ -19,6 +19,7 @@ import type {
   SessionLimit,
   SessionWorktree,
   SplitDirection,
+  TerminalAttach,
   TerminalCreateOptions,
   TerminalInfo,
 } from '@shared/types'
@@ -147,6 +148,8 @@ interface TerminalRecord {
   size: number
   /** The terminal modes in output dropped from `chunks`. */
   trimmed: TrimmedModes
+  /** The pseudo terminal's size: the output was last written for it. */
+  ptySize: { cols: number; rows: number }
   /** Total number of characters emitted so far (never decreases, also counts trimmed output). */
   emitted: number
   pending: string
@@ -523,9 +526,11 @@ export class TerminalService extends TypedEmitter<Events> {
     if (!record?.process) return
     const c = clampSize(cols, 0)
     const r = clampSize(rows, 0)
-    if (c < 2 || r < 1) return
+    // A view replaying the output at the terminal's size reports that size back.
+    if (c < 2 || r < 1 || (c === record.ptySize.cols && r === record.ptySize.rows)) return
     try {
       record.process.resize(c, r)
+      record.ptySize = { cols: c, rows: r }
     } catch {
       // The process may have exited between the check and the call.
     }
@@ -656,13 +661,13 @@ export class TerminalService extends TypedEmitter<Events> {
    * reloaded) already answered the queries in it, such as device attributes or the background color.
    * The program got its replies or gave up waiting long ago; replies now would reach it as input.
    */
-  attach(id: string): { data: string; end: number; answered: boolean } {
+  attach(id: string): TerminalAttach {
     const record = this.require(id)
     const answered = record.viewed
     record.viewed = true
     const { data, end } = this.buffer(id)
     // The modes set in output that is no longer kept, such as bracketed paste or the mouse.
-    return { data: record.trimmed.prefix() + data, end, answered }
+    return { data: record.trimmed.prefix() + data, end, answered, ...record.ptySize }
   }
 
   /** The numbers of the images pasted into the tab's sessions (`[Image #N]`): sent ones and those kept when pasted. */
@@ -1378,6 +1383,7 @@ function newRecord(info: TerminalInfo, defaultTitle: string, process: Pty.IPty |
     chunks: [],
     size: 0,
     trimmed: new TrimmedModes(),
+    ptySize: { cols: process?.cols ?? 80, rows: process?.rows ?? 24 },
     emitted: 0,
     pending: '',
     flushTimer: null,

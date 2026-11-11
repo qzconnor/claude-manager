@@ -659,6 +659,9 @@ export function useTerminal(options: UseTerminalOptions) {
     try {
       const buffer = await window.api.terminals.attach(terminalId)
       if (disposed) return
+      // At the size the output was written for: at xterm's 80×24 its lines would break apart in the
+      // scrollback. The view takes its own size right after (`fit`), and the program draws anew.
+      if (buffer.cols !== t.cols || buffer.rows !== t.rows) t.resize(buffer.cols, buffer.rows)
       const replay = filterOutput(buffer.data)
       if (buffer.answered && replay) {
         replaying = true
