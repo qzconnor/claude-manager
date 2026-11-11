@@ -24,7 +24,15 @@ import type {
 } from '@shared/types'
 import { withdrawBootEntries, withdrawBootEntriesSync, type EndedLaunch } from '../lib/boot-canary'
 import { colorFgBg, colorSchemeReport, ColorSchemeUpdates } from '../lib/color-scheme'
-import { applyHookCall, newHookState, type HookCall, type HookState, type HookTurnEnd } from '../lib/hook-events'
+import {
+  applyHookCall,
+  idleHookState,
+  interruptedHookState,
+  newHookState,
+  type HookCall,
+  type HookState,
+  type HookTurnEnd,
+} from '../lib/hook-events'
 import { choosePastedImage, newPastedImageScan, readPastedImage, scanPastedImages, type PastedImageScan } from '../lib/pasted-images'
 import { fallbackSessionFolder } from '../lib/session-folder'
 import { readCompactLimit } from '../lib/auto-compact'
@@ -1019,6 +1027,7 @@ export class TerminalService extends TypedEmitter<Events> {
     } else if (record.hooks?.ended) {
       // The hooks told already how the turn ended, or that it waits for the user.
       record.turnEnding = false
+      void this.settleIdle(record, run)
     } else {
       record.turnEnding = true
       void (record.hooks ? this.awaitHookEnd(record, run) : this.reportTurnEnd(record, run))
@@ -1036,7 +1045,6 @@ export class TerminalService extends TypedEmitter<Events> {
     if (!record || record.info.mode !== 'session' || record.info.status !== 'running') return
     const { info } = record
     const { state, end } = applyHookCall(record.hooks ?? newHookState(), call, new Date().toISOString())
-    record.hooks = state
     // The turn starts with the prompt; a short one may end before the title ever shows it.
     if (call.event.kind === 'prompt' && !info.busy) record.busySince = Date.now()
     let changed = !info.hooks
@@ -1047,19 +1055,27 @@ export class TerminalService extends TypedEmitter<Events> {
       // A new session (`/clear`): its title, worktree and limit.
       this.trackSoon()
     }
-    let soon = false
+    const soon = this.showHookState(record, state)
+    if (end) this.endTurnByHook(record, end)
+    if (changed) this.emitChanged()
+    else if (soon) this.emitChangedSoon()
+  }
+
+  /** Takes the hooks' state in: what runs shows in the tab. True when the tab shows something else now. */
+  private showHookState(record: TerminalRecord, state: HookState): boolean {
+    record.hooks = state
+    const { info } = record
+    let changed = false
     if (JSON.stringify(state.activity) !== JSON.stringify(info.activity)) {
       info.activity = state.activity
-      soon = true
+      changed = true
     }
     if (state.subagents.length !== info.subagents || state.compacting !== info.compacting) {
       info.subagents = state.subagents.length
       info.compacting = state.compacting
-      soon = true
+      changed = true
     }
-    if (end) this.endTurnByHook(record, end)
-    if (changed) this.emitChanged()
-    else if (soon) this.emitChangedSoon()
+    return changed
   }
 
   /** Tells the end of the turn (or the wait for the user) a hook reported; a lookup still running stops. */
@@ -1098,15 +1114,19 @@ export class TerminalService extends TypedEmitter<Events> {
    */
   private async awaitHookEnd(record: TerminalRecord, run: number): Promise<void> {
     const idleAt = Date.now()
-    await delay(HOOK_END_GRACE_MS)
-    if (run !== record.turnEndRun) return
-    // Esc stops a running tool without telling (no PostToolUseFailure): nothing runs any more.
-    if (record.hooks?.activity) {
-      record.hooks = { ...record.hooks, activity: null }
-      record.info.activity = null
-      this.emitChanged()
-    }
+    if (!(await this.settleIdle(record, run))) return
     await this.reportTurnEnd(record, run, idleAt)
+  }
+
+  /**
+   * Once Claude Code stays idle, nothing runs that the hooks didn't end: Esc stops a tool or a
+   * compaction without telling (see `idleHookState`). False when it got busy again meanwhile.
+   */
+  private async settleIdle(record: TerminalRecord, run: number): Promise<boolean> {
+    await delay(HOOK_END_GRACE_MS)
+    if (run !== record.turnEndRun) return false
+    if (record.hooks && this.showHookState(record, idleHookState(record.hooks))) this.emitChanged()
+    return true
   }
 
   /** Tells once whether Claude Code is done, waits for the user or stopped at a limit. */
@@ -1127,8 +1147,9 @@ export class TerminalService extends TypedEmitter<Events> {
       if (turn === null && elapsed >= TURN_END_TIMEOUT_MS) turn = { kind: 'done', tool: null, detail: null }
       if (turn === null || !current()) continue
       record.turnEnding = false
-      // Stopped by the user (Esc, or a permission declined): they are at the tab already.
+      // Stopped by the user (Esc, or a permission declined): they are at the tab already. Its subagents stopped too.
       if (turn !== 'interrupted') this.emit('turnEnded', record.info.id, { ...turn, busyMs: since ? idleAt - since : 0 })
+      else if (record.hooks && this.showHookState(record, interruptedHookState(record.hooks))) this.emitChanged()
       return
     }
   }
