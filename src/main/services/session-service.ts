@@ -44,6 +44,8 @@ export class SessionService extends TypedEmitter<Events> {
   private disposed = false
   private readonly debounce = new Map<string, NodeJS.Timeout>()
   private readonly filePaths = new Map<string, string>()
+  /** Each account's projects folder, as the lists last knew it. */
+  private projectsDirs = new Map<string, string>()
 
   constructor(
     private readonly accounts: AccountService,
@@ -52,7 +54,10 @@ export class SessionService extends TypedEmitter<Events> {
     private readonly names: SessionNames,
   ) {
     super()
-    accounts.on('changed', () => this.syncWatchers())
+    accounts.on('changed', () => {
+      this.syncWatchers()
+      this.reportMovedAccounts()
+    })
     // A session named or renamed: the lists show it at once. Which account has it doesn't matter, it is cheap.
     names.on('changed', () => {
       for (const account of this.accounts.list()) this.emit('changed', account.id)
@@ -65,6 +70,7 @@ export class SessionService extends TypedEmitter<Events> {
   }
 
   init(): void {
+    this.projectsDirs = this.currentDirs()
     this.syncWatchers()
   }
 
@@ -277,10 +283,27 @@ export class SessionService extends TypedEmitter<Events> {
     }
   }
 
+  private currentDirs(): Map<string, string> {
+    return new Map(this.accounts.list().map((a) => [a.id, this.accounts.paths(a.id).projectsDir]))
+  }
+
+  /**
+   * Accounts that came, went or keep their sessions in another folder now: their lists change all at
+   * once, without a change in the folder the watcher would see (a new account with an existing folder).
+   */
+  private reportMovedAccounts(): void {
+    if (this.disposed) return
+    const dirs = this.currentDirs()
+    for (const id of new Set([...this.projectsDirs.keys(), ...dirs.keys()])) {
+      if (this.projectsDirs.get(id) !== dirs.get(id)) this.emit('changed', id)
+    }
+    this.projectsDirs = dirs
+  }
+
   /** Watches every account's projects folder and reports changes (debounced). */
   private syncWatchers(): void {
     if (this.disposed) return
-    const wanted = new Map(this.accounts.list().map((a) => [a.id, this.accounts.paths(a.id).projectsDir]))
+    const wanted = this.currentDirs()
     for (const [id, entry] of this.watchers) {
       if (wanted.get(id) !== entry.dir) {
         entry.watcher.close()

@@ -341,7 +341,7 @@ async function copyPath() {
       />
       <SessionListItem
         v-for="session in visible"
-        :key="session.id"
+        :key="sessionKey(session.accountId, session.id)"
         :session="session"
         :now="now"
         :selected="selected?.accountId === session.accountId && selected.sessionId === session.id"

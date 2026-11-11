@@ -292,7 +292,7 @@ async function removeWorkspace() {
       />
       <SessionListItem
         v-for="session in ownSessions"
-        :key="session.id"
+        :key="sessionKey(session.accountId, session.id)"
         :session="session"
         :now="now"
         :selected="selected?.accountId === session.accountId && selected.sessionId === session.id"
