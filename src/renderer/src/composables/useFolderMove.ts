@@ -2,6 +2,7 @@ import { toast } from 'vue-sonner'
 import { inFolder } from '@shared/folders'
 import { errorMessage } from '@/lib/errors'
 import { splitFolder } from '@/lib/recent-folders'
+import { useSessionsStore } from '@/stores/sessions'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import { useWorkspacesStore } from '@/stores/workspaces'
@@ -20,16 +21,26 @@ function sessionsMoved(count: number): string | undefined {
 export function useFolderMove() {
   const workspaces = useWorkspacesStore()
   const terminals = useTerminalsStore()
+  const sessionsStore = useSessionsStore()
   const ui = useUiStore()
 
   /**
-   * `sessions`: how many the list shows in the folder; `ask` false when the user chose the place just
-   * now, e.g. a new workspace for it. Resolves to the new path, or null.
+   * The sessions that move along with the folder: all that worked in it or below it, of every account,
+   * also those the list's filters hide.
    */
-  async function move(path: string, into: string, sessions: number, ask = true): Promise<string | null> {
+  function sessionsIn(path: string): number {
+    return sessionsStore.groups.reduce((sum, g) => sum + g.sessions.filter((s) => s.cwd && inFolder(s.cwd, path)).length, 0)
+  }
+
+  /**
+   * `ask` false when the user chose the place just now, e.g. a new workspace for it. Resolves to the
+   * new path, or null.
+   */
+  async function move(path: string, into: string, ask = true): Promise<string | null> {
     const name = splitFolder(path).name
     const target = splitFolder(into).name || into
     if (blocked(path)) return null
+    const sessions = sessionsIn(path)
     const confirmed = !ask || (await ui.confirm({
       title: `„${name}“ nach „${target}“ verschieben?`,
       code: into,
@@ -97,5 +108,5 @@ export function useFolderMove() {
     }
   }
 
-  return { move, blocked, relocate }
+  return { move, blocked, relocate, sessionsIn }
 }

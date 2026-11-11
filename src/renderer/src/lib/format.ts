@@ -9,21 +9,31 @@ const compact = new Intl.NumberFormat('de', { notation: 'compact', maximumFracti
 const integer = new Intl.NumberFormat('de')
 const oneDecimal = new Intl.NumberFormat('de', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 
+/** Midnight of the day `ms` falls on, in local time. */
+function startOfDay(ms: number): number {
+  const day = new Date(ms)
+  day.setHours(0, 0, 0, 0)
+  return day.getTime()
+}
+
 /**
  * "vor 5 Minuten", "gestern", from 30 days on the date. A unit is used while its rounded count stays
- * below the next one: 59.6 minutes are "vor 1 Stunde", 23.6 hours "gestern".
+ * below the next one: 59.6 minutes are "vor 1 Stunde", 23.6 hours a day. Days go by the calendar:
+ * Monday 23:59 is "vorgestern" on Wednesday morning, Tuesday 00:00 "gestern" on Wednesday night.
  */
 export function formatRelative(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return '–'
   const ms = Date.parse(iso)
   if (Number.isNaN(ms)) return '–'
   const diff = (ms - now) / 1000
-  if (Math.abs(diff) < 45) return 'gerade eben'
+  if (Math.abs(diff) < 45) return diff > 0 ? 'gleich' : 'gerade eben'
   const minutes = Math.round(diff / 60)
   if (Math.abs(minutes) < 60) return rtf.format(minutes, 'minute')
   const hours = Math.round(diff / 3600)
-  if (Math.abs(hours) < 24) return rtf.format(hours, 'hour')
-  const days = Math.round(diff / 86400)
+  // Rounded so that a day with a clock change (23 or 25 hours) counts as one.
+  const days = Math.round((startOfDay(ms) - startOfDay(now)) / 86_400_000)
+  // Nearly a day, but still today: in hours.
+  if (Math.abs(hours) < 24 || days === 0) return rtf.format(hours, 'hour')
   if (Math.abs(days) < 30) return rtf.format(days, 'day')
   return dateTime.format(ms)
 }

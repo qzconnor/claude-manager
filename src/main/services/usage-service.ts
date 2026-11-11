@@ -66,6 +66,8 @@ export class UsageService extends TypedEmitter<Events> {
   private samples = new Map<string, UsageSample[]>()
   private timer: NodeJS.Timeout | null = null
   private localTimer: NodeJS.Timeout | null = null
+  /** For the moment the next window resets. */
+  private resetTimer: NodeJS.Timeout | null = null
 
   constructor(
     private readonly accounts: AccountService,
@@ -108,6 +110,7 @@ export class UsageService extends TypedEmitter<Events> {
   dispose(): void {
     if (this.timer) clearInterval(this.timer)
     if (this.localTimer) clearInterval(this.localTimer)
+    if (this.resetTimer) clearTimeout(this.resetTimer)
   }
 
   getAll(): AccountUsage[] {
@@ -453,7 +456,39 @@ export class UsageService extends TypedEmitter<Events> {
       [...next].some(([id, usage]) => JSON.stringify(usage) !== JSON.stringify(this.snapshot.get(id)))
     this.snapshot = next
     if (changed) this.emit('changed', this.getAll())
+    this.scheduleReset()
   }
+
+  /**
+   * Computes again the moment the next window resets: its usage drops to 0 then, not with the next
+   * round up to 30 seconds later, meanwhile showing the old percentage with „Reset jetzt“.
+   */
+  private scheduleReset(): void {
+    if (this.resetTimer) clearTimeout(this.resetTimer)
+    this.resetTimer = null
+    const now = Date.now()
+    const at = nextReset(this.snapshot.values(), now)
+    // Beyond what a timer can wait, the regular rounds see to it.
+    if (at === null || at - now > MAX_TIMEOUT_MS) return
+    this.resetTimer = setTimeout(() => this.recompute(), at - now + RESET_GRACE_MS)
+  }
+}
+
+/** The longest a Node timer waits; longer ones fire at once. */
+const MAX_TIMEOUT_MS = 2 ** 31 - 1
+/** After the reset time, so it counts as past. */
+const RESET_GRACE_MS = 250
+
+/** When the next window of these accounts resets (ms); null when none has a reset ahead. */
+export function nextReset(usages: Iterable<AccountUsage>, now: number): number | null {
+  let next: number | null = null
+  for (const usage of usages) {
+    for (const window of [usage.fiveHour, usage.sevenDay, ...usage.scoped]) {
+      const at = window?.resetsAt ? Date.parse(window.resetsAt) : NaN
+      if (at > now && (next === null || at < next)) next = at
+    }
+  }
+  return next
 }
 
 function sampleKey(accountId: string, windowKey: string): string {

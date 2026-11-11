@@ -31,10 +31,19 @@ describe('formatRelative', () => {
     expect(formatRelative('yesterday', NOW)).toBe('–')
   })
 
-  it('says "gerade eben" within 45 seconds, both ways', () => {
+  it('says "gerade eben" within 45 seconds, and "gleich" ahead', () => {
     expect(formatRelative(at(0), NOW)).toBe('gerade eben')
     expect(formatRelative(at(-44 * SECOND), NOW)).toBe('gerade eben')
-    expect(formatRelative(at(44 * SECOND), NOW)).toBe('gerade eben')
+    expect(formatRelative(at(44 * SECOND), NOW)).toBe('gleich')
+  })
+
+  it('counts days by the calendar, not in blocks of 24 hours', () => {
+    // Wednesday 23:59 on Friday at 6:00: 30 hours, but the day before yesterday.
+    expect(formatRelative('2026-11-04T22:59:00Z', Date.parse('2026-11-06T05:00:00Z'))).toBe('vorgestern')
+    // Thursday 0:00 on Friday at 23:00: 47 hours, but yesterday.
+    expect(formatRelative('2026-11-04T23:00:00Z', Date.parse('2026-11-05T22:00:00Z') + DAY)).toBe('gestern')
+    // Nearly a day, still today.
+    expect(formatRelative('2026-11-05T23:10:00Z', Date.parse('2026-11-06T22:50:00Z'))).toBe('vor 24 Stunden')
   })
 
   it('counts minutes, hours and days', () => {

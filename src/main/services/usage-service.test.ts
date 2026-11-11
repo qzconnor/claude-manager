@@ -3,7 +3,7 @@ import type { AccountUsage, UsageStatus } from '@shared/types'
 
 vi.mock('electron', () => ({ app: { getPath: () => '', getVersion: () => '0.0.0' }, net: {} }))
 
-import { dueNow, type LiveRecord } from './usage-service'
+import { dueNow, nextReset, type LiveRecord } from './usage-service'
 
 const MINUTE = 60_000
 const T = Date.parse('2026-11-11T12:00:00Z')
@@ -33,5 +33,21 @@ describe('dueNow', () => {
     expect(dueNow(last, 'tok', true, T + MINUTE)).toBe(true)
     expect(dueNow(record('expired', T, T + 5 * MINUTE), 'new-token', false, T + 1000)).toBe(true)
     expect(dueNow(undefined, 'tok', false, T)).toBe(true)
+  })
+})
+
+describe('nextReset', () => {
+  const at = (minutes: number) => new Date(T + minutes * MINUTE).toISOString()
+  const usage = (fiveHour: number | null, sevenDay: number | null, ...scoped: number[]) =>
+    ({
+      fiveHour: fiveHour === null ? null : { resetsAt: at(fiveHour) },
+      sevenDay: sevenDay === null ? null : { resetsAt: at(sevenDay) },
+      scoped: scoped.map((m) => ({ resetsAt: at(m) })),
+    }) as unknown as AccountUsage
+
+  it('finds the next window to reset, of all accounts, past ones left out', () => {
+    expect(nextReset([usage(90, 5000), usage(-5, 3000, 40)], T)).toBe(T + 40 * MINUTE)
+    expect(nextReset([usage(-1, null)], T)).toBeNull()
+    expect(nextReset([], T)).toBeNull()
   })
 })

@@ -8,7 +8,10 @@ export const statsKey = (accountId: string, days: number) => `${accountId}:${day
 
 export const useUsageStore = defineStore('usage', () => {
   const usage = ref<AccountUsage[]>([])
+  /** All accounts are being asked („Alle aktualisieren“). */
   const refreshing = ref(false)
+  /** Accounts asked for by themselves (the button of their card), with the requests under way. */
+  const refreshingAccounts = ref<Record<string, number>>({})
   /** By `statsKey`. */
   const stats = ref<Record<string, AccountTokenStats>>({})
   const statsLoading = ref<Record<string, boolean>>({})
@@ -24,12 +27,22 @@ export const useUsageStore = defineStore('usage', () => {
     usage.value = await window.api.usage.get()
   }
 
+  /** Whether the account's usage is being asked for, by itself or with all. */
+  function isRefreshing(accountId: string): boolean {
+    return refreshing.value || (refreshingAccounts.value[accountId] ?? 0) > 0
+  }
+
   async function refresh(accountId?: string): Promise<void> {
-    refreshing.value = true
+    const count = (n: number) => {
+      if (accountId) refreshingAccounts.value = { ...refreshingAccounts.value, [accountId]: (refreshingAccounts.value[accountId] ?? 0) + n }
+    }
+    if (accountId) count(1)
+    else refreshing.value = true
     try {
       usage.value = await window.api.usage.refresh(accountId)
     } finally {
-      refreshing.value = false
+      if (accountId) count(-1)
+      else refreshing.value = false
     }
   }
 
@@ -56,5 +69,5 @@ export const useUsageStore = defineStore('usage', () => {
     usage.value = next
   })
 
-  return { usage, refreshing, stats, statsLoading, statsErrors, byAccount, load, refresh, loadStats }
+  return { usage, refreshing, isRefreshing, stats, statsLoading, statsErrors, byAccount, load, refresh, loadStats }
 })

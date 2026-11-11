@@ -145,14 +145,14 @@ const moveTargets = computed(() => {
 })
 
 function moveTo(into: string) {
-  if (path.value) void folderMove.move(path.value, into, props.project.sessions.length)
+  if (path.value) void folderMove.move(path.value, into)
 }
 
 /** A new workspace, beside the one the folder lies in; the folder moves into it once made. */
 function moveToNewWorkspace() {
   if (!path.value || folderMove.blocked(path.value)) return
   const parent = splitFolder(splitFolder(path.value).parent).parent || null
-  ui.workspaceRequest = { mode: 'create', parent, move: { path: path.value, sessions: props.project.sessions.length } }
+  ui.workspaceRequest = { mode: 'create', parent, move: { path: path.value } }
 }
 
 /** The folder the project lies in, to make it a workspace with its neighbours; null for a drive or the root. */

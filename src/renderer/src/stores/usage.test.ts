@@ -14,15 +14,25 @@ const api = {
           answers.push({ days, resolve, reject })
         }),
     ),
+    refresh: vi.fn(
+      () =>
+        new Promise<never[]>((resolve) => {
+          refreshes.push(() => resolve([]))
+        }),
+    ),
     onChanged: () => () => {},
   },
 }
+
+/** Answers to `usage.refresh`, given when the test wants. */
+let refreshes: (() => void)[]
 
 const statsOf = (days: number, messages: number) =>
   ({ days: Array.from({ length: days }, () => ({})), totals: { messages } }) as unknown as AccountTokenStats
 
 beforeEach(() => {
   answers = []
+  refreshes = []
   vi.stubGlobal('window', { api })
   setActivePinia(createPinia())
 })
@@ -69,5 +79,22 @@ describe('usage store: token statistics', () => {
     answers.shift()?.resolve(statsOf(30, 1))
     await again
     expect(usage.statsErrors[statsKey('a', 30)]).toBeUndefined()
+  })
+})
+
+describe('usage store: refreshing', () => {
+  it('turns only the asked account’s button, and all of them for „Alle aktualisieren“', async () => {
+    const usage = useUsageStore()
+    const one = usage.refresh('a')
+    expect([usage.isRefreshing('a'), usage.isRefreshing('b')]).toEqual([true, false])
+    refreshes.shift()?.()
+    await one
+    expect(usage.isRefreshing('a')).toBe(false)
+
+    const all = usage.refresh()
+    expect([usage.isRefreshing('a'), usage.isRefreshing('b')]).toEqual([true, true])
+    refreshes.shift()?.()
+    await all
+    expect(usage.isRefreshing('b')).toBe(false)
   })
 })

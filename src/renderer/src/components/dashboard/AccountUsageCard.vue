@@ -70,10 +70,10 @@ function refresh() {
               variant="ghost"
               size="icon-sm"
               aria-label="Usage aktualisieren"
-              :disabled="usageStore.refreshing"
+              :disabled="usageStore.isRefreshing(account.id)"
               @click="refresh"
             >
-              <Spinner v-if="usageStore.refreshing" />
+              <Spinner v-if="usageStore.isRefreshing(account.id)" />
               <RefreshCwIcon v-else />
             </Button>
           </TooltipTrigger>

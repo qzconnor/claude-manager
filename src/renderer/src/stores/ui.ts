@@ -28,7 +28,7 @@ export interface GroupDock {
  */
 export type WorkspaceRequest =
   /** `move`: a folder that moves into the new workspace once it is made, with how many sessions the list shows in it. */
-  | { mode: 'create'; parent?: string | null; move?: { path: string; sessions: number } }
+  | { mode: 'create'; parent?: string | null; move?: { path: string } }
   | { mode: 'adopt'; path: string }
   | { mode: 'edit'; path: string }
 

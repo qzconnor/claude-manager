@@ -162,10 +162,10 @@ function openDashboard() {
               variant="ghost"
               size="icon-xs"
               aria-label="Usage aktualisieren"
-              :disabled="usageStore.refreshing"
+              :disabled="!account || usageStore.isRefreshing(account.id)"
               @click="refresh"
             >
-              <Spinner v-if="usageStore.refreshing" />
+              <Spinner v-if="account && usageStore.isRefreshing(account.id)" />
               <RefreshCwIcon v-else />
             </Button>
           </div>
