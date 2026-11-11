@@ -882,26 +882,6 @@ export const useTerminalsStore = defineStore('terminals', () => {
   }
 
   /** Starts the same command again in a new terminal in the same place; the old one stays without trust. */
-  async function restart(id: string): Promise<void> {
-    const old = terminals.value.find((t) => t.id === id)
-    // A browser has no command; its pane loads the page again instead.
-    if (!old || old.mode === 'browser') return
-    const info = await window.api.terminals.create({
-      accountId: old.accountId,
-      authAccountId: old.authAccountId,
-      cwd: old.cwd,
-      mode: old.mode,
-      resumeSessionId: old.resumeSessionId,
-      title: old.fixedTitle ? old.title : null,
-      muted: old.muted,
-      replaces: id,
-    })
-    if (!info) return
-    // Before the old one closes, so its group doesn't go with it.
-    replace(id, info)
-    await window.api.terminals.close(id)
-  }
-
   /** Continues the terminal's session with another account's limits, in a new one in the same place. */
   async function continueWith(id: string, accountId: string): Promise<TerminalInfo | null> {
     if (!byId.value.has(id)) return null
@@ -910,9 +890,13 @@ export const useTerminalsStore = defineStore('terminals', () => {
     return info
   }
 
-  /** Starts a session again in its place; it goes on with its conversation. */
+  /**
+   * Starts a terminal again in its place once its process has ended; a session goes on with its
+   * conversation. A browser has no command: its pane loads the page again instead.
+   */
   async function restartSession(id: string): Promise<TerminalInfo | null> {
-    if (!byId.value.has(id)) return null
+    const old = byId.value.get(id)
+    if (!old || old.mode === 'browser') return null
     const info = await window.api.terminals.restartSession(id)
     if (info) replace(id, info)
     return info
@@ -1179,7 +1163,6 @@ export const useTerminalsStore = defineStore('terminals', () => {
     kill,
     rename,
     setMuted,
-    restart,
     continueWith,
     restartSession,
     moveSession,

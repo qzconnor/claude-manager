@@ -329,8 +329,42 @@ describe('SessionHandoff.restartTerminal', () => {
     expect(createdOptions().prompt).toBeUndefined()
   })
 
-  it('only restarts Claude sessions', async () => {
-    tabs.set('old', tab({ mode: 'shell' }))
+  it('goes on with the session the tab has now, not the one it was started with', async () => {
+    tabs.set('old', tab({ resumeSessionId: 'aaaaaaaa-0000-4000-8000-000000000000' }))
+    await writeTranscript()
+    await handoff().restartTerminal('old')
+    expect(createdOptions().resumeSessionId).toBe(S)
+  })
+
+  it('starts a shell again after its process has ended', async () => {
+    tabs.set('old', tab({ mode: 'shell', sessionId: null, title: 'Mein Shell', fixedTitle: true }))
+    const result = await handoff().restartTerminal('old')
+    expect(result?.id).toBe('new')
+    expect(createdOptions()).toEqual({
+      accountId: 'own',
+      authAccountId: undefined,
+      cwd,
+      mode: 'shell',
+      resumeSessionId: undefined,
+      title: 'Mein Shell',
+      muted: false,
+      replaces: 'old',
+    })
+    expect(steps).toEqual(['stop old', 'create', 'close old'])
+    expect(terminalFns.trustedCwd).not.toHaveBeenCalled()
+  })
+
+  it('starts a session whose id is not known yet as it was started, in a trusted folder only', async () => {
+    tabs.set('old', tab({ sessionId: null, resumeSessionId: S }))
+    terminalFns.trustedCwd.mockResolvedValueOnce(null)
+    expect(await handoff().restartTerminal('old')).toBeNull()
+    expect(terminalFns.stop).not.toHaveBeenCalled()
+    await handoff().restartTerminal('old')
+    expect(createdOptions()).toMatchObject({ mode: 'session', resumeSessionId: S, replaces: 'old' })
+  })
+
+  it('does not restart a browser', async () => {
+    tabs.set('old', tab({ mode: 'browser' }))
     await expect(handoff().restartTerminal('old')).rejects.toThrow()
     expect(terminalFns.stop).not.toHaveBeenCalled()
   })

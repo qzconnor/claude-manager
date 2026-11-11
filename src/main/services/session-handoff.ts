@@ -45,13 +45,37 @@ export class SessionHandoff extends TypedEmitter<Events> {
   }
 
   /**
-   * Starts the tab's session again in its place with the same account, and it goes on with its
-   * conversation: changed launch options (such as `--no-chrome`) apply to it. Null as above.
+   * Starts the tab again in its place, after its process has ended. A session goes on with the
+   * conversation it has now (not the one it was started with: `/resume` and `/clear` change it), with
+   * the same account; changed launch options (such as `--no-chrome`) apply to it. A shell, or a session
+   * whose id isn't known yet, starts as it was started. Null as above.
    */
   async restartTerminal(terminalId: string): Promise<TerminalInfo | null> {
     const old = this.terminals.get(terminalId)
-    if (old.mode !== 'session') throw new Error('Nur Claude-Code-Sessions lassen sich mit ihrem Verlauf neu starten.')
-    return this.handOver(old, this.accounts.get(old.authAccountId), false)
+    if (old.mode === 'browser') throw new Error('Ein Browser lädt seine Seite neu, statt neu zu starten.')
+    if (old.mode === 'session' && old.sessionId) return this.handOver(old, this.accounts.get(old.authAccountId), false)
+    if (this.switching.has(terminalId)) throw new Error('Der Neustart läuft bereits.')
+    this.switching.add(terminalId)
+    try {
+      const cwd = old.mode === 'session' ? await this.terminals.trustedCwd(old.accountId, old.cwd) : old.cwd
+      if (cwd === null) return null
+      await this.terminals.stop(terminalId)
+      const info = this.terminals.create({
+        accountId: old.accountId,
+        authAccountId: old.authAccountId === old.accountId ? undefined : old.authAccountId,
+        cwd,
+        mode: old.mode,
+        resumeSessionId: old.resumeSessionId ?? undefined,
+        title: old.fixedTitle ? old.title : null,
+        muted: old.muted,
+        replaces: terminalId,
+      })
+      this.emit('replaced', terminalId, info)
+      this.terminals.close(terminalId)
+      return info
+    } finally {
+      this.switching.delete(terminalId)
+    }
   }
 
   /**

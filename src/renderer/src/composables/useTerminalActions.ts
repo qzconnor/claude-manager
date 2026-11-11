@@ -80,8 +80,24 @@ export function useTerminalActions() {
     await attempt(() => terminals.kill(id), 'Prozess konnte nicht beendet werden')
   }
 
+  /** Starts the tab again; a running process ends first, after a question. */
   async function restartTerminal(id: string): Promise<void> {
-    await attempt(() => terminals.restart(id), 'Neustart fehlgeschlagen')
+    const terminal = terminals.terminals.find((t) => t.id === id)
+    if (!terminal || terminal.mode === 'browser') return
+    const working = terminal.busy || terminal.compacting || terminal.subagents > 0
+    if (terminal.status === 'running' && (working || settings.settings.general.confirmCloseRunning)) {
+      const session = terminal.mode === 'session'
+      const ok = await ui.confirm({
+        title: session ? 'Session neu starten?' : 'Terminal neu starten?',
+        description: session
+          ? `${working ? 'Claude arbeitet gerade, die laufende Antwort bricht ab. ' : ''}„${terminal.title}“ wird beendet und geht danach mit ihrem Verlauf weiter. Was im Eingabefeld steht und nicht gesendet ist, geht verloren.`
+          : `„${terminal.title}“ läuft noch. Der Prozess wird beendet und startet neu.`,
+        confirmText: 'Neu starten',
+        destructive: working,
+      })
+      if (!ok) return
+    }
+    await attempt(() => terminals.restartSession(id), 'Neustart fehlgeschlagen')
   }
 
   return { closeTerminal, closeTab, closeTabs, closeGroup, stopTerminal, restartTerminal }
