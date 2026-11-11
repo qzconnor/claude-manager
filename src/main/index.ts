@@ -209,6 +209,8 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     api.dispose()
     // Before the tabs close, otherwise an empty list would be remembered (here and in the window).
     restore.dispose()
+    // Before the tabs close: a waiting tab must not start again while the app quits.
+    autoSwitch.dispose()
     announceQuitting()
     terminals.disposeAll()
     browserMcp.dispose()

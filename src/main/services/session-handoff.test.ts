@@ -294,6 +294,14 @@ describe('SessionHandoff.continueTerminal', () => {
     await expect(handoff().continueTerminal('old', 'token')).rejects.toThrow('läuft schon über „Name token“')
   })
 
+  it('lets a session at a limit go on with its own account once it has reset', async () => {
+    tabs.set('old', tab({ limit: { type: 'five_hour', resetsAt: '2026-11-06T12:00:00.000Z', message: 'limit' } }))
+    await writeTranscript()
+    await handoff().continueTerminal('old', 'own')
+    expect(createdOptions()).toMatchObject({ accountId: 'own', resumeSessionId: S, prompt: 'Mach weiter', replaces: 'old' })
+    expect(steps).toEqual(['stop old', 'create', 'close old'])
+  })
+
   it('refuses a second switch of the same tab while one is running', async () => {
     await writeTranscript()
     const service = handoff()

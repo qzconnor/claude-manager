@@ -694,6 +694,17 @@ describe('automatic account switch', () => {
     expect(win?.flashFrame).toHaveBeenCalledWith(true)
   })
 
+  it('tells that a session goes on with its own account after the reset', async () => {
+    accountList = [account('a', 'Alpha')]
+    const events = switcher()
+    const service = await start()
+    service.watchAutoSwitch(events as never)
+    events.fire('switched', atLimit(), terminal({ id: 't2' }), account('a', 'Alpha'))
+    expect(created().map((n) => n.options)).toMatchObject([
+      { title: 'Limit zurückgesetzt', body: 'Tab\nDie Session läuft mit „Alpha“ weiter' },
+    ])
+  })
+
   it('tells when the switch failed', async () => {
     const events = switcher()
     const service = await start()

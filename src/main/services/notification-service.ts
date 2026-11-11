@@ -152,8 +152,13 @@ export class NotificationService {
   private switched(from: TerminalInfo, to: TerminalInfo, target: Account): void {
     const settings = this.settings.get().notifications
     if (!settings.enabled || !settings.onLimit || to.muted) return
-    const limit = `${limitLabel(from.limit?.type ?? null)} von „${this.accountName(from.authAccountId)}“ erreicht`
     const shown = this.viewing.has(from.id) || this.viewing.has(to.id)
+    // It waited for the reset of its own limit.
+    if (target.id === from.authAccountId) {
+      this.alert(to, 'Limit zurückgesetzt', `Die Session läuft mit „${target.name}“ weiter`, shown, settings)
+      return
+    }
+    const limit = `${limitLabel(from.limit?.type ?? null)} von „${this.accountName(from.authAccountId)}“ erreicht`
     this.alert(to, `Weiter mit „${target.name}“`, limit, shown, settings)
   }
 

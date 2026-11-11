@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type { Account, AccountKind, AccountUsage, AppSettings, SessionLimit, TerminalInfo } from '@shared/types'
-import { AutoSwitch } from './auto-switch'
+import { AutoSwitch, RESET_GRACE_MS } from './auto-switch'
 
 const LATER = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
 
@@ -33,6 +33,8 @@ let accounts: Account[]
 let emitTerminals: (list: TerminalInfo[]) => void
 let emitSettings: (next: AppSettings, previous: AppSettings) => void
 let emitReplaced: (oldId: string, info: TerminalInfo) => void
+let emitUsage: () => void
+let emitAccounts: () => void
 let continueTerminal: Mock<(id: string, targetId: string) => Promise<TerminalInfo | null>>
 let service: AutoSwitch
 let switched: [string, string, string][]
@@ -54,7 +56,13 @@ beforeEach(() => {
     return info
   })
   service = new AutoSwitch(
-    { list: () => accounts },
+    {
+      list: () => accounts,
+      on: ((event: string, listener: () => void) => {
+        if (event === 'changed') emitAccounts = listener
+        return () => undefined
+      }) as never,
+    },
     {
       list: () => tabs,
       on: ((event: string, listener: (list: TerminalInfo[]) => void) => {
@@ -62,7 +70,13 @@ beforeEach(() => {
         return () => undefined
       }) as never,
     },
-    { getAll: () => usage },
+    {
+      getAll: () => usage,
+      on: ((event: string, listener: () => void) => {
+        if (event === 'changed') emitUsage = listener
+        return () => undefined
+      }) as never,
+    },
     {
       get: () => settingsWith(autoSwitchOn),
       on: ((event: string, listener: typeof emitSettings) => {
@@ -189,6 +203,28 @@ describe('AutoSwitch', () => {
     expect(continueTerminal).toHaveBeenCalledTimes(1)
   })
 
+  it('switches a waiting tab once an account is logged in again', async () => {
+    accounts = [account('a'), { ...account('b'), authState: 'missing' } as Account]
+    await change([tab('t1', 'a', { limit: limit() })])
+    expect(continueTerminal).not.toHaveBeenCalled()
+    accounts = ['a', 'b'].map(account)
+    emitAccounts()
+    await vi.waitFor(() => expect(continueTerminal).toHaveBeenCalledWith('t1', 'b'))
+    expect(service.tellsLimit('t1')).toBe(true)
+  })
+
+  it('switches a waiting tab once the usage shows an account free', async () => {
+    usage = [
+      { accountId: 'b', status: 'ok', fiveHour: { percent: 100 }, sevenDay: null },
+      { accountId: 'c', status: 'ok', fiveHour: { percent: 100 }, sevenDay: null },
+    ] as AccountUsage[]
+    await change([tab('t1', 'a', { limit: limit() })])
+    expect(continueTerminal).not.toHaveBeenCalled()
+    usage = [{ accountId: 'c', status: 'ok', fiveHour: { percent: 40 }, sevenDay: null }] as AccountUsage[]
+    emitUsage()
+    await vi.waitFor(() => expect(continueTerminal).toHaveBeenCalledWith('t1', 'b'))
+  })
+
   it('reports a switch that failed or was not allowed', async () => {
     continueTerminal.mockRejectedValueOnce(new Error('Kopie ist neuer')).mockResolvedValueOnce(null)
     await change([tab('t1', 'a', { limit: limit() }), tab('t2', 'c', { limit: limit() })])
@@ -197,5 +233,68 @@ describe('AutoSwitch', () => {
       ['t2', 'b', 'Der Ordner ist für „Name b“ nicht freigegeben.'],
     ])
     expect(switched).toEqual([])
+  })
+})
+
+describe('AutoSwitch at a reset', () => {
+  const start = new Date('2026-11-11T12:00:00.000Z').getTime()
+  const inAnHour = new Date(start + 60 * 60 * 1000).toISOString()
+
+  beforeEach(() => {
+    vi.useFakeTimers({ now: start })
+    accounts = [account('a')]
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  async function changeNow(list: TerminalInfo[]) {
+    tabs = list
+    emitTerminals(list)
+    await vi.advanceTimersByTimeAsync(0)
+  }
+
+  it('goes on with the own account shortly after its limit has reset', async () => {
+    await changeNow([tab('t1', 'a', { limit: limit(inAnHour) })])
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    // Claude Code names the reset only roughly: a little later.
+    expect(continueTerminal).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(RESET_GRACE_MS)
+    expect(continueTerminal).toHaveBeenCalledWith('t1', 'a')
+    expect(switched).toEqual([['t1', 't1→a', 'a']])
+  })
+
+  it('switches to another account that resets first', async () => {
+    accounts = ['a', 'b'].map(account)
+    usage = [{ accountId: 'b', status: 'ok', fiveHour: { percent: 100, resetsAt: new Date(start + 10 * 60 * 1000).toISOString() }, sevenDay: null }] as AccountUsage[]
+    await changeNow([tab('t1', 'a', { limit: limit(inAnHour) })])
+    expect(continueTerminal).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + RESET_GRACE_MS)
+    expect(continueTerminal).toHaveBeenCalledWith('t1', 'b')
+  })
+
+  it('does not start the session again and again when the reset came too early', async () => {
+    await changeNow([tab('t1', 'a', { limit: limit(inAnHour) })])
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + RESET_GRACE_MS)
+    expect(continueTerminal).toHaveBeenCalledTimes(1)
+    // The new tab stops at the same limit.
+    await changeNow([tab('t1→a', 'a', { sessionId: 'session-t1', limit: limit(inAnHour) })])
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    expect(continueTerminal).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits without a known reset and without a free account', async () => {
+    await changeNow([tab('t1', 'a', { limit: limit(null) })])
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000)
+    expect(continueTerminal).not.toHaveBeenCalled()
+  })
+
+  it('stops waiting when the setting is switched off', async () => {
+    await changeNow([tab('t1', 'a', { limit: limit(inAnHour) })])
+    autoSwitchOn = false
+    emitSettings(settingsWith(false), settingsWith(true))
+    await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000)
+    expect(continueTerminal).not.toHaveBeenCalled()
   })
 })

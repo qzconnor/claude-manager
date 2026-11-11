@@ -9,6 +9,13 @@ import type { UsageService } from './usage-service'
 
 /** How long an account counts as limited after a switch away from it, when Claude Code named no reset. */
 const UNKNOWN_RESET_MS = 5 * 60 * 60 * 1000
+/**
+ * A waiting tab tries again this long after a reset: Claude Code names the time of a reset only to the
+ * minute or hour, and a session that starts too early stops at the same limit again.
+ */
+export const RESET_GRACE_MS = 60 * 1000
+/** Longer than this, `setTimeout` fires at once. */
+const MAX_TIMEOUT_MS = 2 ** 31 - 1
 
 type Events = {
   /** The session of `from` stopped at a limit and goes on in `to`, with `target`'s limits. */
@@ -23,7 +30,8 @@ const limitKey = (limit: SessionLimit) => `${limit.type}\n${limit.resetsAt}\n${l
 /**
  * Setting `claude.autoSwitch`: a session that stops at a usage limit continues by itself with the
  * account the limit notice suggests (the first one that is logged in and not at a limit). Without
- * such an account the tab keeps its notice, as without the setting.
+ * such an account the tab keeps its notice and waits: it goes on as soon as an account is free, or
+ * with its own account once its limit has reset.
  */
 export class AutoSwitch extends TypedEmitter<Events> {
   /** Tabs whose limit was dealt with, by id: their limit, so a new one is dealt with again. */
@@ -36,11 +44,18 @@ export class AutoSwitch extends TypedEmitter<Events> {
    * no other session should go to them (and two sessions never take turns on two full accounts).
    */
   private remembered: BlockedAccount[] = []
+  /** Tries the waiting tabs again once the next limit has reset. */
+  private retryTimer: NodeJS.Timeout | undefined
+  /**
+   * Sessions that went on with their own account after a reset, with that reset. Should Claude Code
+   * stop them at the same limit again, it was too early: they don't start over and over.
+   */
+  private readonly resumedAt = new Map<string, string>()
 
   constructor(
-    private readonly accounts: Pick<AccountService, 'list'>,
+    private readonly accounts: Pick<AccountService, 'list' | 'on'>,
     private readonly terminals: Pick<TerminalService, 'list' | 'on'>,
-    private readonly usage: Pick<UsageService, 'getAll'>,
+    private readonly usage: Pick<UsageService, 'getAll' | 'on'>,
     private readonly settings: Pick<SettingsService, 'get' | 'on'>,
     private readonly handoff: Pick<SessionHandoff, 'continueTerminal' | 'on'>,
   ) {
@@ -56,8 +71,15 @@ export class AutoSwitch extends TypedEmitter<Events> {
     })
     // Switched on: tabs that stand at a limit right now go on, too.
     this.settings.on('changed', (next, previous) => {
-      if (next.claude.autoSwitch && !previous.claude.autoSwitch) this.check(this.terminals.list())
+      if (next.claude.autoSwitch !== previous.claude.autoSwitch) this.check(this.terminals.list())
     })
+    // An account may be free now: logged in again, or its limits were read anew.
+    this.usage.on('changed', () => this.check(this.terminals.list()))
+    this.accounts.on('changed', () => this.check(this.terminals.list()))
+  }
+
+  dispose(): void {
+    clearTimeout(this.retryTimer)
   }
 
   /**
@@ -74,21 +96,42 @@ export class AutoSwitch extends TypedEmitter<Events> {
       this.handled.delete(id)
       this.telling.delete(id)
     }
+    clearTimeout(this.retryTimer)
     if (!this.settings.get().claude.autoSwitch) return
+    let waiting = false
     for (const tab of terminals) {
       const limit = tab.limit
       if (tab.mode !== 'session' || tab.status !== 'running' || !limit || !tab.sessionId) continue
       const key = limitKey(limit)
       if (this.switching.has(tab.id) || this.handled.get(tab.id) === key) continue
-      this.handled.set(tab.id, key)
       const target = this.pick(tab, terminals)
       if (!target) {
+        // Tried again with every change, and once the next limit has reset.
         this.telling.delete(tab.id)
+        waiting = true
         continue
       }
+      this.handled.set(tab.id, key)
       this.telling.add(tab.id)
       void this.switchTab(tab, target)
     }
+    if (waiting) this.retryAtNextReset(terminals)
+  }
+
+  /** Checks again shortly after the next reset of a limit the app knows of. */
+  private retryAtNextReset(terminals: readonly TerminalInfo[]): void {
+    const now = Date.now()
+    const resets = [
+      ...terminals.map((t) => t.limit?.resetsAt),
+      ...this.remembered.map((b) => b.resetsAt),
+      ...this.usage.getAll().flatMap((u) => [u.fiveHour?.resetsAt, u.sevenDay?.resetsAt]),
+    ]
+      .map((at) => (at ? Date.parse(at) + RESET_GRACE_MS : NaN))
+      .filter((at) => at > now)
+    if (resets.length === 0) return
+    const delay = Math.min(Math.min(...resets) - now, MAX_TIMEOUT_MS)
+    this.retryTimer = setTimeout(() => this.check(this.terminals.list()), delay)
+    this.retryTimer.unref?.()
   }
 
   private remember(accountId: string, limit: SessionLimit): void {
@@ -96,10 +139,16 @@ export class AutoSwitch extends TypedEmitter<Events> {
     this.remembered.push({ accountId, resetsAt })
   }
 
-  /** Same choice as the limit notice in the tab, plus the accounts switched away from before. */
+  /**
+   * Same choice as the limit notice in the tab, plus the accounts switched away from before. With
+   * none free, the tab's own account once its limit has reset.
+   */
   private pick(tab: TerminalInfo, terminals: readonly TerminalInfo[]): Account | undefined {
     const now = Date.now()
     this.remembered = this.remembered.filter((b) => !b.resetsAt || Date.parse(b.resetsAt) > now)
+    for (const [sessionId, resetsAt] of this.resumedAt) {
+      if (Date.parse(resetsAt) + UNKNOWN_RESET_MS < now) this.resumedAt.delete(sessionId)
+    }
     const blocked = [
       ...terminals.flatMap((t) => (t.limit ? [{ accountId: t.authAccountId, resetsAt: t.limit.resetsAt }] : [])),
       ...this.remembered,
@@ -110,11 +159,19 @@ export class AutoSwitch extends TypedEmitter<Events> {
       tab.accountId,
       tab.authAccountId,
     )
-    return suggestedChoice(choices)?.account
+    const other = suggestedChoice(choices)?.account
+    if (other) return other
+    const resetsAt = tab.limit?.resetsAt
+    if (!resetsAt || Date.parse(resetsAt) + RESET_GRACE_MS > now) return undefined
+    if (tab.sessionId && this.resumedAt.get(tab.sessionId) === resetsAt) return undefined
+    return this.accounts.list().find((a) => a.id === tab.authAccountId)
   }
 
   private async switchTab(from: TerminalInfo, target: Account): Promise<void> {
     this.switching.add(from.id)
+    if (target.id === from.authAccountId && from.sessionId && from.limit?.resetsAt) {
+      this.resumedAt.set(from.sessionId, from.limit.resetsAt)
+    }
     try {
       const to = await this.handoff.continueTerminal(from.id, target.id)
       if (to) this.emit('switched', from, to, target)

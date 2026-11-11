@@ -185,7 +185,7 @@ async function recheck() {
         anchor="claude.autoSwitch"
         for="auto-switch"
         label="Bei einem Limit automatisch wechseln"
-        description="Stößt eine Session an ein Limit, läuft sie von selbst mit dem nächsten freien Account weiter, wie mit „Mit … fortsetzen“ im Tab. Ohne freien Account bleibt der Hinweis."
+        description="Stößt eine Session an ein Limit, läuft sie von selbst mit dem nächsten freien Account weiter, wie mit „Mit … fortsetzen“ im Tab. Ist keiner frei, wartet sie, bis einer frei wird oder ihr eigenes Limit zurückgesetzt ist."
       >
         <Switch id="auto-switch" v-model="autoSwitch" />
       </SettingField>

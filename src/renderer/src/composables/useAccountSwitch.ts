@@ -86,7 +86,13 @@ export function useAccountSwitch() {
     const from = accounts.get(event.from.authAccountId)?.name ?? 'dem bisherigen Account'
     const cause = `${limitLabel(event.from.limit?.type ?? null)} von „${from}“ erreicht`
     const target = accounts.get(event.targetId)
-    if (event.to && target) {
+    if (event.to && target && event.targetId === event.from.authAccountId) {
+      // It waited for the reset of its own limit.
+      const prompt = settings.settings.claude.continuePrompt
+      toast.success(`Limit von „${target.name}“ zurückgesetzt`, {
+        description: prompt && event.to.resumeSessionId ? `„${prompt}“ ist geschickt, Claude macht weiter.` : 'Die Session läuft weiter.',
+      })
+    } else if (event.to && target) {
       announce(event.to, event.from.accountId, target, settings.settings.claude.continuePrompt, cause)
     } else {
       toast.error(cause, {

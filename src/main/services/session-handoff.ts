@@ -39,7 +39,8 @@ export class SessionHandoff extends TypedEmitter<Events> {
     const old = this.terminals.get(terminalId)
     if (old.mode !== 'session') throw new Error('Nur Claude-Code-Sessions können den Account wechseln.')
     const target = this.accounts.get(targetId)
-    if (target.id === old.authAccountId && old.status === 'running') {
+    // At a limit that has reset, the session goes on with its own account (see AutoSwitch).
+    if (target.id === old.authAccountId && old.status === 'running' && !old.limit) {
       throw new Error(`Der Tab läuft schon über „${target.name}“.`)
     }
     return this.handOver(old, target, true)
