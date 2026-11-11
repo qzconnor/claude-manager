@@ -163,7 +163,7 @@ const search = ref('')
 const query = refDebounced(search, 150)
 const terms = computed(() => searchTerms(query.value))
 /** Matches in the conversations; titles and prompts are searched right here. */
-const { hits } = useSessionSearch(query)
+const { hits, searching, error: searchError } = useSessionSearch(query)
 const selected = ref<SessionRef | null>(null)
 const { detail, summary, loading, error } = useSessionDetail(selected)
 
@@ -286,7 +286,11 @@ const folderCount = computed(() => projects.value.filter((p) => p.own.length > 0
 
 const emptyMessage = computed(() => {
   const filtered = age.value !== null || size.value !== null
-  if (query.value) return `Keine Session passt zu „${query.value}“${filtered ? ' und den Filtern' : ''}.`
+  if (query.value) {
+    // The conversations may still bring some.
+    if (searching.value) return 'Suche in den Verläufen…'
+    return `Keine Session passt zu „${query.value}“${filtered ? ' und den Filtern' : ''}.`
+  }
   return filtered ? 'Keine Session passt zu den Filtern.' : null
 })
 
@@ -580,7 +584,9 @@ onActivated(() => {
         <div class="flex items-center gap-2">
           <InputGroup class="h-[32px] flex-1">
             <InputGroupAddon>
-              <SearchIcon />
+              <!-- While the conversations are searched. -->
+              <Spinner v-if="searching" />
+              <SearchIcon v-else />
             </InputGroupAddon>
             <InputGroupInput
               v-model="search"
@@ -717,6 +723,10 @@ onActivated(() => {
           <Skeleton v-for="i in 8" :key="i" class="h-8 w-full" />
         </div>
         <div v-else class="flex flex-col gap-3">
+          <p v-if="searchError" class="flex items-center gap-2 px-3 py-1 text-xs text-destructive">
+            <TriangleAlertIcon class="size-3.5 shrink-0" />
+            <span class="min-w-0">Suche in den Verläufen fehlgeschlagen, gefunden wird nur in Titeln und Prompts: {{ searchError }}</span>
+          </p>
           <!-- Reading again failed: the list stays as it was. -->
           <p v-if="sessions.error" class="flex items-center gap-2 px-3 py-1 text-xs text-destructive">
             <TriangleAlertIcon class="size-3.5 shrink-0" />

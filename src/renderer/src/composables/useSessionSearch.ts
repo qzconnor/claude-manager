@@ -1,6 +1,7 @@
 import { ref, shallowRef, watch, type Ref } from 'vue'
 import type { SessionSearchHit } from '@shared/types'
 import { searchTerms } from '@shared/utils'
+import { errorMessage } from '@/lib/errors'
 
 /** Key of a session across accounts. */
 export function sessionKey(accountId: string, sessionId: string): string {
@@ -12,17 +13,21 @@ export function sessionKey(accountId: string, sessionId: string): string {
  * `query` should be debounced; answers to an older query are dropped.
  */
 export function useSessionSearch(query: Ref<string>) {
-  /** By `sessionKey`. */
+  /** By `sessionKey`; always of the current query. */
   const hits = shallowRef(new Map<string, SessionSearchHit>())
   const searching = ref(false)
+  /** Why the search in the conversations failed: then only what the list knows itself is searched. */
+  const error = ref<string | null>(null)
   let latest = 0
 
   watch(
     query,
     async (value) => {
       const id = ++latest
+      // The hits of the query before would keep sessions in the list that don't match this one.
+      hits.value = new Map()
+      error.value = null
       if (searchTerms(value).length === 0) {
-        hits.value = new Map()
         searching.value = false
         return
       }
@@ -30,8 +35,8 @@ export function useSessionSearch(query: Ref<string>) {
       try {
         const result = await window.api.sessions.search(value)
         if (id === latest) hits.value = new Map(result.map((hit) => [sessionKey(hit.accountId, hit.sessionId), hit]))
-      } catch {
-        if (id === latest) hits.value = new Map()
+      } catch (failure) {
+        if (id === latest) error.value = errorMessage(failure)
       } finally {
         if (id === latest) searching.value = false
       }
@@ -44,5 +49,5 @@ export function useSessionSearch(query: Ref<string>) {
     void window.api.sessions.search('').catch(() => undefined)
   }
 
-  return { hits, searching, prepare }
+  return { hits, searching, error, prepare }
 }
