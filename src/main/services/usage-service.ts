@@ -93,8 +93,10 @@ export class UsageService extends TypedEmitter<Events> {
         if (Array.isArray(list)) this.samples.set(key, list.filter(isSample))
       }
     }
+    this.forgetRemoved()
     this.recompute()
     this.accounts.on('changed', () => {
+      this.forgetRemoved()
       this.recompute()
       this.fetchNewLogins()
     })
@@ -337,6 +339,25 @@ export class UsageService extends TypedEmitter<Events> {
     const known = new Set(this.accounts.list().map((a) => sampleKey(a.id, '')))
     const samples = Object.fromEntries([...this.samples].filter(([key]) => known.has(key.slice(0, key.indexOf('\n') + 1))))
     void writeJsonAtomic(this.cacheFile, { version: 2, records, samples } satisfies CacheFile).catch(() => undefined)
+  }
+
+  /** Forgets what is kept of accounts that were removed, also in the cache file. */
+  private forgetRemoved(): void {
+    const known = new Set(this.accounts.list().map((a) => a.id))
+    let dropped = false
+    for (const id of [...this.live.keys()]) {
+      if (known.has(id)) continue
+      this.live.delete(id)
+      dropped = true
+    }
+    for (const key of [...this.samples.keys()]) {
+      if (known.has(key.slice(0, key.indexOf('\n')))) continue
+      this.samples.delete(key)
+      dropped = true
+    }
+    for (const id of [...this.renewals.keys()]) if (!known.has(id)) this.renewals.delete(id)
+    for (const id of [...this.loginChangedAt.keys()]) if (!known.has(id)) this.loginChangedAt.delete(id)
+    if (dropped) this.persist()
   }
 
   /** Forgets what was fetched for the previous login of the account's files. */

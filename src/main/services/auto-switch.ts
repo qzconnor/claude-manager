@@ -1,5 +1,6 @@
 import { accountChoices, suggestedChoice, type BlockedAccount } from '@shared/account-choice'
 import type { Account, SessionLimit, TerminalInfo } from '@shared/types'
+import { readJsonSync, writeJsonAtomic } from '../lib/json-file'
 import { TypedEmitter } from '../lib/typed-emitter'
 import type { AccountService } from './account-service'
 import type { SessionHandoff } from './session-handoff'
@@ -42,8 +43,11 @@ export class AutoSwitch extends TypedEmitter<Events> {
   /**
    * Accounts left at a limit, also by hand. Their tab is gone, but the limit stays until the reset:
    * no other session should go to them (and two sessions never take turns on two full accounts).
+   * Kept in `file`, so a restart doesn't forget them.
    */
   private remembered: BlockedAccount[] = []
+  /** What `file` holds, so unchanged state isn't written again. */
+  private written = '[]'
   /** Tries the waiting tabs again once the next limit has reset. */
   private retryTimer: NodeJS.Timeout | undefined
   /**
@@ -58,11 +62,20 @@ export class AutoSwitch extends TypedEmitter<Events> {
     private readonly usage: Pick<UsageService, 'getAll' | 'on'>,
     private readonly settings: Pick<SettingsService, 'get' | 'on'>,
     private readonly handoff: Pick<SessionHandoff, 'continueTerminal' | 'on'>,
+    private readonly file: string | null = null,
   ) {
     super()
   }
 
   init(): void {
+    if (this.file) {
+      const saved = readJsonSync<unknown>(this.file)
+      if (Array.isArray(saved)) {
+        this.remembered = saved.filter(isBlockedAccount)
+        this.written = JSON.stringify(this.remembered)
+      }
+      this.forgetPast()
+    }
     this.terminals.on('changed', (terminals) => this.check(terminals))
     // Comes while the old tab is still there, with its limit.
     this.handoff.on('replaced', (oldId) => {
@@ -75,7 +88,10 @@ export class AutoSwitch extends TypedEmitter<Events> {
     })
     // An account may be free now: logged in again, or its limits were read anew.
     this.usage.on('changed', () => this.check(this.terminals.list()))
-    this.accounts.on('changed', () => this.check(this.terminals.list()))
+    this.accounts.on('changed', () => {
+      this.forgetPast()
+      this.check(this.terminals.list())
+    })
   }
 
   dispose(): void {
@@ -137,6 +153,18 @@ export class AutoSwitch extends TypedEmitter<Events> {
   private remember(accountId: string, limit: SessionLimit): void {
     const resetsAt = limit.resetsAt ?? new Date(Date.now() + UNKNOWN_RESET_MS).toISOString()
     this.remembered.push({ accountId, resetsAt })
+    this.forgetPast()
+  }
+
+  /** Forgets the limits that have reset and those of accounts that are gone, then saves the rest. */
+  private forgetPast(): void {
+    const now = Date.now()
+    const known = new Set(this.accounts.list().map((a) => a.id))
+    this.remembered = this.remembered.filter((b) => (!b.resetsAt || Date.parse(b.resetsAt) > now) && known.has(b.accountId))
+    const json = JSON.stringify(this.remembered)
+    if (!this.file || json === this.written) return
+    this.written = json
+    void writeJsonAtomic(this.file, this.remembered).catch(() => undefined)
   }
 
   /**
@@ -145,7 +173,7 @@ export class AutoSwitch extends TypedEmitter<Events> {
    */
   private pick(tab: TerminalInfo, terminals: readonly TerminalInfo[]): Account | undefined {
     const now = Date.now()
-    this.remembered = this.remembered.filter((b) => !b.resetsAt || Date.parse(b.resetsAt) > now)
+    this.forgetPast()
     for (const [sessionId, resetsAt] of this.resumedAt) {
       if (Date.parse(resetsAt) + UNKNOWN_RESET_MS < now) this.resumedAt.delete(sessionId)
     }
@@ -182,4 +210,10 @@ export class AutoSwitch extends TypedEmitter<Events> {
       this.switching.delete(from.id)
     }
   }
+}
+
+function isBlockedAccount(value: unknown): value is BlockedAccount {
+  if (!value || typeof value !== 'object') return false
+  const { accountId, resetsAt } = value as Record<string, unknown>
+  return typeof accountId === 'string' && typeof resetsAt === 'string' && !Number.isNaN(Date.parse(resetsAt))
 }

@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type { Account, AccountKind, AccountUsage, AppSettings, SessionLimit, TerminalInfo } from '@shared/types'
 import { AutoSwitch, RESET_GRACE_MS } from './auto-switch'
@@ -55,7 +58,12 @@ beforeEach(() => {
     emitReplaced(id, info)
     return info
   })
-  service = new AutoSwitch(
+  service = start()
+})
+
+/** A new service, as on a start of the app; `file` keeps the accounts left at a limit. */
+function start(file: string | null = null): AutoSwitch {
+  const created = new AutoSwitch(
     {
       list: () => accounts,
       on: ((event: string, listener: () => void) => {
@@ -91,11 +99,13 @@ beforeEach(() => {
         return () => undefined
       }) as never,
     },
+    file,
   )
-  service.on('switched', (from, to, target) => switched.push([from.id, to.id, target.id]))
-  service.on('failed', (from, target, message) => failed.push([from.id, target.id, message]))
-  service.init()
-})
+  created.on('switched', (from, to, target) => switched.push([from.id, to.id, target.id]))
+  created.on('failed', (from, target, message) => failed.push([from.id, target.id, message]))
+  created.init()
+  return created
+}
 
 /** The tabs change, and the switches that started finish. */
 async function change(list: TerminalInfo[]) {
@@ -223,6 +233,50 @@ describe('AutoSwitch', () => {
     usage = [{ accountId: 'c', status: 'ok', fiveHour: { percent: 40 }, sevenDay: null }] as AccountUsage[]
     emitUsage()
     await vi.waitFor(() => expect(continueTerminal).toHaveBeenCalledWith('t1', 'b'))
+  })
+
+  describe('after a restart', () => {
+    let dir: string
+
+    beforeEach(async () => {
+      dir = await mkdtemp(join(tmpdir(), 'cm-switch-'))
+    })
+
+    afterEach(async () => {
+      await rm(dir, { recursive: true, force: true, maxRetries: 3 })
+    })
+
+    it('still avoids an account it left at its limit', async () => {
+      const file = join(dir, 'limited-accounts.json')
+      service = start(file)
+      await change([tab('t1', 'a', { limit: limit() })])
+      expect(continueTerminal).toHaveBeenLastCalledWith('t1', 'b')
+      await vi.waitFor(async () => expect(JSON.parse(await readFile(file, 'utf8'))).toEqual([{ accountId: 'a', resetsAt: LATER }]))
+      // The app starts again, the tab goes on with b and hits its limit.
+      service = start(file)
+      await change([tab('t2', 'b', { accountId: 'a', limit: limit() })])
+      expect(continueTerminal).toHaveBeenLastCalledWith('t2', 'c')
+    })
+
+    it('forgets limits that have reset and accounts that are gone', async () => {
+      const file = join(dir, 'limited-accounts.json')
+      const past = new Date(Date.now() - 60_000).toISOString()
+      await writeFile(
+        file,
+        JSON.stringify([
+          { accountId: 'a', resetsAt: past },
+          { accountId: 'gone', resetsAt: LATER },
+          { accountId: 'b', resetsAt: LATER },
+          { accountId: 'c' },
+          'broken',
+        ]),
+      )
+      service = start(file)
+      await vi.waitFor(async () => expect(JSON.parse(await readFile(file, 'utf8'))).toEqual([{ accountId: 'b', resetsAt: LATER }]))
+      accounts = ['a', 'c'].map(account)
+      emitAccounts()
+      await vi.waitFor(async () => expect(JSON.parse(await readFile(file, 'utf8'))).toEqual([]))
+    })
   })
 
   it('reports a switch that failed or was not allowed', async () => {

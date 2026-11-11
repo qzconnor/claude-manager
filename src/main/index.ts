@@ -126,7 +126,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   // A session started with tools allowed without asking: once that is switched off, the app asks.
   browserMcp.setAsk((options) => trust.ask(options))
   browserMcp.setAppTools(new AppTools({ terminals, usage, sessions, accounts, settings, themes }))
-  const autoSwitch = new AutoSwitch(accounts, terminals, usage, settings, handoff)
+  const autoSwitch = new AutoSwitch(accounts, terminals, usage, settings, handoff, join(userDataDir, 'limited-accounts.json'))
   autoSwitch.init()
   const git = new GitService()
   const command = new CommandIntegration(userDataDir)
