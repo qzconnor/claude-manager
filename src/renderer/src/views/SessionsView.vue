@@ -46,6 +46,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useClock } from '@/composables/useClock'
 import { useSectionDrag } from '@/composables/useSectionDrag'
 import { useSessionDetail, type SessionRef } from '@/composables/useSessionDetail'
+import { provideSessionPages } from '@/composables/useSessionPages'
 import { useSessionRemoval } from '@/composables/useSessionRemoval'
 import { sessionKey, useSessionSearch } from '@/composables/useSessionSearch'
 import { attempt } from '@/lib/errors'
@@ -58,6 +59,7 @@ import {
   opensByDefault,
   placeFolder,
   placeSession,
+  sessionsInView,
   type Placement,
   type SessionProject,
   type SessionRoot,
@@ -383,13 +385,13 @@ const allState = computed(() => {
   return count === shown.value.length ? true : 'indeterminate'
 })
 
-/** The sessions one can see, top to bottom: a Shift+click range leaves out closed folders. */
-const visibleOrder = computed(() => {
-  // As a folder shows them: the folders in it first, then its own sessions.
-  const inFolder = (p: SessionProject): SessionSummary[] =>
-    openProjects.value.has(p.id) ? [...p.folders.flatMap(inFolder), ...p.own] : []
-  return sections.value.filter((s) => isOpen(s.id)).flatMap((s) => [...s.projects.flatMap(inFolder), ...s.sessions])
-})
+/** How far each folder shows its sessions („Weitere … anzeigen“), by id. */
+const pages = provideSessionPages()
+/**
+ * The sessions one can see, top to bottom: a Shift+click range leaves out closed folders and the
+ * sessions behind „Weitere … anzeigen“. „Alle auswählen“ takes all the filters show: the bar counts them.
+ */
+const visibleOrder = computed(() => sessionsInView(sections.value, isOpen, openProjects.value, pages))
 
 function startSelecting() {
   selecting.value = true

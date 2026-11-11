@@ -31,10 +31,11 @@ import {
 } from '@/components/ui/context-menu'
 import { useLauncher } from '@/composables/useLauncher'
 import type { SessionRef } from '@/composables/useSessionDetail'
+import { useSessionPage } from '@/composables/useSessionPages'
 import { sessionKey } from '@/composables/useSessionSearch'
 import { attempt, toastError } from '@/lib/errors'
 import { shortenPath } from '@/lib/format'
-import type { SessionProject, SessionRoot } from '@/lib/session-tree'
+import { FOLDERS_SECTION_ID, PAGE_SIZE, type SessionProject, type SessionRoot } from '@/lib/session-tree'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/stores/app'
 import { useUiStore } from '@/stores/ui'
@@ -43,8 +44,6 @@ import NewSessionButton from './NewSessionButton.vue'
 import NewSessionMenuItem from './NewSessionMenuItem.vue'
 import SessionListItem from './SessionListItem.vue'
 import SessionProjectGroup from './SessionProjectGroup.vue'
-
-const PAGE_SIZE = 50
 
 /**
  * A section of the session list, sticky at the top while its rows scroll by: a workspace with its
@@ -94,8 +93,14 @@ const ui = useUiStore()
 const app = useAppStore()
 const workspaces = useWorkspacesStore()
 const menuOpen = ref(false)
-const limit = ref(PAGE_SIZE)
-const ownSessions = computed(() => props.root?.sessions.slice(0, limit.value) ?? [])
+const {
+  shown: ownSessions,
+  hidden,
+  showMore,
+} = useSessionPage(
+  () => props.root?.id ?? FOLDERS_SECTION_ID,
+  () => props.root?.sessions ?? [],
+)
 
 const activeProjects = computed(() => props.projects.filter((p) => p.sessions.length > 0))
 /**
@@ -299,13 +304,13 @@ async function removeWorkspace() {
         @toggle="emit('toggle', session, $event)"
       />
       <Button
-        v-if="root && root.sessions.length > limit"
+        v-if="hidden > 0"
         variant="ghost"
         size="sm"
         class="self-start text-muted-foreground"
-        @click="limit += PAGE_SIZE"
+        @click="showMore"
       >
-        Weitere {{ Math.min(PAGE_SIZE, root.sessions.length - limit) }} von {{ root.sessions.length - limit }} anzeigen
+        Weitere {{ Math.min(PAGE_SIZE, hidden) }} von {{ hidden }} anzeigen
       </Button>
       <template v-if="emptyProjects.length">
         <!-- Like a folder of the tree: its chevron turns, the folders appear below it. -->

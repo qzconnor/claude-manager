@@ -40,19 +40,18 @@ import { useFolderMove } from '@/composables/useFolderMove'
 import { useLauncher } from '@/composables/useLauncher'
 import type { SessionRef } from '@/composables/useSessionDetail'
 import { useSessionRemoval } from '@/composables/useSessionRemoval'
+import { useSessionPage } from '@/composables/useSessionPages'
 import { sessionKey } from '@/composables/useSessionSearch'
 import { attempt } from '@/lib/errors'
 import { formatBytes, formatRelative } from '@/lib/format'
 import { splitFolder } from '@/lib/recent-folders'
-import type { SessionProject } from '@/lib/session-tree'
+import { PAGE_SIZE, type SessionProject } from '@/lib/session-tree'
 import { cn } from '@/lib/utils'
 import { useUiStore } from '@/stores/ui'
 import { useWorkspacesStore } from '@/stores/workspaces'
 import NewSessionButton from './NewSessionButton.vue'
 import NewSessionMenuItem from './NewSessionMenuItem.vue'
 import SessionListItem from './SessionListItem.vue'
-
-const PAGE_SIZE = 50
 
 /**
  * A folder in the session list (a project of a workspace, a folder in one, or a folder of its own): the
@@ -96,9 +95,15 @@ const ui = useUiStore()
 const workspaces = useWorkspacesStore()
 const folderMove = useFolderMove()
 const menuOpen = ref(false)
-const limit = ref(PAGE_SIZE)
 /** Its own sessions; those in its folders are with them. */
-const visible = computed(() => props.project.own.slice(0, limit.value))
+const {
+  shown: visible,
+  hidden,
+  showMore,
+} = useSessionPage(
+  () => props.project.id,
+  () => props.project.own,
+)
 
 const checkState = computed(() => {
   const count = props.project.sessions.filter((s) => props.checked?.has(sessionKey(s.accountId, s.id))).length
@@ -348,13 +353,13 @@ async function copyPath() {
         @toggle="emit('toggle', session, $event)"
       />
       <Button
-        v-if="project.own.length > limit"
+        v-if="hidden > 0"
         variant="ghost"
         size="sm"
         class="self-start text-muted-foreground"
-        @click="limit += PAGE_SIZE"
+        @click="showMore"
       >
-        Weitere {{ Math.min(PAGE_SIZE, project.own.length - limit) }} von {{ project.own.length - limit }} anzeigen
+        Weitere {{ Math.min(PAGE_SIZE, hidden) }} von {{ hidden }} anzeigen
       </Button>
     </CollapsibleContent>
   </Collapsible>
