@@ -102,7 +102,11 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   // Claude sessions the app starts reach the app over its server: the browser's MCP server and their
   // hooks, before the tabs are restored. Without the server they start without both.
   const sessionServer = new SessionServer()
-  await sessionServer.start().catch((error) => console.error('[session-server] server could not start', error))
+  let serverError: string | null = null
+  await sessionServer.start().catch((error) => {
+    console.error('[session-server] server could not start', error)
+    serverError = error instanceof Error ? error.message : String(error)
+  })
   const browserMcp = new BrowserMcpServer(sessionServer, userDataDir, settings, new BrowserTools(browser), app.getVersion())
   browserMcp.init()
   terminals.addSessionArgs(browserMcp)
@@ -190,7 +194,11 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   registerIpc(ctx)
   // Runs while the window loads; its tabs appear as soon as they are open.
   const restore = new TerminalRestore(userDataDir, terminals, accounts, settings)
-  const restored = restore.init().catch((error) => console.error('[restore] tabs could not be restored', error))
+  let restoreError: string | null = null
+  const restored = restore.init().catch((error) => {
+    console.error('[restore] tabs could not be restored', error)
+    restoreError = error instanceof Error ? error.message : String(error)
+  })
 
   /** The app is quitting: the window really closes instead of going to the tray. */
   let quitting = false
@@ -382,9 +390,32 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
       code: dirname(problems[0].file),
     })
   }
+  // Without the server sessions start without the app's tools and hooks: the user should know why.
+  if (serverError !== null) {
+    void dialogs.show(firstWindow, {
+      kind: 'alert',
+      warning: true,
+      title: 'Browser-Werkzeuge und Hooks sind aus',
+      description:
+        'Der Server, über den Claude-Sessions die App erreichen, startete nicht. Sessions laufen deshalb ohne die Werkzeuge ' +
+        'für Browser und App, und ihren Zustand liest die App nur aus Fenstertitel und Verlauf. Ein Neustart der App versucht es erneut.',
+      code: serverError,
+    })
+  }
   // Tabs of the last run that didn't open: the user learns why and can try again right away. A window
   // hidden in the tray stays hidden; those tabs come again on the next start.
   void restored.then(async () => {
+    if (restoreError !== null && !startHidden && !firstWindow.isDestroyed()) {
+      await dialogs.show(firstWindow, {
+        kind: 'alert',
+        warning: true,
+        title: 'Die Tabs vom letzten Mal gingen nicht auf',
+        description:
+          'Die App versucht es beim nächsten Start noch einmal. Was du bis dahin öffnest, merkt sie sich diesmal nicht für den nächsten Start.',
+        code: restoreError,
+      })
+      return
+    }
     let failures = restore.takeFailures()
     while (failures.length > 0 && !startHidden && !firstWindow.isDestroyed()) {
       await dialogs.whenReady(firstWindow)

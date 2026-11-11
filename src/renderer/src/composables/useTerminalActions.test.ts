@@ -35,7 +35,7 @@ function terminal(id: string, status: TerminalStatus = 'running'): TerminalInfo 
 }
 
 let list: TerminalInfo[]
-const close = vi.fn(async () => undefined)
+const close = vi.fn(async (_id: string) => undefined)
 const api = {
   platform: 'win32',
   settings: { onChanged: () => () => {} },
