@@ -40,7 +40,7 @@ function session(id: string, sessionId: string | null): TerminalInfo {
 let list: TerminalInfo[]
 let changed: (list: TerminalInfo[], splits: PaneSplit[]) => void
 let touched: (terminalId: string, touches: FileTouch[]) => void
-let filesChanged: (root: string, dirs: string[], git: boolean) => void
+let filesChanged: (root: string, dirs: string[], git: boolean, repo: boolean) => void
 
 const api = {
   platform: 'win32',
@@ -104,14 +104,14 @@ describe('changes on disk', () => {
     const fileTree = await load([session('s1', 'A')])
     vi.useFakeTimers()
     try {
-      fileTree.hold('C:\dev')
+      fileTree.hold('C:\\dev')
       await vi.advanceTimersByTimeAsync(1000)
       api.files.status.mockClear()
       // An install in node_modules: the folders it shows may reload, git isn't asked.
-      filesChanged('C:\dev', ['node_modules/pkg'], false)
+      filesChanged('C:\\dev', ['node_modules/pkg'], false, false)
       await vi.advanceTimersByTimeAsync(1000)
       expect(api.files.status).not.toHaveBeenCalled()
-      filesChanged('C:\dev', [''], true)
+      filesChanged('C:\\dev', [''], true, false)
       await vi.advanceTimersByTimeAsync(1000)
       expect(api.files.status).toHaveBeenCalledTimes(1)
     } finally {

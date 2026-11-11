@@ -271,6 +271,80 @@ describe('FileTreeService with git', () => {
     await expect.poll(() => service.status(watched), { timeout: 3000 }).not.toBeNull()
   })
 
+  describe('the writes of shell commands', () => {
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+    let repo: string
+    let writes: { terminal: string; path: string }[]
+    let off = () => {}
+    const shell = (terminal: string, end: boolean) => service.activity(terminal, { shell: { id: `bash-${terminal}`, cwd: repo, end, writes: [] } })
+    afterEach(() => off())
+
+    beforeEach(async () => {
+      repo = join(dir, 'repo')
+      await mkdir(join(repo, 'src'), { recursive: true })
+      git(repo, 'init', '-q')
+      await writeFile(join(repo, '.gitignore'), 'dist/\n*.log\n')
+      await writeFile(join(repo, 'src', 'a.ts'), 'a')
+      await writeFile(join(repo, 'src', 'old.ts'), 'old')
+      git(repo, 'add', '-A')
+      git(repo, 'commit', '-qm', 'init')
+      writes = []
+      off = service.on('touched', (terminal, touches) => {
+        for (const touch of touches) if (touch.kind === 'write') writes.push({ terminal, path: touch.path })
+      })
+    })
+
+    it('are what changes meanwhile, not what git ignores or another session’s tool writes', async () => {
+      await service.status(repo)
+      service.watch([{ root: repo, dirs: [''] }])
+      await wait(300)
+      // Another session's tool is about to write b.ts.
+      service.activity('t2', { touches: [{ path: join(repo, 'src', 'b.ts'), kind: 'write' }] })
+      shell('t1', false)
+      // A build's output in a folder it makes, a log, the file the other session writes, and its own.
+      await mkdir(join(repo, 'dist'))
+      await writeFile(join(repo, 'dist', 'out.js'), 'x')
+      await writeFile(join(repo, 'debug.log'), 'x')
+      await writeFile(join(repo, 'src', 'b.ts'), 'by t2')
+      await writeFile(join(repo, 'src', 'a.ts'), 'changed')
+      await wait(800)
+      shell('t1', true)
+      await wait(1200)
+      expect(writes).toEqual([
+        { terminal: 't2', path: join(repo, 'src', 'b.ts') },
+        { terminal: 't1', path: join(repo, 'src', 'a.ts') },
+      ])
+    })
+
+    it('are nobody’s while commands of two sessions run in the folder', async () => {
+      service.watch([{ root: repo, dirs: ['', 'src'] }])
+      await wait(300)
+      shell('t1', false)
+      shell('t2', false)
+      await writeFile(join(repo, 'src', 'a.ts'), 'changed')
+      await wait(800)
+      shell('t1', true)
+      shell('t2', true)
+      await wait(1200)
+      expect(writes).toEqual([])
+    })
+
+    it('are found in git’s status once a command ended that no tree watched', async () => {
+      // Changed before the command: not its write.
+      await writeFile(join(repo, 'src', 'old.ts'), 'changed before')
+      await utimes(join(repo, 'src', 'old.ts'), new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000))
+      shell('t1', false)
+      await writeFile(join(repo, 'src', 'a.ts'), 'changed')
+      await writeFile(join(repo, 'src', 'new.ts'), 'new')
+      await mkdir(join(repo, 'dist'))
+      await writeFile(join(repo, 'dist', 'out.js'), 'x')
+      shell('t1', true)
+      await expect.poll(() => writes.length, { timeout: 3000 }).toBe(2)
+      await wait(300)
+      expect(new Set(writes.map((w) => w.path))).toEqual(new Set([join(repo, 'src', 'a.ts'), join(repo, 'src', 'new.ts')]))
+    })
+  })
+
   it('reads a file whose mode alone changed', async () => {
     const repo = join(dir, 'repo')
     await mkdir(repo)

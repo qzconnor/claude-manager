@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { watch, type FSWatcher } from 'node:fs'
 import { readdir, readFile, stat } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { folderKey } from '@shared/folders'
 import type {
   FileDiff,
@@ -73,6 +73,16 @@ const SHELL_SETTLE_MS = 800
 const MAX_SHELL_WRITES = 50
 /** A file counts as written by a command if it changed at most this long before it started (ms, clocks differ a little). */
 const MTIME_SLACK_MS = 1000
+/** A file another session's tool is about to write is that session's for this long (ms; it may wait for permission). */
+const TOOL_WRITE_MS = 60_000
+/** The most files about to be written by tools that are remembered. */
+const MAX_TOOL_WRITES = 500
+/** The most changed files of git's status looked at after a command no tree watched. */
+const MAX_SHELL_SCAN = 2000
+/** The most changes of a moment asked about with `git check-ignore` (a build writes thousands); the rest count not. */
+const MAX_IGNORE_CHECK = 400
+/** Paths per `git check-ignore`, for the length of a command line on Windows. */
+const IGNORE_CHECK_CHUNK = 100
 /** Folders whose changes are no writes worth showing: packages, git's own. */
 const SHELL_SKIPPED = new Set(['node_modules', '.git'])
 /** Windows and macOS watch a folder with everything below it at the cost of one handle; Linux needs one per folder. */
@@ -120,6 +130,8 @@ interface RunningShell {
   timer: NodeJS.Timeout | null
   /** Its end: when it runs too long, or a moment after it ended. */
   expiry: NodeJS.Timeout
+  /** Looked for its writes in git's status once it ended (no tree watched its folder). */
+  scanned: boolean
 }
 
 type Events = {
@@ -148,8 +160,10 @@ export class FileTreeService extends TypedEmitter<Events> {
   private readonly guards = new Map<string, Promise<Record<string, string>>>()
   /** Folders outside a repository, with when that was found out (see `NO_REPO_MS`). */
   private readonly noRepo = new Map<string, number>()
-  /** By `folderKey`: the folders git ignores whole (`node_modules/`), from the last status. */
-  private readonly ignoredDirs = new Map<string, Set<string>>()
+  /** By `folderKey`: what git ignores there (folders whole end with `/`, like `node_modules/`), from the last status. */
+  private readonly ignored = new Map<string, Set<string>>()
+  /** Files the tools of a session are about to write (PreToolUse), by `pathKey`: no command of another session writes them. */
+  private readonly toolWrites = new Map<string, { terminalId: string; at: number }>()
 
   async list(dir: string): Promise<FileListing> {
     const dirents = await readdir(dir, { withFileTypes: true })
@@ -173,7 +187,7 @@ export class FileTreeService extends TypedEmitter<Events> {
   async status(root: string): Promise<GitTreeStatus | null> {
     const prefix = await this.prefix(root)
     if (prefix === null) {
-      this.ignoredDirs.delete(folderKey(root))
+      this.ignored.delete(folderKey(root))
       return null
     }
     const env = await this.guard(root)
@@ -188,7 +202,7 @@ export class FileTreeService extends TypedEmitter<Events> {
     ])
     if (status === null) return null
     const result = parseGitStatus(status, numstat ?? '', prefix)
-    this.ignoredDirs.set(folderKey(root), new Set(result.ignored.filter((path) => path.endsWith('/'))))
+    this.ignored.set(folderKey(root), new Set(result.ignored))
     return result
   }
 
@@ -234,7 +248,10 @@ export class FileTreeService extends TypedEmitter<Events> {
    * a shell command runs the files that change.
    */
   activity(terminalId: string, activity: FileActivity): void {
-    if (activity.touches?.length) this.emit('touched', terminalId, activity.touches)
+    if (activity.touches?.length) {
+      this.emit('touched', terminalId, activity.touches)
+      this.noteToolWrites(terminalId, activity.touches)
+    }
     if (activity.maybe?.length) {
       void existingFiles(activity.maybe).then((touches) => {
         if (touches.length > 0) this.emit('touched', terminalId, touches)
@@ -258,20 +275,82 @@ export class FileTreeService extends TypedEmitter<Events> {
         pending: new Set(),
         timer: null,
         expiry: setTimeout(() => this.dropShell(key), MAX_SHELL_MS),
+        scanned: false,
       })
       return
     }
     const running = this.shells.get(key)
     if (shell.writes.length > 0) {
       const since = (running?.start ?? Date.now() - MAX_SHELL_MS) - MTIME_SLACK_MS
-      void changedFiles(shell.writes, since).then((paths) => this.reportWrites(terminalId, running, paths))
+      // Named by the command (`> out.txt`): its own, whoever else works there.
+      void changedFiles(shell.writes, since).then((paths) => this.reportWrites(terminalId, running, paths, true))
     }
-    if (running) this.settleShell(key, running)
+    if (running) this.endShell(key, running)
   }
 
   /** A turn ended or a new one began: none of the session's commands runs any more (Esc stops one without a word). */
   endShells(terminalId: string): void {
-    for (const [key, shell] of this.shells) if (shell.terminalId === terminalId) this.settleShell(key, shell)
+    for (const [key, shell] of this.shells) if (shell.terminalId === terminalId) this.endShell(key, shell)
+  }
+
+  private endShell(key: string, shell: RunningShell): void {
+    if (!shell.scanned && !this.watchedLive(shell.cwd)) {
+      shell.scanned = true
+      void this.scanShell(shell)
+    }
+    this.settleShell(key, shell)
+  }
+
+  /** Whether a tree's watcher saw every change in `cwd` as it happened (Windows, macOS: its whole folder). */
+  private watchedLive(cwd: string): boolean {
+    if (!RECURSIVE) return false
+    for (const watched of this.watched.values()) if (watched.recursive && isInside(cwd, watched.path)) return true
+    return false
+  }
+
+  /**
+   * The writes of a command no tree watched (its tree is closed; Linux watches only open folders): what
+   * git sees changed or new in its folder, changed since it started. Outside a repository: none.
+   */
+  private async scanShell(shell: RunningShell): Promise<void> {
+    const prefix = await this.prefix(shell.cwd)
+    if (prefix === null) return
+    const args = ['--no-optional-locks', 'status', '--porcelain=v2', '-z', '--untracked-files=all', '--', '.']
+    const out = await runGit(shell.cwd, args, await this.guard(shell.cwd))
+    if (out === null) return
+    const paths = Object.entries(parseGitStatus(out, '', prefix).files)
+      .filter(([, state]) => state.status !== 'deleted')
+      .slice(0, MAX_SHELL_SCAN)
+      .map(([path]) => join(shell.cwd, ...path.split('/')))
+      .filter((path) => shellMayWrite(shell.cwd, path))
+    this.reportWrites(shell.terminalId, shell, await changedFiles(paths, shell.start - MTIME_SLACK_MS))
+  }
+
+  /** Remembers the files a session's tools are about to write, for a while (see `onlyShellOf`). */
+  private noteToolWrites(terminalId: string, touches: readonly FileTouch[]): void {
+    const now = Date.now()
+    for (const touch of touches) {
+      if (touch.kind !== 'write') continue
+      const key = pathKey(touch.path)
+      // Last in the map: the oldest come first.
+      this.toolWrites.delete(key)
+      this.toolWrites.set(key, { terminalId, at: now })
+    }
+    for (const [key, write] of this.toolWrites) {
+      if (this.toolWrites.size <= MAX_TOOL_WRITES && now - write.at <= TOOL_WRITE_MS) break
+      this.toolWrites.delete(key)
+    }
+  }
+
+  /**
+   * Whether a change at `path` can only be a write of the commands of `terminalId`: no other session's
+   * tool is about to write it, no command of another session runs where it lies. Else it is nobody's.
+   */
+  private onlyShellOf(terminalId: string, path: string): boolean {
+    const tool = this.toolWrites.get(pathKey(path))
+    if (tool && tool.terminalId !== terminalId && Date.now() - tool.at <= TOOL_WRITE_MS) return false
+    for (const shell of this.shells.values()) if (shell.terminalId !== terminalId && shellMayWrite(shell.cwd, path)) return false
+    return true
   }
 
   private settleShell(key: string, shell: RunningShell): void {
@@ -303,13 +382,34 @@ export class FileTreeService extends TypedEmitter<Events> {
     shell.timer = null
     const paths = [...shell.pending]
     shell.pending.clear()
-    void changedFiles(paths, shell.start - MTIME_SLACK_MS).then((changed) => this.reportWrites(shell.terminalId, shell, changed))
+    void this.notIgnored(shell.cwd, paths)
+      .then((kept) => changedFiles(kept, shell.start - MTIME_SLACK_MS))
+      .then((changed) => this.reportWrites(shell.terminalId, shell, changed))
   }
 
-  private reportWrites(terminalId: string, shell: RunningShell | undefined, paths: string[]): void {
+  /**
+   * `paths` (in `cwd`) without those git ignores: the output of a build, logs. The last status knows
+   * most of them, a folder a build just made only git itself.
+   */
+  private async notIgnored(cwd: string, paths: string[]): Promise<string[]> {
+    if (paths.length === 0 || (await this.prefix(cwd)) === null) return paths
+    const checked = paths.slice(0, MAX_IGNORE_CHECK)
+    const rel = checked.map((path) => relative(cwd, path).split(sep).join('/'))
+    const ignored = new Set<string>()
+    for (let i = 0; i < rel.length; i += IGNORE_CHECK_CHUNK) {
+      // One ignored path per line (-z only with --stdin); exits with 1 when none is, which reads as null too.
+      const out = await runGit(cwd, ['-c', 'core.quotePath=false', 'check-ignore', '--', ...rel.slice(i, i + IGNORE_CHECK_CHUNK)])
+      for (const line of out?.split('\n') ?? []) if (line) ignored.add(line.replace(/\r$/, ''))
+    }
+    return checked.filter((_, i) => !ignored.has(rel[i]!))
+  }
+
+  /** `named`: the command named them, they are its own. */
+  private reportWrites(terminalId: string, shell: RunningShell | undefined, paths: string[], named = false): void {
     const fresh: string[] = []
     for (const path of paths) {
       if (shell && (shell.reported.has(path) || shell.reported.size >= MAX_SHELL_WRITES)) continue
+      if (!named && !this.onlyShellOf(terminalId, path)) continue
       shell?.reported.add(path)
       fresh.push(path)
     }
@@ -463,7 +563,8 @@ export class FileTreeService extends TypedEmitter<Events> {
         const git = this.gitMayTell(key, parts.join('/'), event)
         // In a folder git ignores whole and the tree doesn't show (`npm install`, a build): nothing to do.
         if (git || watched.shown.has(dir)) this.note(key, dir, git)
-        if (this.shells.size > 0) this.noteShellWrite(join(root, ...parts))
+        // What git ignores (a build's output, a log) is no write worth showing.
+        if (this.shells.size > 0 && !this.gitIgnores(key, parts.join('/'))) this.noteShellWrite(join(root, ...parts))
       })
       // Gone for a moment (a network drive, a folder replaced by a checkout): watched again later.
       watcher.on('error', () => {
@@ -496,7 +597,7 @@ export class FileTreeService extends TypedEmitter<Events> {
           const gitInit = !dir && name === '.git'
           if (gitInit && !watched.git) this.repoAppeared(key, watched)
           this.note(key, dir, gitInit || !name || this.gitMayTell(key, dir ? `${dir}/${name}` : name, event), gitInit)
-          if (name && this.shells.size > 0) this.noteShellWrite(join(path, name))
+          if (name && this.shells.size > 0 && !this.gitIgnores(key, dir ? `${dir}/${name}` : name)) this.noteShellWrite(join(path, name))
         })
         // Deleted or no longer readable: the tree lets go of it when it disappears there. Its own
         // folder is watched again later, while the tree is open.
@@ -525,13 +626,17 @@ export class FileTreeService extends TypedEmitter<Events> {
    * a `change` of it (Windows tells one whenever something inside changes) doesn't.
    */
   private gitMayTell(key: string, path: string, event: string): boolean {
-    const ignored = this.ignoredDirs.get(key)
+    const ignored = this.ignored.get(key)
     if (!ignored || ignored.size === 0) return true
-    if (event === 'change' && ignored.has(`${path}/`)) return false
-    for (let at = path.indexOf('/'); at >= 0; at = path.indexOf('/', at + 1)) {
-      if (ignored.has(path.slice(0, at + 1))) return false
-    }
-    return true
+    // An ignored file or folder that is there already (a log a dev server writes to): its entry stays.
+    if (event === 'change' && (ignored.has(path) || ignored.has(`${path}/`))) return false
+    return !insideIgnoredDir(ignored, path)
+  }
+
+  /** Whether git ignores `path` (relative), as the last status of the folder said. */
+  private gitIgnores(key: string, path: string): boolean {
+    const ignored = this.ignored.get(key)
+    return !!ignored && (ignored.has(path) || insideIgnoredDir(ignored, path))
   }
 
   /** Watches the tree's repository once there is one, also when `git init` makes it later. */
@@ -658,6 +763,26 @@ export function gitStateChange(parts: string[]): boolean {
   if (name.endsWith('.lock') || parts[0]?.startsWith('fsmonitor--daemon')) return false
   if (parts[0] === 'modules') return !parts.includes('objects') && !parts.includes('logs') && !parts.includes('lfs')
   return !GIT_NOISE.has(parts[0] ?? '')
+}
+
+/** Whether `path` (relative) lies in one of the folders (ending with `/`) of `ignored`. */
+function insideIgnoredDir(ignored: Set<string>, path: string): boolean {
+  for (let at = path.indexOf('/'); at >= 0; at = path.indexOf('/', at + 1)) {
+    if (ignored.has(path.slice(0, at + 1))) return true
+  }
+  return false
+}
+
+/** Whether `child` is `parent` or lies in it. */
+function isInside(child: string, parent: string): boolean {
+  const rel = relative(parent, child)
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
+/** A path as a key: Windows doesn't tell upper from lower case. */
+function pathKey(path: string): string {
+  const full = resolve(path)
+  return process.platform === 'win32' ? full.toLowerCase() : full
 }
 
 /** A path from the top of the repository, as it is (no wildcards), wherever git runs in it. */
