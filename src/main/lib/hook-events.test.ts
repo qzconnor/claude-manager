@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   applyHookCall,
+  commitsInShell,
   fileActivity,
   HOOK_EVENTS,
   hookSettings,
@@ -344,5 +345,27 @@ describe('fileActivity', () => {
   it('comes with the call', () => {
     const call = parseHookCall({ ...body('PreToolUse', 'Write', { file_path: resolve('/work/c.ts') }), session_id: SESSION })
     expect(call?.files?.touches).toEqual([{ path: resolve('/work/c.ts'), kind: 'write' }])
+  })
+})
+
+describe('commitsInShell', () => {
+  it('finds git commit, also with options between', () => {
+    expect(commitsInShell('git commit -m "fix"')).toBe(true)
+    expect(commitsInShell('git -C ../repo commit --amend')).toBe(true)
+    expect(commitsInShell('npm test && git commit -am x')).toBe(true)
+    expect(commitsInShell('/usr/bin/git commit')).toBe(true)
+  })
+
+  it('finds no commit in other commands or across separators', () => {
+    expect(commitsInShell('git status')).toBe(false)
+    expect(commitsInShell('git log; echo commit')).toBe(false)
+    expect(commitsInShell('echo git | grep commit')).toBe(false)
+    expect(commitsInShell('gitk commit')).toBe(false)
+  })
+
+  it('takes no time for a long command full of git', () => {
+    const started = Date.now()
+    expect(commitsInShell('git '.repeat(100_000))).toBe(false)
+    expect(Date.now() - started).toBeLessThan(500)
   })
 })

@@ -19,6 +19,24 @@ function route(change: Partial<Route>): Route {
   }
 }
 
+describe('matchesPattern with many *', () => {
+  it('takes no time for a pattern a regular expression would backtrack on', () => {
+    const started = Date.now()
+    expect(matchesPattern(`${'*a'.repeat(12)}b`, 'a'.repeat(2000))).toBe(false)
+    expect(matchesPattern(`${'*a'.repeat(12)}*`, 'a'.repeat(2000))).toBe(true)
+    expect(Date.now() - started).toBeLessThan(500)
+  })
+
+  it('matches like the regular expression did', () => {
+    expect(matchesPattern('*', '')).toBe(true)
+    expect(matchesPattern('a**b', 'ab')).toBe(true)
+    expect(matchesPattern('a*b*c', 'axxbyyc')).toBe(true)
+    expect(matchesPattern('a*b*c', 'axxbyy')).toBe(false)
+    expect(matchesPattern('*.js', 'https://x.dev/app.json')).toBe(false)
+    expect(matchesPattern('*a*', 'bbb')).toBe(false)
+  })
+})
+
 describe('matchesPattern', () => {
   it('takes * for anything and a pattern without * as a part of the address', () => {
     expect(matchesPattern('/api/users', 'http://localhost:3000/api/users?page=2')).toBe(true)

@@ -32,10 +32,39 @@ export const MAX_ROUTES = 30
 /** Whether an address matches a route's pattern: `*` stands for anything; without `*` it is a part of the address. */
 export function matchesPattern(pattern: string, url: string): boolean {
   if (!pattern.includes('*')) return url.includes(pattern)
-  return patternRegExp(pattern).test(url)
+  return wildcardMatch(pattern, url)
 }
 
-/** A pattern with `*` as a regular expression for the whole address. */
+/**
+ * Whether `text` is `pattern` with each `*` standing for anything. Not as a regular expression: `.*`
+ * after `.*` backtracks, a pattern with ten `*` took seconds per request (and the app's main process
+ * with it); this goes back only to the last `*`, at most length × length steps.
+ */
+export function wildcardMatch(pattern: string, text: string): boolean {
+  let p = 0
+  let t = 0
+  let star = -1
+  let resume = 0
+  while (t < text.length) {
+    if (p < pattern.length && pattern[p] === '*') {
+      star = p++
+      resume = t
+    } else if (p < pattern.length && pattern[p] === text[t]) {
+      p++
+      t++
+    } else if (star >= 0) {
+      // The last `*` takes one character more.
+      p = star + 1
+      t = ++resume
+    } else {
+      return false
+    }
+  }
+  while (p < pattern.length && pattern[p] === '*') p++
+  return p === pattern.length
+}
+
+/** A pattern with `*` as a regular expression for the whole address, for the code of a test. */
 export function patternRegExp(pattern: string): RegExp {
   const source = pattern
     .split('*')

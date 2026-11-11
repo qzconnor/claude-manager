@@ -152,8 +152,18 @@ const READING_TOOLS = new Set(['Read'])
 const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
 const SEARCH_TOOLS = new Set(['Grep', 'Glob'])
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
-/** A shell command that commits: `git commit`, also with options between (`git -C repo commit`). */
-const COMMIT_RE = /\bgit\b[^;&|\n]*\scommit\b/
+/**
+ * Whether a shell command commits: `git commit`, also with options between (`git -C repo commit`).
+ * Part by part (`;`, `&`, `|`, new line) instead of one pattern over all: `git[^;]*\scommit` backtracks
+ * over each `git` of a long command, 64 KB of them took most of a second.
+ */
+export function commitsInShell(command: string): boolean {
+  return command.split(/[;&|\n]/).some((part) => {
+    const git = /\bgit\b/.exec(part)
+    return git !== null && /\scommit\b/.test(part.slice(git.index + 3))
+  })
+}
+
 /** The most files of a search that light up. */
 const MAX_FOUND = 20
 
@@ -197,7 +207,7 @@ export function fileActivity(body: Record<string, unknown>): FileActivity | null
       ]
       return { ...(maybe.length && { maybe }), shell: { id, cwd, end: false, writes: [] } }
     }
-    const commit = event === 'PostToolUse' && tool === 'Bash' && COMMIT_RE.test(command)
+    const commit = event === 'PostToolUse' && tool === 'Bash' && commitsInShell(command)
     return { ...(commit && { commit: cwd }), shell: { id, cwd, end: true, writes: files.writes } }
   }
   return null
