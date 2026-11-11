@@ -87,8 +87,9 @@ import { shellKind } from '@/lib/platform'
 import { pastedPaths } from '@/lib/shell-quote'
 import { terminalBus } from '@/lib/terminal-bus'
 import { childPath, type NameKind, type NameRequest } from '@/lib/tree-names'
+import { separatorValue } from '@/lib/separator-keys'
 import { cn } from '@/lib/utils'
-import { DEFAULT_TREE_WIDTH, SEPARATOR, useFileTreeStore, type TreeTarget } from '@/stores/file-tree'
+import { DEFAULT_TREE_WIDTH, MAX_TREE_WIDTH, MIN_TREE_WIDTH, SEPARATOR, useFileTreeStore, type TreeTarget } from '@/stores/file-tree'
 import { useSettingsStore } from '@/stores/settings'
 import { useUiStore } from '@/stores/ui'
 import FileContentResults from './FileContentResults.vue'
@@ -776,6 +777,21 @@ const panel = ref<HTMLElement | null>(null)
 const resizing = ref(false)
 let endResize: (() => void) | null = null
 
+/** The tree's edge moved with the keyboard, 16 px a step; on the right its width grows to the left. */
+function onResizeKey(event: KeyboardEvent) {
+  const width = separatorValue(event, true, {
+    value: fileTree.width,
+    min: MIN_TREE_WIDTH,
+    max: MAX_TREE_WIDTH,
+    step: 16,
+    initial: DEFAULT_TREE_WIDTH,
+    reversed: props.side === 'right',
+  })
+  if (width === null) return
+  event.preventDefault()
+  fileTree.setWidth(width)
+}
+
 function onResizeStart(event: PointerEvent) {
   if (event.button !== 0 || !panel.value) return
   event.preventDefault()
@@ -1278,15 +1294,19 @@ const iconButton =
       role="separator"
       aria-orientation="vertical"
       aria-label="Breite des Dateibaums ändern"
+      tabindex="0"
       :aria-valuenow="Math.round(fileTree.width)"
-      :class="cn('group/handle absolute inset-y-0 z-20 w-[9px] cursor-col-resize', side === 'left' ? '-right-[4px]' : '-left-[4px]')"
+      :aria-valuemin="MIN_TREE_WIDTH"
+      :aria-valuemax="MAX_TREE_WIDTH"
+      :class="cn('group/handle absolute inset-y-0 z-20 w-[9px] cursor-col-resize outline-none', side === 'left' ? '-right-[4px]' : '-left-[4px]')"
       @pointerdown="onResizeStart"
       @dblclick="fileTree.setWidth(DEFAULT_TREE_WIDTH)"
+      @keydown="onResizeKey"
     >
       <div
         :class="
           cn(
-            'absolute inset-y-0 left-[4px] w-px bg-border transition-colors group-hover/handle:bg-primary/60',
+            'absolute inset-y-0 left-[4px] w-px bg-border transition-colors group-hover/handle:bg-primary/60 group-focus-visible/handle:bg-primary',
             resizing && 'bg-primary/60',
           )
         "

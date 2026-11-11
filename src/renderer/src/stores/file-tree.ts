@@ -41,9 +41,9 @@ const CLAUDE_FOLDER_MS = 10_000
  */
 const REVEAL_LIMIT: Record<FileTouchKind, number> = { read: 30, write: 30, commit: 30, search: 10 }
 /** The share of a tab the changes of a file take beside its terminal, and its bounds. */
-const DEFAULT_DIFF_SHARE = 0.5
-const MIN_DIFF_SHARE = 0.2
-const MAX_DIFF_SHARE = 0.8
+export const DEFAULT_DIFF_SHARE = 0.5
+export const MIN_DIFF_SHARE = 0.2
+export const MAX_DIFF_SHARE = 0.8
 /** The most files a session's activity keeps; the ones Claude left alone the longest go first. */
 const MAX_ACTIVITY = 2000
 

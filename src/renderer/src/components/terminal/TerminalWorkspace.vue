@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { useElementSize } from '@vueuse/core'
 import { computed, ref, watch } from 'vue'
 import { layoutPanes, type PaneDivider, type PaneRect } from '@shared/panes'
+import { separatorValue } from '@/lib/separator-keys'
 import { dockRect } from '@/lib/tab-drag'
 import { inOpeningOrder } from '@/lib/tabs'
 import { cn } from '@/lib/utils'
@@ -100,6 +102,24 @@ function onDividerReset(divider: PaneDivider) {
   if (terminals.activeTab) terminals.resize(terminals.activeTab.id, divider.path, 0.5, true)
 }
 
+const { width: rootWidth, height: rootHeight } = useElementSize(root)
+/** The least share a divider leaves either of its parts, so none gets smaller than `MIN_PANE_PX`. */
+function minRatio(divider: PaneDivider): number {
+  const size = (divider.direction === 'row' ? rootWidth.value * divider.area.width : rootHeight.value * divider.area.height) || 1
+  return Math.min(0.5, MIN_PANE_PX / size)
+}
+
+/** A divider moved with the keyboard, 2 % of its parts a step; Enter shares them in half again. */
+function onDividerKey(event: KeyboardEvent, divider: PaneDivider) {
+  const tab = terminals.activeTab
+  if (!tab) return
+  const min = minRatio(divider) * 100
+  const percent = separatorValue(event, divider.direction === 'row', { value: divider.ratio * 100, min, max: 100 - min, step: 2, initial: 50 })
+  if (percent === null) return
+  event.preventDefault()
+  terminals.resize(tab.id, divider.path, percent / 100, true)
+}
+
 /** A tab dragged over the page: the half of the part it will get, and what it shows. */
 const dockPreview = computed(() => {
   const dock = ui.tabDock
@@ -162,21 +182,25 @@ watch(waking, (ids) => ids.forEach((id) => terminals.wake(id)), { immediate: tru
         role="separator"
         :aria-orientation="divider.direction === 'row' ? 'vertical' : 'horizontal'"
         :aria-valuenow="Math.round(divider.ratio * 100)"
+        :aria-valuemin="Math.round(minRatio(divider) * 100)"
+        :aria-valuemax="Math.round((1 - minRatio(divider)) * 100)"
         aria-label="Größe der Bereiche ändern"
+        tabindex="0"
         :class="
           cn(
-            'group/divider absolute z-30 flex items-center justify-center',
+            'group/divider absolute z-30 flex items-center justify-center outline-none',
             divider.direction === 'row' ? 'w-2 -translate-x-1/2 cursor-col-resize' : 'h-2 -translate-y-1/2 cursor-row-resize',
           )
         "
         :style="dividerStyle(divider)"
         @pointerdown="onDividerDown($event, divider)"
         @dblclick="onDividerReset(divider)"
+        @keydown="onDividerKey($event, divider)"
       >
         <div
           :class="
             cn(
-              'bg-border transition-colors group-hover/divider:bg-primary/60',
+              'bg-border transition-colors group-hover/divider:bg-primary/60 group-focus-visible/divider:bg-primary',
               divider.direction === 'row' ? 'h-full w-px' : 'h-px w-full',
               dragging?.path.join() === divider.path.join() && 'bg-primary/60',
             )

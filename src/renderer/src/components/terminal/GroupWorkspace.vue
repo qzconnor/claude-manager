@@ -6,6 +6,7 @@ import ChangesView from '@/components/files/ChangesView.vue'
 import DiffView from '@/components/files/DiffView.vue'
 import FileTreePanel from '@/components/files/FileTreePanel.vue'
 import { PAGE_INFO } from '@/lib/pages'
+import { separatorValue } from '@/lib/separator-keys'
 import { dockRect } from '@/lib/tab-drag'
 import { inOpeningOrder } from '@/lib/tabs'
 import { cn } from '@/lib/utils'
@@ -45,7 +46,7 @@ const fileTree = useFileTreeStore()
 const settings = useSettingsStore()
 const ui = useUiStore()
 const root = ref<HTMLElement | null>(null)
-const { width: rootWidth } = useElementSize(root)
+const { width: rootWidth, height: rootHeight } = useElementSize(root)
 const treeSide = computed(() => settings.settings.appearance.fileTreeSide)
 
 const PAGE_VIEWS: Record<PageName, Component> = {
@@ -218,6 +219,21 @@ function onDividerDown(event: PointerEvent, divider: PaneDivider) {
   handle.addEventListener('pointercancel', end)
 }
 
+/** The least share a divider leaves either of its groups, so none gets smaller than `MIN_GROUP_PX`. */
+function minRatio(divider: PaneDivider): number {
+  const size = (divider.direction === 'row' ? rootWidth.value * divider.area.width : rootHeight.value * divider.area.height) || 1
+  return Math.min(0.5, MIN_GROUP_PX / size)
+}
+
+/** A divider moved with the keyboard, 2 % of its groups a step; Enter shares them in half again. */
+function onDividerKey(event: KeyboardEvent, divider: PaneDivider) {
+  const min = minRatio(divider) * 100
+  const percent = separatorValue(event, divider.direction === 'row', { value: divider.ratio * 100, min, max: 100 - min, step: 2, initial: 50 })
+  if (percent === null) return
+  event.preventDefault()
+  terminals.resizeGroups(divider.path, percent / 100)
+}
+
 /** A tab dragged over the window: the group it joins, or the half of it a new group takes. */
 const dockPreview = computed(() => {
   const dock = ui.groupDock
@@ -358,21 +374,25 @@ const dockPreview = computed(() => {
         role="separator"
         :aria-orientation="divider.direction === 'row' ? 'vertical' : 'horizontal'"
         :aria-valuenow="Math.round(divider.ratio * 100)"
+        :aria-valuemin="Math.round(minRatio(divider) * 100)"
+        :aria-valuemax="Math.round((1 - minRatio(divider)) * 100)"
         aria-label="Größe der Gruppen ändern"
+        tabindex="0"
         :class="
           cn(
-            'group/divider absolute z-30 flex items-center justify-center',
+            'group/divider absolute z-30 flex items-center justify-center outline-none',
             divider.direction === 'row' ? 'w-2 -translate-x-1/2 cursor-col-resize' : 'h-2 -translate-y-1/2 cursor-row-resize',
           )
         "
         :style="dividerStyle(divider)"
         @pointerdown="onDividerDown($event, divider)"
         @dblclick="terminals.resizeGroups(divider.path, 0.5)"
+        @keydown="onDividerKey($event, divider)"
       >
         <div
           :class="
             cn(
-              'bg-border transition-colors group-hover/divider:bg-primary/60',
+              'bg-border transition-colors group-hover/divider:bg-primary/60 group-focus-visible/divider:bg-primary',
               divider.direction === 'row' ? 'h-full w-px' : 'h-px w-full',
               dragging?.path.join() === divider.path.join() && 'bg-primary/60',
             )
