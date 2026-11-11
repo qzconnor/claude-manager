@@ -363,6 +363,18 @@ describe('SessionHandoff.restartTerminal', () => {
     expect(createdOptions()).toMatchObject({ mode: 'session', resumeSessionId: S, replaces: 'old' })
   })
 
+  it('starts nothing while the old process is still there', async () => {
+    await writeTranscript()
+    terminalFns.stop.mockRejectedValueOnce(new Error('lässt sich nicht beenden'))
+    const service = handoff()
+    await expect(service.restartTerminal('old')).rejects.toThrow('lässt sich nicht beenden')
+    expect(terminalFns.create).not.toHaveBeenCalled()
+    expect(terminalFns.close).not.toHaveBeenCalled()
+    // It may be tried again.
+    await service.restartTerminal('old')
+    expect(terminalFns.create).toHaveBeenCalledOnce()
+  })
+
   it('does not restart a browser', async () => {
     tabs.set('old', tab({ mode: 'browser' }))
     await expect(handoff().restartTerminal('old')).rejects.toThrow()

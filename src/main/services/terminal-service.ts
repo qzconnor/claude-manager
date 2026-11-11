@@ -44,6 +44,7 @@ import {
   type TitleScan,
   worktreeAt,
 } from '../lib/session-files'
+import { awaitEnd, forceKill } from '../lib/process-end'
 import { claudeActivity, TitleReader } from '../lib/terminal-title'
 import { TypedEmitter } from '../lib/typed-emitter'
 import type { AccountService } from './account-service'
@@ -527,14 +528,16 @@ export class TerminalService extends TypedEmitter<Events> {
     }
   }
 
-  /** Ends the process and waits until it is gone (at most `timeoutMs`). */
+  /**
+   * Ends the process and waits until it is gone. One that is still there after `timeoutMs` is killed
+   * hard, with what it started; throws when even that doesn't end it (see `awaitEnd`).
+   */
   async stop(id: string, timeoutMs = 5000): Promise<void> {
     const record = this.require(id)
     if (!record.process) return
+    const pid = record.process.pid
     this.kill(id)
-    let timer: NodeJS.Timeout | undefined
-    await Promise.race([record.exited, new Promise<void>((resolve) => (timer = setTimeout(resolve, timeoutMs)))])
-    clearTimeout(timer)
+    await awaitEnd(record.exited, () => forceKill(pid), timeoutMs)
   }
 
   /** Closes a terminal; the browsers that belong to a session (see `browsersOf`) go with it. */
