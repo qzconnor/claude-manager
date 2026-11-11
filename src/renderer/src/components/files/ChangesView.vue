@@ -46,7 +46,8 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDiffStyle } from '@/composables/useDiffStyle'
 import { useFileTreeModel } from '@/composables/useFileTreeModel'
-import { attempt, errorMessage } from '@/lib/errors'
+import { useOpenFile } from '@/composables/useOpenFile'
+import { errorMessage } from '@/lib/errors'
 import {
   DIFF_TAB_SIZE,
   diffColumns,
@@ -79,6 +80,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>()
 
 const fileTree = useFileTreeStore()
+const openPath = useOpenFile()
 const { colors, fontSize, rowHeight, fontFamily } = useDiffStyle()
 // The tree of the folder: git's state, the list of its files, and its folders watched.
 const model = useFileTreeModel(() => props.root)
@@ -578,7 +580,7 @@ const loading = computed(() => paths.value.some((path) => !entries.has(path)))
 const absolute = (path: string) => absolutePath(props.root, path, SEPARATOR)
 
 function openFile(path: string) {
-  void attempt(() => window.api.app.openPath(absolute(path)), 'Datei konnte nicht geöffnet werden')
+  void openPath(absolute(path))
 }
 
 const iconButton =

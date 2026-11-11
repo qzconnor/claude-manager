@@ -45,6 +45,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useFileTreeModel } from '@/composables/useFileTreeModel'
 import { useLauncher } from '@/composables/useLauncher'
+import { useOpenFile } from '@/composables/useOpenFile'
 import { attempt } from '@/lib/errors'
 import { fileIcon, type FileIconInfo } from '@/lib/file-icons'
 import {
@@ -101,6 +102,7 @@ const props = defineProps<{
 const fileTree = useFileTreeStore()
 const settings = useSettingsStore()
 const launcher = useLauncher()
+const openPath = useOpenFile()
 const model = useFileTreeModel(() => props.target.root)
 
 const windows = window.api.platform === 'win32'
@@ -414,7 +416,7 @@ function collapseAll() {
 }
 
 function openFile(path: string) {
-  void attempt(() => window.api.app.openPath(abs(path)), 'Datei konnte nicht geöffnet werden')
+  void openPath(abs(path))
 }
 
 /** Shows the file's changes; `keep`: with the tabs in groups as a tab that stays, not one that previews. */
