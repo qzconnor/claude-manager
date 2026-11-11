@@ -9,6 +9,8 @@ interface Watched {
   /** The working directories asked for that lie in this repository. */
   cwds: Set<string>
   watcher: FSWatcher
+  /** Linux: the reftable folder (see `startWatching`). */
+  reftable: FSWatcher | null
   timer: NodeJS.Timeout | null
 }
 
@@ -132,15 +134,25 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
 
   private startWatching(gitDir: string, cwds: Set<string>): void {
     try {
-      // git replaces HEAD through HEAD.lock, so the folder is watched, not the file.
+      // git replaces HEAD through HEAD.lock, so the folder is watched, not the file. With reftable refs
+      // HEAD stays put and the tables change: Windows tells it as a change of their folder, Linux not.
       const watcher = watch(gitDir, (_event, file) => {
-        if (file === 'HEAD') this.scheduleRead(gitDir)
+        if (file === 'HEAD' || file === 'reftable') this.scheduleRead(gitDir)
       })
       watcher.on('error', () => {
         this.unwatch(gitDir)
         this.retry()
       })
-      this.watched.set(gitDir, { cwds, watcher, timer: null })
+      let reftable: FSWatcher | null = null
+      if (process.platform === 'linux' && existsSync(join(gitDir, 'reftable'))) {
+        try {
+          reftable = watch(join(gitDir, 'reftable'), () => this.scheduleRead(gitDir))
+          reftable.on('error', () => undefined)
+        } catch {
+          // Only the branch of reftable repositories lags then, until the window asks again.
+        }
+      }
+      this.watched.set(gitDir, { cwds, watcher, reftable, timer: null })
     } catch {
       // Not watchable now: tried again later; the window also asks again when it gets the focus.
       this.retry()
@@ -214,8 +226,17 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
     if (!watched) return
     if (watched.timer) clearTimeout(watched.timer)
     watched.watcher.close()
+    watched.reftable?.close()
     this.watched.delete(gitDir)
   }
+}
+
+/** The branch of a repository with reftable refs, from git; a detached HEAD by its commit. */
+async function reftableBranch(gitDir: string): Promise<GitBranch | null> {
+  const branch = await runGit(gitDir, [`--git-dir=${gitDir}`, 'symbolic-ref', '--quiet', '--short', 'HEAD'])
+  if (branch.ok && branch.out) return { name: branch.out, detached: false }
+  const commit = await runGit(gitDir, [`--git-dir=${gitDir}`, 'rev-parse', '--short', 'HEAD'])
+  return commit.ok && commit.out ? { name: commit.out, detached: true } : null
 }
 
 type GitResult = { ok: true; out: string } | { ok: false; missing: boolean }
@@ -283,10 +304,12 @@ async function readMainWorktree(gitDir: string): Promise<string | null> {
 }
 
 /** `ref: refs/heads/<name>` names the branch; a bare commit hash means a detached HEAD. */
-async function readBranch(gitDir: string): Promise<GitBranch | null> {
+export async function readBranch(gitDir: string): Promise<GitBranch | null> {
   try {
     const head = (await readFile(join(gitDir, 'HEAD'), 'utf8')).trim()
     const ref = /^ref:\s*(?:refs\/heads\/)?(.+)$/.exec(head)
+    // reftable: HEAD only stands in for older git (`refs/heads/.invalid`), git itself knows the branch.
+    if (ref?.[1] === '.invalid') return reftableBranch(gitDir)
     if (ref) return { name: ref[1], detached: false }
     return /^[0-9a-f]{40,64}$/i.test(head) ? { name: head.slice(0, 7), detached: true } : null
   } catch {

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { watch, type FSWatcher } from 'node:fs'
+import { readdirSync, watch, type FSWatcher } from 'node:fs'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { folderKey } from '@shared/folders'
@@ -107,7 +107,8 @@ interface WatchedRoot {
   dirs: Map<string, FSWatcher>
   /** The repository's git folder, for commits, checkouts and staging. */
   gitDir: string | null
-  git: FSWatcher | null
+  /** Its watchers (see `watchGitDir`). */
+  git: Closable | null
   /** The folders the trees show (relative), as `watch` was told. */
   shown: Set<string>
   /** Folders whose entries changed since the last report. */
@@ -216,6 +217,7 @@ export class FileTreeService extends TypedEmitter<Events> {
     const file = join(root, ...path.split('/'))
     const result: FileDiff = { patch: '', text: null, repo: false, binary: false, tooLarge: false, missing: false }
     const info = await stat(file).catch(() => null)
+    if (info?.isDirectory()) return this.submoduleDiff(root, path, full)
     if (info && !info.isFile()) throw new Error('Das ist keine Datei.')
     result.missing = info === null
     const prefix = await this.prefix(root)
@@ -416,6 +418,14 @@ export class FileTreeService extends TypedEmitter<Events> {
     if (fresh.length > 0) this.emit('touched', terminalId, fresh.map((path) => ({ path, kind: 'write' as const })))
   }
 
+  /** A submodule, a folder git keeps as a commit: which commit it is at now, as `git diff` says it. */
+  private async submoduleDiff(root: string, path: string, full: boolean): Promise<FileDiff> {
+    const prefix = await this.prefix(root)
+    const patch = prefix === null ? null : await this.patch(root, `${prefix}${path}`, full)
+    if (!patch || !/^[-+ ]Subproject commit /m.test(patch)) throw new Error('Das ist keine Datei.')
+    return { patch, text: null, repo: true, binary: false, tooLarge: false, missing: false }
+  }
+
   /**
    * `git diff HEAD` of the file at `top` (from the top of the repository); null when git failed. A file
    * `git mv` moved is compared with the one it was instead of shown as new. Before the first commit
@@ -470,17 +480,18 @@ export class FileTreeService extends TypedEmitter<Events> {
 
   /** The files of the commit at HEAD of the repository `cwd` lies in, if it was just made. */
   private async committedFiles(cwd: string): Promise<string[]> {
-    const [top, time, names] = await Promise.all([
-      runGit(cwd, ['rev-parse', '--show-toplevel']),
+    const [cdup, time, names] = await Promise.all([
+      // The way up from the folder as the session spells it: git's top is its real path (no link, no subst drive).
+      runGit(cwd, ['rev-parse', '--show-cdup']),
       runGit(cwd, ['--no-optional-locks', 'log', '-1', '--no-show-signature', '--format=%ct', 'HEAD']),
       // --root: the first commit has no parent to compare with.
       runGit(cwd, ['--no-optional-locks', 'diff-tree', '--root', '--no-commit-id', '--name-only', '-r', '-z', 'HEAD']),
     ])
-    if (!top || !time || !names) return []
+    if (cdup === null || !time || !names) return []
     const made = Number(time.trim())
     if (!Number.isFinite(made) || Date.now() / 1000 - made > FRESH_COMMIT_S) return []
     const files = names.split('\0').filter(Boolean)
-    return files.slice(0, MAX_COMMIT_FILES).map((name) => resolve(top.trim(), name))
+    return files.slice(0, MAX_COMMIT_FILES).map((name) => resolve(cwd, cdup.trim(), name))
   }
 
   /** The files of `root` for the search: what git knows and doesn't ignore, else a walk through the folder. */
@@ -488,7 +499,8 @@ export class FileTreeService extends TypedEmitter<Events> {
     if ((await this.prefix(root)) !== null) {
       const out = await runGit(root, ['--no-optional-locks', 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '.'])
       if (out !== null) {
-        const paths = [...new Set(out.split('\0').filter(Boolean))]
+        // A repository inside (not a submodule) comes as its folder, `vendor/lib/`: no file to find.
+        const paths = [...new Set(out.split('\0').filter((path) => path !== '' && !path.endsWith('/')))]
         return { paths: paths.slice(0, MAX_SEARCH_FILES), truncated: paths.length > MAX_SEARCH_FILES }
       }
     }
@@ -641,33 +653,64 @@ export class FileTreeService extends TypedEmitter<Events> {
 
   /** Watches the tree's repository once there is one, also when `git init` makes it later. */
   private findGitDir(key: string, watched: WatchedRoot): void {
-    void this.gitDir(watched.path).then((gitDir) => {
-      // Not if the tree was let go meanwhile.
-      if (this.watched.get(key) !== watched || !gitDir || watched.git) return
-      watched.gitDir = gitDir
-      watched.git = this.watchGitDir(key, watched, gitDir)
-    })
+    void Promise.all([this.gitDir(watched.path), runGit(watched.path, ['rev-parse', '--path-format=absolute', '--git-common-dir'])]).then(
+      ([gitDir, common]) => {
+        // Not if the tree was let go meanwhile.
+        if (this.watched.get(key) !== watched || !gitDir || watched.git) return
+        watched.gitDir = gitDir
+        watched.git = this.watchGitDir(key, watched, gitDir, common?.trim() || gitDir)
+      },
+    )
   }
 
-  private watchGitDir(key: string, watched: WatchedRoot, gitDir: string): FSWatcher | null {
-    try {
-      // git writes the index and HEAD through a lock file it renames, so the folder is watched.
-      const watcher = watch(gitDir, (_event, file) => {
-        const name = file?.toString()
-        if (name === 'index' || name === 'HEAD') this.note(key, null, true, true)
-        // Filters added to its config are switched off too (see `guard`).
-        if (name === 'config' || name === 'config.worktree') for (const root of watched.roots) this.guards.delete(root)
-      })
-      watcher.on('error', () => {
-        watcher.close()
-        if (watched.git !== watcher) return
-        watched.git = null
-        this.retryWatch(key, watched)
-      })
-      return watcher
-    } catch {
-      return null
+  /**
+   * Watches the repository's state: its index and HEAD (git writes them through a lock file it renames,
+   * so folders are watched) and its refs, which push and fetch change, so ahead and behind follow. A
+   * worktree has its index and HEAD in `gitDir`, the refs in the repository's `common` folder.
+   * Windows and macOS watch the common folder whole (a worktree's lies in it); Linux its top, the
+   * worktree's folder and the folders of the remotes' branches.
+   */
+  private watchGitDir(key: string, watched: WatchedRoot, gitDir: string, common: string): Closable | null {
+    const changed = (parts: string[]) => {
+      // Without watching below the top, FETCH_HEAD is what tells of a fetch.
+      if (parts.length === 0 || gitStateChange(parts) || (!RECURSIVE && parts[0] === 'FETCH_HEAD')) this.note(key, null, true, true)
+      // Filters added to its config are switched off too (see `guard`).
+      const name = parts.at(-1)
+      if (name === 'config' || name === 'config.worktree') for (const root of watched.roots) this.guards.delete(root)
     }
+    const folders: { path: string; prefix: string[] }[] = []
+    if (RECURSIVE && isInside(gitDir, common)) folders.push({ path: common, prefix: [] })
+    else {
+      folders.push({ path: gitDir, prefix: [] })
+      if (!isInside(common, gitDir)) folders.push({ path: common, prefix: [] })
+      const remotes = join(common, 'refs', 'remotes')
+      if (!RECURSIVE) {
+        for (const remote of safeReaddir(remotes)) folders.push({ path: join(remotes, remote), prefix: ['refs', 'remotes', remote] })
+      }
+    }
+    const list: FSWatcher[] = []
+    const bundle: Closable = { close: () => list.forEach((watcher) => watcher.close()) }
+    for (const folder of folders) {
+      try {
+        const watcher = watch(folder.path, { recursive: RECURSIVE && folder.path === common && folders.length === 1 }, (_event, file) => {
+          changed(file ? [...folder.prefix, ...file.toString().split(/[\\/]/)] : [])
+        })
+        watcher.on('error', () => {
+          bundle.close()
+          if (watched.git !== bundle) return
+          watched.git = null
+          this.retryWatch(key, watched)
+        })
+        list.push(watcher)
+      } catch {
+        // A remote's folder gone meanwhile; the repository's own is the one that counts.
+        if (folder.path === gitDir || folder.path === common) {
+          bundle.close()
+          return null
+        }
+      }
+    }
+    return bundle
   }
 
   /** Watches what of the tree failed again after a while, while the tree is still open. */
@@ -762,7 +805,23 @@ export function gitStateChange(parts: string[]): boolean {
   const name = parts.at(-1) ?? ''
   if (name.endsWith('.lock') || parts[0]?.startsWith('fsmonitor--daemon')) return false
   if (parts[0] === 'modules') return !parts.includes('objects') && !parts.includes('logs') && !parts.includes('lfs')
+  // The folder of a worktree (`worktrees/<name>/…`): its index and HEAD.
+  if (parts[0] === 'worktrees') return parts.length > 2 && !GIT_NOISE.has(parts[2]!)
   return !GIT_NOISE.has(parts[0] ?? '')
+}
+
+/** Something that ends watching. */
+interface Closable {
+  close(): void
+}
+
+/** The names in a folder; none when it is missing. */
+function safeReaddir(path: string): string[] {
+  try {
+    return readdirSync(path)
+  } catch {
+    return []
+  }
 }
 
 /** Whether `path` (relative) lies in one of the folders (ending with `/`) of `ignored`. */

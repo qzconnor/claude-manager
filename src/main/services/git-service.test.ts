@@ -68,6 +68,20 @@ describe('GitService.branch', () => {
     expect(await service.branch(path)).toEqual({ name: '0123456', detached: true })
   })
 
+  it('asks git for the branch with reftable refs, whose HEAD only stands in', async () => {
+    const path = join(dir, 'reftable')
+    await mkdir(path)
+    try {
+      git(path, 'init', '-q', '--ref-format=reftable')
+    } catch {
+      // git before 2.45 has no reftable.
+      return
+    }
+    expect(await service.branch(path)).toEqual({ name: 'main', detached: false })
+    git(path, 'symbolic-ref', 'HEAD', 'refs/heads/feature')
+    expect(await service.branch(path)).toEqual({ name: 'feature', detached: false })
+  })
+
   it('follows a .git file to the repository elsewhere', async () => {
     const path = join(dir, 'work')
     await mkdir(path)

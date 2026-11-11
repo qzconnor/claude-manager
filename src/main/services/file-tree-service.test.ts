@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { chmod, mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readFile, rm, symlink, unlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -118,6 +118,11 @@ describe('gitStateChange', () => {
     }
     // A branch may be called like git's folders.
     expect(gitStateChange(['refs', 'heads', 'logs'])).toBe(true)
+    // The folder of a worktree.
+    expect(gitStateChange(['worktrees', 'x', 'index'])).toBe(true)
+    expect(gitStateChange(['worktrees', 'x', 'HEAD'])).toBe(true)
+    expect(gitStateChange(['worktrees', 'x', 'logs', 'HEAD'])).toBe(false)
+    expect(gitStateChange(['worktrees', 'x', 'index.lock'])).toBe(false)
   })
 })
 
@@ -343,6 +348,81 @@ describe('FileTreeService with git', () => {
       await wait(300)
       expect(new Set(writes.map((w) => w.path))).toEqual(new Set([join(repo, 'src', 'a.ts'), join(repo, 'src', 'new.ts')]))
     })
+  })
+
+  it('shows the commit a submodule is at, and no repository inside as a file to find', async () => {
+    const lib = join(dir, 'lib-origin')
+    await mkdir(lib)
+    git(lib, 'init', '-q')
+    await writeFile(join(lib, 'x.txt'), 'x')
+    git(lib, 'add', '-A')
+    git(lib, 'commit', '-qm', 'lib')
+    const repo = join(dir, 'repo')
+    await mkdir(repo)
+    git(repo, 'init', '-q')
+    git(repo, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', lib, 'lib')
+    git(repo, 'commit', '-qm', 'with lib')
+    // A new commit in the submodule.
+    await writeFile(join(repo, 'lib', 'y.txt'), 'y')
+    git(join(repo, 'lib'), 'add', '-A')
+    git(join(repo, 'lib'), 'commit', '-qm', 'more')
+    const sub = await service.diff(repo, 'lib', false)
+    expect(sub.patch).toMatch(/^-Subproject commit /m)
+    expect(sub.patch).toMatch(/^\+Subproject commit /m)
+
+    // A repository of its own inside, no submodule: git lists it as its folder.
+    await mkdir(join(repo, 'vendor', 'other'), { recursive: true })
+    git(join(repo, 'vendor', 'other'), 'init', '-q')
+    await writeFile(join(repo, 'vendor', 'other', 'z.txt'), 'z')
+    await writeFile(join(repo, 'new.txt'), 'n')
+    const { paths } = await service.searchList(repo)
+    expect(paths).toContain('new.txt')
+    expect(paths.filter((path) => path.endsWith('/'))).toEqual([])
+  })
+
+  it('lights up a commit’s files where the session works, through a link too', async () => {
+    const real = join(dir, 'real')
+    await mkdir(join(real, 'src'), { recursive: true })
+    git(real, 'init', '-q')
+    await writeFile(join(real, 'src', 'a.ts'), 'a')
+    git(real, 'add', '-A')
+    git(real, 'commit', '-qm', 'init')
+    const link = join(dir, 'link')
+    await symlink(real, link, 'junction')
+    try {
+      const touched: string[] = []
+      service.on('touched', (_terminal, touches) => touched.push(...touches.filter((t) => t.kind === 'commit').map((t) => t.path)))
+      service.activity('t1', { commit: join(link, 'src') })
+      await expect.poll(() => touched, { timeout: 3000 }).toEqual([join(link, 'src', 'a.ts')])
+    } finally {
+      await unlink(link).catch(() => rm(link, { recursive: true, force: true }))
+    }
+  })
+
+  it('follows a push in a tree of a subfolder: ahead and behind come from the refs', async () => {
+    const remote = join(dir, 'remote.git')
+    await mkdir(remote)
+    git(remote, 'init', '-q', '--bare')
+    const repo = join(dir, 'repo')
+    await mkdir(join(repo, 'sub'), { recursive: true })
+    git(repo, 'init', '-q')
+    await writeFile(join(repo, 'sub', 'a.txt'), 'a')
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-qm', 'init')
+    git(repo, 'remote', 'add', 'origin', remote)
+    git(repo, 'push', '-q', '-u', 'origin', 'main')
+    await writeFile(join(repo, 'sub', 'a.txt'), 'b')
+    git(repo, 'commit', '-qam', 'second')
+    const sub = join(repo, 'sub')
+    expect(await service.status(sub)).toMatchObject({ ahead: 1 })
+    const told: boolean[] = []
+    service.on('changed', (_root, _dirs, _git, repoChanged) => told.push(repoChanged))
+    service.watch([{ root: sub, dirs: [''] }])
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    told.length = 0
+    git(repo, 'push', '-q')
+    await expect.poll(() => told.includes(true), { timeout: 3000 }).toBe(true)
+    expect(await service.status(sub)).toMatchObject({ ahead: 0 })
   })
 
   it('reads a file whose mode alone changed', async () => {
