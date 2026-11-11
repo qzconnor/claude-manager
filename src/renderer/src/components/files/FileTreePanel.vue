@@ -10,18 +10,22 @@ import {
   EllipsisIcon,
   ExternalLinkIcon,
   FileDiffIcon,
+  FilePlusIcon,
   FolderOpenIcon,
+  FolderPlusIcon,
   FolderXIcon,
   GitCompareIcon,
   GitBranchIcon,
   GitCommitHorizontalIcon,
   ListFilterIcon,
   ListTreeIcon,
+  PencilIcon,
   PlusIcon,
   RefreshCwIcon,
   SearchIcon,
   SquareTerminalIcon,
   TextCursorInputIcon,
+  Trash2Icon,
   XIcon,
 } from '@lucide/vue'
 import { useElementSize } from '@vueuse/core'
@@ -32,6 +36,7 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuShortcut,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import {
@@ -76,9 +81,12 @@ import { TOUCH_ICON } from '@/lib/file-touch'
 import { shellKind } from '@/lib/platform'
 import { pastedPaths } from '@/lib/shell-quote'
 import { terminalBus } from '@/lib/terminal-bus'
+import { childPath, type NameKind, type NameRequest } from '@/lib/tree-names'
 import { cn } from '@/lib/utils'
 import { DEFAULT_TREE_WIDTH, SEPARATOR, useFileTreeStore, type TreeTarget } from '@/stores/file-tree'
 import { useSettingsStore } from '@/stores/settings'
+import { useUiStore } from '@/stores/ui'
+import FileNameDialog from './FileNameDialog.vue'
 import FileTreeFilters from './FileTreeFilters.vue'
 
 /**
@@ -101,6 +109,7 @@ const props = defineProps<{
 
 const fileTree = useFileTreeStore()
 const settings = useSettingsStore()
+const ui = useUiStore()
 const launcher = useLauncher()
 const openPath = useOpenFile()
 const model = useFileTreeModel(() => props.target.root)
@@ -538,6 +547,14 @@ function onListKeydown(event: KeyboardEvent) {
         else toggleDir(current.path)
       } else showDiff(current.path, true)
       break
+    case 'F2':
+      if (!current || isGone(current.path)) return
+      rename(current.path, current.entry.dir)
+      break
+    case 'Delete':
+      if (!current || isGone(current.path)) return
+      void trash(current.path, current.entry.dir)
+      break
     case 'Escape':
       if (!searching.value) return
       query.value = ''
@@ -571,6 +588,8 @@ function onSearchKeydown(event: KeyboardEvent) {
 
 /** The entry the context menu is for; the tree's folder itself on an empty spot. */
 const menuTarget = ref<{ path: string; dir: boolean }>({ path: '', dir: true })
+/** The folder new entries of the context menu go in: the entry's own, or the one a file lies in. */
+const menuFolder = computed(() => (menuTarget.value.dir ? menuTarget.value.path : parentPath(menuTarget.value.path)))
 const isSession = computed(() => props.target.session.mode === 'session')
 const sessionRunning = computed(() => props.target.session.status === 'running')
 
@@ -606,6 +625,83 @@ function showItem(path: string) {
 
 function openFolder(path: string) {
   void attempt(() => window.api.app.openPath(abs(path)), 'Ordner konnte nicht geöffnet werden')
+}
+
+// ── Making, renaming and deleting entries ──
+
+/** What the name dialog is open for. */
+const nameRequest = ref<NameRequest | null>(null)
+
+/** A file git deleted: it shows, but isn't on the disk any more. */
+function isGone(path: string): boolean {
+  return decorations.value.file(path)?.status === 'deleted'
+}
+
+function create(kind: NameKind, parent: string) {
+  nameRequest.value = { kind, parent, name: '', dir: kind === 'folder' }
+}
+
+function rename(path: string, dir: boolean) {
+  nameRequest.value = { kind: 'rename', parent: parentPath(path), name: path.slice(path.lastIndexOf('/') + 1), dir }
+}
+
+/**
+ * Made or renamed: the tree shows the entry at once and selects it. A renamed folder stays open, and the
+ * changes shown of a renamed file follow it.
+ */
+function onNamed(path: string, request: NameRequest) {
+  nameRequest.value = null
+  const m = model.value
+  if (request.kind === 'rename') {
+    const from = childPath(request.parent, request.name)
+    if (request.dir && m.expanded.has(from)) fileTree.setExpanded(m, path, true)
+    const current = props.current
+    if (current && (current === from || current.startsWith(`${from}/`))) showDiff(path + current.slice(from.length))
+  }
+  query.value = ''
+  if (filtered.value) for (const folder of ancestors(path)) m.collapsedFiltered.delete(folder)
+  else fileTree.reveal(m, path)
+  fileTree.refresh(m)
+  selectWhenShown(path)
+  scroller.value?.focus()
+}
+
+/** Selects the entry once its row is there: its folder is read again first. */
+function selectWhenShown(path: string) {
+  if (rows.value.some((row) => row.path === path)) return select(path)
+  const stop = watch(rows, (list) => {
+    if (!list.some((row) => row.path === path)) return
+    stop()
+    clearTimeout(timer)
+    select(path)
+  })
+  const timer = setTimeout(stop, 3000)
+}
+
+/** Moves the entry to the recycle bin, once asked; the selection goes on to the next entry, like in Explorer. */
+async function trash(path: string, dir: boolean) {
+  const name = path.slice(path.lastIndexOf('/') + 1)
+  const confirmed = await ui.confirm({
+    title: `„${name}“ in den Papierkorb verschieben?`,
+    description: dir
+      ? 'Der Ordner kommt mit allem darin in den Papierkorb. Dort lässt er sich wiederherstellen.'
+      : 'Aus dem Papierkorb lässt sich die Datei wiederherstellen.',
+    confirmText: 'In den Papierkorb',
+    destructive: true,
+  })
+  if (!confirmed) return
+  const list = entries.value
+  const index = list.findIndex((row) => row.path === path)
+  const inside = (other: string) => other === path || other.startsWith(`${path}/`)
+  const next = list.slice(index + 1).find((row) => !inside(row.path)) ?? list[index - 1]
+  const done = await attempt(async () => {
+    await window.api.files.trash(props.target.root, path)
+    return true
+  }, 'Nicht in den Papierkorb verschoben')
+  if (!done) return
+  fileTree.refresh(model.value)
+  if (selected.value && inside(selected.value)) select(next?.path ?? null)
+  scroller.value?.focus()
 }
 
 // ── Width ──
@@ -687,6 +783,15 @@ const iconButton =
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" class="w-60">
+          <DropdownMenuItem @select="create('file', '')">
+            <FilePlusIcon />
+            Neue Datei…
+          </DropdownMenuItem>
+          <DropdownMenuItem @select="create('folder', '')">
+            <FolderPlusIcon />
+            Neuer Ordner…
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem @select="openFolder('')">
             <FolderOpenIcon />
             Im {{ explorer }} öffnen
@@ -1004,6 +1109,27 @@ const iconButton =
           Im Baum zeigen
         </ContextMenuItem>
         <ContextMenuSeparator />
+        <ContextMenuItem @select="create('file', menuFolder)">
+          <FilePlusIcon />
+          Neue Datei…
+        </ContextMenuItem>
+        <ContextMenuItem @select="create('folder', menuFolder)">
+          <FolderPlusIcon />
+          Neuer Ordner…
+        </ContextMenuItem>
+        <template v-if="menuTarget.path && !isGone(menuTarget.path)">
+          <ContextMenuItem @select="rename(menuTarget.path, menuTarget.dir)">
+            <PencilIcon />
+            Umbenennen…
+            <ContextMenuShortcut>F2</ContextMenuShortcut>
+          </ContextMenuItem>
+          <ContextMenuItem variant="destructive" @select="trash(menuTarget.path, menuTarget.dir)">
+            <Trash2Icon />
+            In den Papierkorb
+            <ContextMenuShortcut>Entf</ContextMenuShortcut>
+          </ContextMenuItem>
+        </template>
+        <ContextMenuSeparator />
         <ContextMenuItem @select="copy(abs(menuTarget.path))">
           <CopyIcon />
           Pfad kopieren
@@ -1032,6 +1158,8 @@ const iconButton =
         </template>
       </ContextMenuContent>
     </ContextMenu>
+
+    <FileNameDialog :root="target.root" :root-name="rootName" :request="nameRequest" @close="nameRequest = null" @done="onNamed" />
 
     <!-- The tree's inner edge: a line to drag its width by, like the dividers between groups. -->
     <div

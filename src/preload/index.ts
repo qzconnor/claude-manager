@@ -181,6 +181,9 @@ const api: ManagerApi = {
     watch: (trees) => invoke(IpcInvoke.filesWatch, trees),
     onChanged: (cb) => subscribe(IpcEvent.filesChanged, cb),
     diff: (root, path, full) => invoke(IpcInvoke.filesDiff, root, path, full),
+    create: (root, path, dir) => invoke(IpcInvoke.filesCreate, root, path, dir),
+    rename: (root, from, to) => invoke(IpcInvoke.filesRename, root, from, to),
+    trash: (root, path) => invoke(IpcInvoke.filesTrash, root, path),
     onTouched: (cb) => subscribe(IpcEvent.filesTouched, cb),
   },
   command: {

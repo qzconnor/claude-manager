@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process'
 import { readdirSync, watch, type FSWatcher } from 'node:fs'
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { pathProblem } from '@shared/file-names'
 import { folderKey } from '@shared/folders'
 import type {
   FileDiff,
@@ -18,6 +19,7 @@ import type {
 import type { FileActivity } from '../lib/hook-events'
 import { decodeText, decodeUtf16, isUtf16 } from '../lib/text-encoding'
 import { TypedEmitter } from '../lib/typed-emitter'
+import type { Trash } from './theme-service'
 
 /**
  * A folder or file of a tree as the renderer names it: relative to the root, its parts joined with `/`,
@@ -102,6 +104,8 @@ const IGNORE_CHECK_CHUNK = 100
 const SHELL_SKIPPED = new Set(['node_modules', '.git'])
 /** Windows and macOS watch a folder with everything below it at the cost of one handle; Linux needs one per folder. */
 const RECURSIVE = process.platform === 'win32' || process.platform === 'darwin'
+/** Names that differ only in case name the same entry (NTFS, APFS as they come). */
+const CASE_BLIND = process.platform === 'win32' || process.platform === 'darwin'
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
 
@@ -181,6 +185,11 @@ export class FileTreeService extends TypedEmitter<Events> {
   /** Files the tools of a session are about to write (PreToolUse), by `pathKey`: no command of another session writes them. */
   private readonly toolWrites = new Map<string, { terminalId: string; at: number }>()
 
+  /** `trash`: Electron's `shell.trashItem`; without it nothing is deleted. */
+  constructor(private readonly trashItem: Trash = () => Promise.reject(new Error('Kein Papierkorb'))) {
+    super()
+  }
+
   async list(dir: string): Promise<FileListing> {
     const dirents = await readdir(dir, { withFileTypes: true })
     const entries = await Promise.all(
@@ -197,6 +206,62 @@ export class FileTreeService extends TypedEmitter<Events> {
     )
     entries.sort(compareEntries)
     return { entries: entries.slice(0, MAX_ENTRIES), omitted: Math.max(0, entries.length - MAX_ENTRIES) }
+  }
+
+  /**
+   * Makes an empty file, or a folder (`dir`), at `path` in the tree of `root`, with the folders on its
+   * way; never over an entry that is there already.
+   */
+  async create(root: string, path: string, dir: boolean): Promise<void> {
+    const target = this.entryOf(root, path, true)
+    try {
+      await mkdir(dirname(target), { recursive: true })
+      if (dir) await mkdir(target)
+      else await writeFile(target, '', { flag: 'wx' })
+    } catch (error) {
+      throw new Error(fileError(error, path))
+    }
+  }
+
+  /** Renames the entry `from` in the tree of `root` to `to`; never over another entry. */
+  async rename(root: string, from: string, to: string): Promise<void> {
+    const source = this.entryOf(root, from, false)
+    const target = this.entryOf(root, to, true)
+    if (source === target) return
+    // rename() would replace a file there without a word. Where case doesn't tell names apart, the
+    // same name in another case is the entry itself.
+    const itself = CASE_BLIND && source.toLowerCase() === target.toLowerCase()
+    try {
+      if (!itself && (await exists(target))) throw Object.assign(new Error('exists'), { code: 'EEXIST' })
+      await rename(source, target)
+    } catch (error) {
+      throw new Error(fileError(error, (error as NodeJS.ErrnoException).code === 'ENOENT' ? from : to))
+    }
+  }
+
+  /** Moves the entry `path` in the tree of `root` to the recycle bin. */
+  async trash(root: string, path: string): Promise<void> {
+    const target = this.entryOf(root, path, false)
+    try {
+      await lstat(target)
+      await this.trashItem(target)
+    } catch (error) {
+      // shell.trashItem fails without a code, in English.
+      if ((error as NodeJS.ErrnoException).code) throw new Error(fileError(error, path))
+      throw new Error(`„${path.split('/').pop()}“ ließ sich nicht in den Papierkorb verschieben (${error instanceof Error ? error.message : String(error)}).`)
+    }
+  }
+
+  /**
+   * Where the entry `path` of an open tree of `root` lies on disk. Paths out of the tree, into `.git`
+   * or in folders no tree shows are refused; `named`: the path gets a new name, checked like one.
+   */
+  private entryOf(root: string, path: string, named: boolean): string {
+    if (!this.watched.has(folderKey(root))) throw new Error('Der Ordner ist in keinem offenen Dateibaum.')
+    if (!isTreePath(path) || path === '') throw new Error('Ungültiger Pfad.')
+    const problem = named ? pathProblem(path, process.platform) : path.split('/').some((part) => part.toLowerCase() === '.git') ? '„.git“ gehört Git.' : null
+    if (problem) throw new Error(problem)
+    return join(root, ...path.split('/'))
   }
 
   /** Null outside a repository and without git. */
@@ -886,6 +951,34 @@ interface Closable {
 }
 
 /** The names in a folder; none when it is missing. */
+/** Why a file operation on `path` failed, in words for the user. */
+function fileError(error: unknown, path: string): string {
+  const name = `„${path.split('/').pop()}“`
+  switch ((error as NodeJS.ErrnoException | null)?.code) {
+    case 'EEXIST':
+      return `${name} gibt es dort schon.`
+    case 'ENOENT':
+      return `${name} gibt es nicht mehr.`
+    case 'ENOTDIR':
+      return 'Ein Teil des Pfads ist eine Datei, kein Ordner.'
+    case 'EACCES':
+    case 'EPERM':
+    case 'EBUSY':
+      return `Zugriff auf ${name} verweigert. Vielleicht hat ein Programm die Datei oder etwas im Ordner gerade offen.`
+    default:
+      return error instanceof Error ? error.message : String(error)
+  }
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await lstat(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function safeReaddir(path: string): string[] {
   try {
     return readdirSync(path)

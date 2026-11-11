@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { chmod, mkdtemp, mkdir, readFile, rm, symlink, unlink, utimes, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readdir, readFile, rm, stat, symlink, unlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -574,5 +574,88 @@ describe('FileTreeService.watch', () => {
     await expect.poll(() => told.length, { timeout: 3000 }).toBeGreaterThanOrEqual(2)
     expect(new Set(told)).toEqual(new Set([dir, other]))
     expect(told).toHaveLength(2)
+  })
+})
+
+describe('FileTreeService file operations', () => {
+  let dir: string
+  let service: FileTreeService
+  const trashed: string[] = []
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'file-tree-ops-'))
+    trashed.length = 0
+    service = new FileTreeService(async (path) => {
+      trashed.push(path)
+    })
+    service.watch([{ root: dir, dirs: [''] }])
+  })
+  afterEach(async () => {
+    service.dispose()
+    // The git the watch asks still runs in the folder for a moment (EBUSY on Windows).
+    await rm(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  })
+
+  it('makes an empty file and a folder, with the folders on their way', async () => {
+    await service.create(dir, 'src/lib/new.ts', false)
+    await service.create(dir, 'docs/guides', true)
+    expect(await readFile(join(dir, 'src', 'lib', 'new.ts'), 'utf8')).toBe('')
+    expect((await stat(join(dir, 'docs', 'guides'))).isDirectory()).toBe(true)
+  })
+
+  it('never makes an entry over one that is there', async () => {
+    await writeFile(join(dir, 'notes.md'), 'keep')
+    await mkdir(join(dir, 'src'))
+    await expect(service.create(dir, 'notes.md', false)).rejects.toThrow('„notes.md“ gibt es dort schon.')
+    await expect(service.create(dir, 'src', true)).rejects.toThrow('„src“ gibt es dort schon.')
+    expect(await readFile(join(dir, 'notes.md'), 'utf8')).toBe('keep')
+  })
+
+  it('renames, but never over another entry', async () => {
+    await writeFile(join(dir, 'a.txt'), 'a')
+    await writeFile(join(dir, 'b.txt'), 'b')
+    await expect(service.rename(dir, 'a.txt', 'b.txt')).rejects.toThrow('„b.txt“ gibt es dort schon.')
+    expect(await readFile(join(dir, 'b.txt'), 'utf8')).toBe('b')
+    await service.rename(dir, 'a.txt', 'c.txt')
+    expect(await readFile(join(dir, 'c.txt'), 'utf8')).toBe('a')
+    await expect(service.rename(dir, 'a.txt', 'd.txt')).rejects.toThrow('„a.txt“ gibt es nicht mehr.')
+  })
+
+  it('renames a file to the same name in another case', async () => {
+    await writeFile(join(dir, 'readme.md'), 'x')
+    await service.rename(dir, 'readme.md', 'README.md')
+    expect(await readdir(dir)).toEqual(['README.md'])
+  })
+
+  it('moves an entry to the recycle bin', async () => {
+    await mkdir(join(dir, 'old'))
+    await service.trash(dir, 'old')
+    expect(trashed).toEqual([join(dir, 'old')])
+    await expect(service.trash(dir, 'gone.txt')).rejects.toThrow('„gone.txt“ gibt es nicht mehr.')
+  })
+
+  it('says so in German when the recycle bin refuses', async () => {
+    const refusing = new FileTreeService(() => Promise.reject(new Error('Failed to move item to trash')))
+    refusing.watch([{ root: dir, dirs: [''] }])
+    await writeFile(join(dir, 'x.txt'), '')
+    await expect(refusing.trash(dir, 'x.txt')).rejects.toThrow('„x.txt“ ließ sich nicht in den Papierkorb verschieben (Failed to move item to trash).')
+    refusing.dispose()
+  })
+
+  it('touches nothing outside an open tree, in .git or by a bad name', async () => {
+    const other = await mkdtemp(join(tmpdir(), 'file-tree-other-'))
+    try {
+      await expect(service.create(other, 'x.txt', false)).rejects.toThrow('in keinem offenen Dateibaum')
+      await expect(service.trash(other, 'x.txt')).rejects.toThrow('in keinem offenen Dateibaum')
+    } finally {
+      await rm(other, { recursive: true, force: true })
+    }
+    await expect(service.create(dir, '../x.txt', false)).rejects.toThrow('Ungültiger Pfad.')
+    await expect(service.rename(dir, 'a', '../b')).rejects.toThrow('Ungültiger Pfad.')
+    await expect(service.trash(dir, '')).rejects.toThrow('Ungültiger Pfad.')
+    await expect(service.create(dir, '.git/hooks/pre-commit', false)).rejects.toThrow('„.git“ gehört Git.')
+    await expect(service.trash(dir, '.git')).rejects.toThrow('„.git“ gehört Git.')
+    await expect(service.create(dir, 'a//b', false)).rejects.toThrow('Ungültiger Pfad.')
+    expect(trashed).toEqual([])
   })
 })

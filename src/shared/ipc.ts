@@ -166,6 +166,9 @@ export const IpcInvoke = {
   filesSearchList: 'files:search-list',
   filesWatch: 'files:watch',
   filesDiff: 'files:diff',
+  filesCreate: 'files:create',
+  filesRename: 'files:rename',
+  filesTrash: 'files:trash',
 
   commandStatus: 'command:status',
   commandSetRegistered: 'command:set-registered',
@@ -564,6 +567,15 @@ export interface ManagerApi {
     onChanged(cb: (root: string, dirs: string[], git: boolean, repo: boolean) => void): Unsubscribe
     /** The changes of a file (relative to `root`) since the last commit; `full`: with the whole file around them. */
     diff(root: string, path: string, full: boolean): Promise<FileDiff>
+    /**
+     * Makes an empty file or a folder (`dir`) at `path` of an open tree, with the folders on its way;
+     * never over an entry that is there.
+     */
+    create(root: string, path: string, dir: boolean): Promise<void>
+    /** Renames an entry of an open tree; never over another one. */
+    rename(root: string, from: string, to: string): Promise<void>
+    /** Moves an entry of an open tree to the recycle bin. */
+    trash(root: string, path: string): Promise<void>
     /** Files a session's Claude (or one of its subagents) reads, writes or commits, as it happens. */
     onTouched(cb: (terminalId: string, touches: FileTouch[]) => void): Unsubscribe
   }

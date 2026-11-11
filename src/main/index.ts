@@ -118,7 +118,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   const browserMcp = new BrowserMcpServer(sessionServer, userDataDir, settings, new BrowserTools(browser), app.getVersion())
   browserMcp.init()
   terminals.addSessionArgs(browserMcp)
-  const files = new FileTreeService()
+  const files = new FileTreeService((path) => shell.trashItem(path))
   // Sessions tell their state through Claude Code's hooks (setting `hookState`), and which files Claude touches.
   const sessionHooks = new SessionHooks(sessionServer, userDataDir, settings, (id, call) => {
     terminals.applyHook(id, call)

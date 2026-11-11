@@ -127,6 +127,12 @@ function isTreeDir(value: unknown): value is string {
   return typeof value === 'string' && value.length <= MAX_PATH_LENGTH && isTreePath(value)
 }
 
+/** An entry of a tree, not its folder itself. */
+function requireTreeEntry(value: unknown, name: string): string {
+  if (!isTreeDir(value) || value === '') throw new Error(`Ungültiger Parameter: ${name}`)
+  return value
+}
+
 function treesOf(value: unknown): FileTreeWatch[] {
   if (!Array.isArray(value) || value.length > MAX_FILE_TREES) throw new Error('Ungültiger Parameter: trees')
   return value.map((tree: { root?: unknown; dirs?: unknown } | null) => {
@@ -582,6 +588,14 @@ export function registerIpc(ctx: AppContext): void {
     if (!isTreeDir(path) || path === '') throw new Error('Ungültiger Parameter: path')
     return ctx.files.diff(requirePath(root, 'root'), path, full === true)
   })
+  // Entries of an open tree; the service keeps them in it and checks new names.
+  handle(IpcInvoke.filesCreate, (_e, root: unknown, path: unknown, dir: unknown) =>
+    ctx.files.create(requirePath(root, 'root'), requireTreeEntry(path, 'path'), dir === true),
+  )
+  handle(IpcInvoke.filesRename, (_e, root: unknown, from: unknown, to: unknown) =>
+    ctx.files.rename(requirePath(root, 'root'), requireTreeEntry(from, 'from'), requireTreeEntry(to, 'to')),
+  )
+  handle(IpcInvoke.filesTrash, (_e, root: unknown, path: unknown) => ctx.files.trash(requirePath(root, 'root'), requireTreeEntry(path, 'path')))
   ctx.files.on('changed', (root, dirs, git, repo) => broadcast(IpcEvent.filesChanged, root, dirs, git, repo))
   ctx.files.on('touched', (terminalId, touches) => broadcast(IpcEvent.filesTouched, terminalId, touches))
 
