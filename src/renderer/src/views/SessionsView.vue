@@ -53,6 +53,7 @@ import { sessionKey, useSessionSearch } from '@/composables/useSessionSearch'
 import { attempt } from '@/lib/errors'
 import { formatBytes } from '@/lib/format'
 import { containsTerms, searchText } from '@/lib/search'
+import { readSessionsView, saveSessionsView } from '@/lib/sessions-view'
 import {
   allFolders,
   buildSessionTree,
@@ -108,8 +109,6 @@ const AGE_FILTERS = [
     { value: 'older-365', label: 'Älter als 1 Jahr', days: 365, older: true },
   ],
 ]
-const ageFilter = ref('all')
-const age = computed(() => AGE_FILTERS.flat().find((f) => f.value === ageFilter.value) ?? null)
 
 const KB = 1024
 const MB = 1024 * KB
@@ -126,17 +125,41 @@ const SIZE_FILTERS = [
     { value: 'under-10k', label: 'Kleiner als 10 KB', short: 'Unter 10 KB', bytes: 10 * KB, larger: false },
   ],
 ]
-const sizeFilter = ref('all')
+const SORTS: { value: SessionSort; label: string }[] = [
+  { value: 'recent', label: 'Zuletzt aktiv' },
+  { value: 'name', label: 'Name' },
+  { value: 'size', label: 'Größe' },
+  { value: 'count', label: 'Anzahl Sessions' },
+]
+
+// Sort and filters as they were left, also after a restart (kept below, see `saveSessionsView`).
+const kept = readSessionsView({
+  sorts: SORTS.map((s) => s.value),
+  ages: AGE_FILTERS.flat().map((f) => f.value),
+  sizes: SIZE_FILTERS.flat().map((f) => f.value),
+})
+
+const ageFilter = ref(kept.age)
+const age = computed(() => AGE_FILTERS.flat().find((f) => f.value === ageFilter.value) ?? null)
+const sizeFilter = ref(kept.size)
 const size = computed(() => SIZE_FILTERS.flat().find((f) => f.value === sizeFilter.value) ?? null)
 
-const accountFilter = ref('all')
+const accountFilter = ref(kept.account)
+// A kept account that is gone shows all again.
+watch(
+  () => accounts.loaded && accountFilter.value !== 'all' && !accounts.get(accountFilter.value),
+  (gone) => {
+    if (gone) accountFilter.value = 'all'
+  },
+  { immediate: true },
+)
 
 /**
  * With several accounts the own ones come first and the standard account (`~/.claude`) is hidden
  * until asked for; chosen in the account filter, it shows anyway.
  */
 const severalAccounts = computed(() => accounts.accounts.length > 1)
-const showStandard = ref(false)
+const showStandard = ref(kept.showStandard)
 const standardHidden = computed(
   () => severalAccounts.value && !showStandard.value && accountFilter.value !== SYSTEM_ACCOUNT_ID,
 )
@@ -150,13 +173,16 @@ const accountOptions = computed<FilterOption[][]>(() => [
   accountOrder.value.map((a) => ({ value: a.id, label: a.name, color: a.color })),
 ])
 
-const SORTS: { value: SessionSort; label: string }[] = [
-  { value: 'recent', label: 'Zuletzt aktiv' },
-  { value: 'name', label: 'Name' },
-  { value: 'size', label: 'Größe' },
-  { value: 'count', label: 'Anzahl Sessions' },
-]
-const sort = ref<SessionSort>('recent')
+const sort = ref<SessionSort>(kept.sort)
+watch([sort, accountFilter, ageFilter, sizeFilter, showStandard], () =>
+  saveSessionsView({
+    sort: sort.value,
+    account: accountFilter.value,
+    age: ageFilter.value,
+    size: sizeFilter.value,
+    showStandard: showStandard.value,
+  }),
+)
 const sortLabel = computed(() => SORTS.find((s) => s.value === sort.value)?.label)
 
 const search = ref('')
