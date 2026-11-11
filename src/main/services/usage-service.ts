@@ -19,10 +19,16 @@ const OAUTH_BETA = 'oauth-2025-04-20'
 const MIN_MANUAL_INTERVAL_MS = 60_000
 const RATE_LIMIT_BACKOFF_MS = 5 * 60_000
 const STAGGER_MS = 400
+/**
+ * How much earlier than one interval after the last the regular round may ask again. It comes a little
+ * early or late each time (the accounts are asked one after another, renewing a token takes a moment);
+ * without this every other round was skipped.
+ */
+const ROUND_SLACK_MS = 30_000
 /** Claude Code is renewing the token itself right now: its new token is picked up shortly after. */
 const RENEW_BUSY_RETRY_MS = 30_000
 
-interface LiveRecord {
+export interface LiveRecord {
   usage: AccountUsage
   nextAllowedAt: number
   /** The login the data was fetched for (see `AccountCredentials.loginKey`). */
@@ -232,14 +238,9 @@ export class UsageService extends TypedEmitter<Events> {
       this.dropLogin(accountId)
       previous = undefined
     }
-    if (previous) {
-      const rateLimited = previous.usage.status === 'rate-limited' && now < previous.nextAllowedAt
-      const fetchedAt = previous.usage.fetchedAt ? Date.parse(previous.usage.fetchedAt) : 0
-      const minNext = worthAsking(previous, tokenKey) ? 0 : manual ? fetchedAt + MIN_MANUAL_INTERVAL_MS : previous.nextAllowedAt
-      if (rateLimited || now < minNext) {
-        this.recompute()
-        return
-      }
+    if (!dueNow(previous, tokenKey, manual, now)) {
+      this.recompute()
+      return
     }
 
     const intervalMs = this.settings.get().claude.usageRefreshMinutes * 60_000
@@ -492,6 +493,15 @@ function usableToken(creds: AccountCredentials): string | null {
  * token (e.g. after signing in again) where the last one failed. Data from an earlier token of
  * the same login stays valid.
  */
+/** Whether the usage of an account is asked for now (`manual`: the user asked for it). */
+export function dueNow(previous: LiveRecord | undefined, tokenKey: string, manual: boolean, now: number): boolean {
+  if (!previous) return true
+  if (previous.usage.status === 'rate-limited' && now < previous.nextAllowedAt) return false
+  if (worthAsking(previous, tokenKey)) return true
+  if (manual) return now >= (previous.usage.fetchedAt ? Date.parse(previous.usage.fetchedAt) : 0) + MIN_MANUAL_INTERVAL_MS
+  return now >= previous.nextAllowedAt - ROUND_SLACK_MS
+}
+
 function worthAsking(record: LiveRecord | undefined, tokenKey: string): boolean {
   if (!record) return true
   return record.tokenKey !== null && record.tokenKey !== tokenKey && record.usage.status !== 'ok'
