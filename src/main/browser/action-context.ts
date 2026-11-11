@@ -105,6 +105,8 @@ export interface ActionContext {
   setDialogAnswer(answer: DialogAnswer | null): void
   fileChooser(): FileChooser | null
   clearFileChooser(): void
+  /** Where files may come from that Claude uploads: the session's folder (also a worktree) and the temp folder. */
+  uploadFolders(): string[]
   /** The page's file chooser comes to Claude instead of the user while `work` runs. */
   interceptFileChooser<T>(work: () => Promise<T>): Promise<T>
   /**

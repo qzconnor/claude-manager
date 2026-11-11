@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os'
 import { webContents, type WebContents } from 'electron'
 import { BLANK_PAGE } from '@shared/browser'
 import type { BrowserActivity, BrowserControlState, BrowserDownload, BrowserEmulation, BrowserHighlight, BrowserLoginRequest, BrowserViewport } from '@shared/types'
@@ -526,6 +527,12 @@ export class BrowserControl extends TypedEmitter<Events> {
       },
       fileChooser: () => browser.chooser,
       clearFileChooser: () => (browser.chooser = null),
+      uploadFolders: () => {
+        const id = browser.control?.sessionId
+        const session = id ? this.terminals.list().find((t) => t.id === id) : undefined
+        const folders = [session?.cwd, session?.worktree?.path].filter((folder): folder is string => !!folder)
+        return [...folders, tmpdir()]
+      },
       interceptFileChooser: async (work) => {
         await page.cdp('Page.setInterceptFileChooserDialog', { enabled: true }).catch(() => undefined)
         try {
