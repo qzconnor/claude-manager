@@ -67,6 +67,12 @@ export interface GlobalConfig {
 
 /** Items copied from ~/.claude into a new profile when the user asks for it. */
 const SHAREABLE_ITEMS = ['settings.json', 'keybindings.json', 'CLAUDE.md', 'skills', 'commands', 'agents', 'rules']
+/**
+ * Secrets that didn't decrypt are tried again, first after this long, then less often: on Linux the
+ * keyring may only unlock after the app started.
+ */
+const SECRET_RETRY_MIN_MS = 30_000
+const SECRET_RETRY_MAX_MS = 10 * 60_000
 
 type Events = { changed: [accounts: Account[]] }
 
@@ -96,6 +102,9 @@ export class AccountService extends TypedEmitter<Events> {
   private snapshot: Account[] = []
   private fingerprint = ''
   private pollTimer: NodeJS.Timeout | null = null
+  private secretRetryAt = 0
+  private secretRetryDelay = SECRET_RETRY_MIN_MS
+  private secretRetrying = false
 
   constructor(
     userDataDir: string,
@@ -130,9 +139,33 @@ export class AccountService extends TypedEmitter<Events> {
       await this.persist().catch((error) => console.warn('[accounts] could not be saved', error))
     }
     await this.loadSecrets()
+    this.secretRetryAt = Date.now() + SECRET_RETRY_MIN_MS
     this.rebuild()
     // Credentials change when Claude Code logs in, logs out or refreshes a token.
-    this.pollTimer = setInterval(() => this.refresh(), 15000)
+    this.pollTimer = setInterval(() => {
+      this.refresh()
+      void this.retrySecrets()
+    }, 15000)
+  }
+
+  /** Decrypts the secrets that didn't decrypt so far, now and then; the accounts change once one does. */
+  async retrySecrets(now = Date.now()): Promise<void> {
+    if (this.secretRetrying || now < this.secretRetryAt) return
+    if (!this.stored.some((a) => a.secret && !this.secrets.has(a.id))) return
+    this.secretRetrying = true
+    try {
+      const before = this.secrets.size
+      await this.loadSecrets()
+      if (this.secrets.size > before) {
+        this.secretRetryDelay = SECRET_RETRY_MIN_MS
+        this.rebuild()
+      } else {
+        this.secretRetryDelay = Math.min(this.secretRetryDelay * 2, SECRET_RETRY_MAX_MS)
+      }
+      this.secretRetryAt = now + this.secretRetryDelay
+    } finally {
+      this.secretRetrying = false
+    }
   }
 
   dispose(): void {
@@ -342,11 +375,11 @@ export class AccountService extends TypedEmitter<Events> {
     return account
   }
 
-  /** Decrypts the stored secrets once; values the OS wants re-encrypted are stored anew. */
+  /** Decrypts the stored secrets not decrypted yet; values the OS wants re-encrypted are stored anew. */
   private async loadSecrets(): Promise<void> {
     let changed = false
     for (const account of this.stored) {
-      if (!account.secret) continue
+      if (!account.secret || this.secrets.has(account.id)) continue
       const decrypted = await decryptSecret(account.secret)
       if (!decrypted) {
         console.warn(`[accounts] secret of „${account.name}“ could not be decrypted`)
