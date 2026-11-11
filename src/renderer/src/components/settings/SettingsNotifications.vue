@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/switch'
 import { useSetting } from '@/composables/useSetting'
 import { attempt } from '@/lib/errors'
 import { isWindows } from '@/lib/platform'
+import type { SettingsResetKeys } from '@/lib/settings-reset'
 import NumberControl from './NumberControl.vue'
 import SettingField from './SettingField.vue'
 import SettingsSection from './SettingsSection.vue'
@@ -19,6 +20,11 @@ function notificationSetting<K extends keyof NotificationSettings>(key: K, delay
     (value) => ({ notifications: { [key]: value } }) as DeepPartial<AppSettings>,
     delay,
   )
+}
+
+/** The page shows all of them: the reset of its first card takes all along. */
+const RESET: SettingsResetKeys = {
+  notifications: ['enabled', 'onDone', 'minBusySeconds', 'onInput', 'onLimit', 'onNearLimit', 'nearLimitPercent', 'when', 'toast', 'preview', 'sound', 'flashTaskbar', 'unreadDot'],
 }
 
 const enabled = notificationSetting('enabled')
@@ -62,7 +68,7 @@ async function sendTest() {
       anchor="notifications.main"
       title="Benachrichtigungen"
       description="Hinweise auf Tabs, in denen Claude fertig ist oder dich braucht, und auf fast verbrauchte Limits. Einzelne Tabs lassen sich über ihr Kontextmenü stummschalten."
-      reset-section="notifications"
+      :reset="RESET"
     >
       <SettingField
         anchor="notifications.enabled"

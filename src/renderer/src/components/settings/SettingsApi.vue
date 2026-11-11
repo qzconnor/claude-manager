@@ -73,7 +73,7 @@ function openDocs() {
       anchor="api.server"
       title="Lokale API"
       description="HTTP-Schnittstelle für andere Apps – nur auf 127.0.0.1 erreichbar und per Token geschützt."
-      reset-section="api"
+      :reset="{ api: ['enabled', 'port'] }"
     >
       <SettingField anchor="api.enabled" for="api-enabled" label="API aktivieren">
         <Badge v-if="status?.running" variant="outline">

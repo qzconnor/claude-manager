@@ -126,7 +126,11 @@ function onScheme(value: unknown) {
       <TerminalPreview />
     </SettingsSection>
 
-    <SettingsSection anchor="terminal.font" title="Schrift" reset-section="terminal">
+    <SettingsSection
+      anchor="terminal.font"
+      title="Schrift"
+      :reset="{ terminal: ['fontFamily', 'fontSize', 'lineHeight', 'letterSpacing', 'ligatures', 'fontWeight', 'fontWeightBold'] }"
+    >
       <SettingField anchor="terminal.fontFamily" for="terminal-font" label="Schriftart" description="Emoji und Symbole werden automatisch über Segoe UI Emoji ergänzt.">
         <FontPicker id="terminal-font" v-model="fontFamily" />
       </SettingField>

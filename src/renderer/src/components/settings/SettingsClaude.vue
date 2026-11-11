@@ -108,7 +108,12 @@ async function recheck() {
 
 <template>
   <div class="flex flex-col gap-4">
-    <SettingsSection anchor="claude.program" title="Claude Code" description="Programm und Startoptionen." reset-section="claude">
+    <SettingsSection
+      anchor="claude.program"
+      title="Claude Code"
+      description="Programm und Startoptionen."
+      :reset="{ claude: ['executablePath', 'defaultArgs', 'defaultCwd', 'autoSwitch', 'continuePrompt'] }"
+    >
       <SettingField anchor="claude.installation" label="Gefundene Installation">
         <Badge v-if="app.info?.claudeExecutable" variant="outline" class="max-w-80">
           <CircleCheckIcon class="text-success" />
@@ -188,7 +193,11 @@ async function recheck() {
 
     <SettingsCommand />
 
-    <SettingsSection anchor="claude.general" title="Allgemein" reset-section="general">
+    <SettingsSection
+      anchor="claude.general"
+      title="Allgemein"
+      :reset="{ general: ['defaultAccountId', 'restoreTerminals', 'confirmCloseRunning', 'closeOnExit'], claude: ['usageRefreshMinutes'] }"
+    >
       <SettingField anchor="claude.defaultAccount" for="default-account" label="Standard-Account" description="Wird für „+“ und Strg+Umschalt+T verwendet.">
         <AccountSelect id="default-account" v-model="defaultAccountId" size="sm" class="w-56" />
       </SettingField>

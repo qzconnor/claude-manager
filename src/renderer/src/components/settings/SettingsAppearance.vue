@@ -103,7 +103,7 @@ function onMaterial(value: unknown) {
       anchor="appearance.window"
       title="Fenster"
       :description="supportsMaterial ? 'Windows-11-Material hinter der App.' : 'Schrift und Ecken der Oberfläche.'"
-      reset-section="appearance"
+      :reset="{ appearance: ['material', 'keepMaterialWhenInactive', 'surfaceOpacity', 'uiFontSize', 'radius'] }"
     >
       <!-- Acrylic and Mica only exist on Windows 11; elsewhere the window is opaque. -->
       <SettingField v-if="supportsMaterial" anchor="appearance.material" label="Material" description="Acryl ist am stärksten transparent, Mica übernimmt dezent die Farbe des Desktops.">
