@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useEventListener, useMutationObserver } from '@vueuse/core'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { OVERFLOW_FADE_PX, useOverflowFade } from '@/composables/useOverflowFade'
 import { useTabDrag } from '@/composables/useTabDrag'
 import { dockSpot } from '@/lib/tab-drag'
 import { useTerminalsStore } from '@/stores/terminals'
@@ -19,24 +20,12 @@ const terminals = useTerminalsStore()
 const ui = useUiStore()
 const strip = ref<HTMLElement | null>(null)
 
-/** Width of the fade at an edge of the strip behind which more tabs are scrolled away. */
-const FADE = 24
-const overflow = ref({ start: false, end: false })
 /** Fades out tabs cut by the edge of the strip instead of cutting them off hard. */
-const stripMask = computed(() => {
-  const { start, end } = overflow.value
-  if (!start && !end) return undefined
-  const from = start ? 'transparent' : 'black'
-  const to = end ? 'transparent' : 'black'
-  return { maskImage: `linear-gradient(to right, ${from}, black ${FADE}px, black calc(100% - ${FADE}px), ${to})` }
-})
+const fade = useOverflowFade(strip)
 
 /** Tells the page below where the selected tab sits, clipped to the visible part of the strip. */
 function measureSelected() {
   const el = strip.value
-  overflow.value = el
-    ? { start: el.scrollLeft > 1, end: el.scrollLeft + el.clientWidth < el.scrollWidth - 1 }
-    : { start: false, end: false }
   const tab = el?.querySelector('[role="tab"][aria-selected="true"]')
   if (!el || !tab) {
     ui.selectedTabEdges = null
@@ -56,7 +45,7 @@ function reveal(id: string | null) {
   if (!el || !tab) return
   const bounds = el.getBoundingClientRect()
   const rect = tab.getBoundingClientRect()
-  const margin = Math.max(0, Math.min(FADE, (bounds.width - rect.width) / 2))
+  const margin = Math.max(0, Math.min(OVERFLOW_FADE_PX, (bounds.width - rect.width) / 2))
   if (rect.left < bounds.left + margin) el.scrollLeft -= bounds.left + margin - rect.left
   else if (rect.right > bounds.right - margin) el.scrollLeft += rect.right - (bounds.right - margin)
 }
@@ -185,7 +174,7 @@ watch(
       ref="strip"
       role="tablist"
       class="no-scrollbar flex min-w-0 gap-0.5 overflow-x-auto"
-      :style="stripMask"
+      :style="fade.style.value"
     >
       <TerminalTab
         v-for="tab in terminals.tabs"

@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useLauncher } from '@/composables/useLauncher'
+import { useOverflowFade } from '@/composables/useOverflowFade'
 import { useTabDrag } from '@/composables/useTabDrag'
 import { useTerminalActions } from '@/composables/useTerminalActions'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
@@ -147,6 +148,9 @@ onBeforeUnmount(() => {
   if (dragging.value) ui.draggingTab = null
 })
 
+// Tabs cut by an edge fade out there, as in the title bar; the bar's line below them stays.
+const fade = useOverflowFade(strip, 1)
+
 // A vertical mouse wheel scrolls the tabs horizontally.
 useEventListener(
   strip,
@@ -196,6 +200,7 @@ const iconButton =
       ref="strip"
       role="tablist"
       class="no-scrollbar flex min-w-0 gap-[3px] overflow-x-auto *:not-last:after:absolute *:not-last:after:-bottom-px *:not-last:after:left-[calc(100%+1px)] *:not-last:after:h-px *:not-last:after:w-[3px] *:not-last:after:bg-border"
+      :style="fade.style.value"
     >
       <template v-for="tab in group.tabs" :key="tab.id">
         <GroupTerminalTab

@@ -375,7 +375,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
   const browserSessionId = ref<string | null>(null)
   /** The page the browser tab shows of a session, by the session; without one the page that had the keyboard last. */
   const shownPages = reactive(new Map<string, string>())
-  /** Browsers of the last run that aren't loaded yet; with the tabs in groups they load once shown or driven by Claude. */
+  /** Browsers of the last run that aren't loaded yet; they load once shown or driven by Claude. */
   const sleeping = reactive(new Set<string>())
   /** The session pages seen so far: a new one brings the browser tab back. */
   const knownPages = new Set<string>()

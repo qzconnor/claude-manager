@@ -1,5 +1,5 @@
 import { moveItem } from '@shared/order'
-import { insertPane, isSplit, paneIds, parsePaneNode, removePanes, setRatio, type PaneDirection, type SplitPath } from '@shared/panes'
+import { canInsertPane, insertPane, isSplit, paneIds, parsePaneNode, removePanes, setRatio, type PaneDirection, type SplitPath } from '@shared/panes'
 import type { PaneNode } from '@shared/types'
 
 /**
@@ -136,9 +136,13 @@ export function removeTab(ws: Workspace, tab: string, keepGroup = false): Worksp
   return updateGroup(ws, group.id, (g) => ({ ...g, tabs, active }))
 }
 
-/** A new group on `side` of `groupId`; the two share its space in half. */
+/**
+ * A new group on `side` of `groupId`; the two share its space in half. A group split as often as the
+ * window can be takes the tabs in itself instead.
+ */
 export function splitGroup(ws: Workspace, groupId: string, side: PaneDirection, newId: string, tabs: string[] = []): Workspace {
   if (!findGroup(ws, groupId)) return ws
+  if (!canInsertPane(ws.layout, groupId)) return tabs.reduce((next, tab) => addTab(next, groupId, tab, { activate: true }), ws)
   return {
     ...ws,
     layout: insertPane(ws.layout, groupId, newId, side),
@@ -176,6 +180,8 @@ export function dockTab(ws: Workspace, tab: string, groupId: string, side: PaneD
   const from = groupOfTab(ws, tab)
   if (!from || !findGroup(ws, groupId) || (from.id === groupId && from.tabs.length === 1)) return ws
   const rest = removeTab(ws, tab)
+  // The window can't be split there any further: the tab stays where it was.
+  if (!findGroup(rest, groupId) || !canInsertPane(rest.layout, groupId)) return ws
   return { ...splitGroup(rest, groupId, side, newId, [tab]), activeGroup: newId }
 }
 

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  canInsertPane,
+  depthOf,
   dropPanes,
   hasPane,
   insertPane,
@@ -11,8 +13,10 @@ import {
   removePanes,
   replacePane,
   holdSplit,
+  MAX_SPLIT_DEPTH,
   sameShape,
   setRatio,
+  splitDepth,
   splitPane,
 } from './panes'
 import type { PaneNode, PaneSplit } from './types'
@@ -184,5 +188,34 @@ describe('neighbourPane', () => {
     expect(neighbourPane(tall, 'a', 'right')).toBe('b')
     const short = row('a', column('b', 'c', 0.3))
     expect(neighbourPane(short, 'a', 'right')).toBe('c')
+  })
+})
+
+describe('split depth', () => {
+  /** `p0` split again and again, each new part beside the last one. */
+  const deep = (splits: number): PaneNode => {
+    let node: PaneNode = 'p0'
+    for (let i = 1; i <= splits; i++) node = splitPane(node, `p${i - 1}`, `p${i}`, i % 2 ? 'row' : 'column')
+    return node
+  }
+
+  it('counts the splits above a part and on the longest way down', () => {
+    expect(splitDepth('a')).toBe(0)
+    expect(splitDepth(tree)).toBe(2)
+    expect(depthOf(tree, 'a')).toBe(1)
+    expect(depthOf(tree, 'c')).toBe(2)
+    expect(depthOf(tree, 'x')).toBe(-1)
+  })
+
+  it('lets a part split only as deep as a tree from outside may be', () => {
+    const full = deep(MAX_SPLIT_DEPTH)
+    expect(parsePaneNode(full)).not.toBeNull()
+    expect(canInsertPane(deep(MAX_SPLIT_DEPTH - 1), `p${MAX_SPLIT_DEPTH - 1}`)).toBe(true)
+    expect(canInsertPane(full, `p${MAX_SPLIT_DEPTH}`)).toBe(false)
+    expect(parsePaneNode(splitPane(full, `p${MAX_SPLIT_DEPTH}`, 'x', 'row'))).toBeNull()
+    // Higher up there is room, unless the parts that come are split themselves.
+    expect(canInsertPane(full, 'p0')).toBe(true)
+    expect(canInsertPane(full, 'p0', deep(MAX_SPLIT_DEPTH))).toBe(false)
+    expect(canInsertPane(full, 'x')).toBe(false)
   })
 })

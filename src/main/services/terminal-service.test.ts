@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { MAX_SPLIT_DEPTH, paneIds, splitDepth } from '@shared/panes'
 import type { AccountService } from './account-service'
 import type { ClaudeCli } from './claude-cli'
 import type { SettingsService } from './settings-service'
@@ -161,5 +162,25 @@ describe('hasSecret', () => {
     expect(hasSecret({ CLAUDE_CONFIG_DIR: 'x', CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-x' })).toBe(true)
     expect(hasSecret({ ANTHROPIC_API_KEY: 'sk-ant-api03-x' })).toBe(true)
     expect(hasSecret({ CLAUDE_CONFIG_DIR: 'x' })).toBe(false)
+  })
+})
+
+// Deeper trees are refused, also from the file of the last run: the tab would come back torn apart.
+describe('splitting a part as often as a tab can be', () => {
+  it('gives the new terminal a tab of its own beside it', () => {
+    let last = service.openBrowser({ url: 'https://example.com/' }).id
+    const first = last
+    for (let i = 0; i < MAX_SPLIT_DEPTH; i++) {
+      last = service.openBrowser({ url: 'https://example.com/', split: { terminalId: last, direction: i % 2 ? 'column' : 'row' } }).id
+    }
+    const [tab] = service.layouts()
+    expect(splitDepth(tab)).toBe(MAX_SPLIT_DEPTH)
+    const extra = service.openBrowser({ url: 'https://example.com/', split: { terminalId: last, direction: 'row' } }).id
+    expect(service.layouts()).toEqual([tab])
+    expect(paneIds(tab)).not.toContain(extra)
+    expect(paneIds(tab)[0]).toBe(first)
+    // Beside the part it was opened from.
+    const order = service.list().map((t) => t.id)
+    expect(order.indexOf(extra)).toBe(order.indexOf(last) + 1)
   })
 })

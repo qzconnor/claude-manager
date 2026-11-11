@@ -7,7 +7,7 @@ import type * as Pty from 'node-pty'
 import { BLANK_PAGE, fallbackTitle, isBrowsableUrl } from '@shared/browser'
 import { folderKey, inFolder } from '@shared/folders'
 import { applyOrder } from '@shared/order'
-import { dropPanes, hasPane, isSplit, ownerOf, paneIds, removePanes, replacePane, splitPane } from '@shared/panes'
+import { canInsertPane, dropPanes, hasPane, isSplit, ownerOf, paneIds, removePanes, replacePane, splitPane } from '@shared/panes'
 import type {
   AttentionKind,
   BrowserOpenOptions,
@@ -1300,12 +1300,16 @@ export class TerminalService extends TypedEmitter<Events> {
     this.splits = this.splits.map((split) => replacePane(split, oldId, id) as PaneSplit)
   }
 
-  /** The new terminal `id` takes half the part of `of`, in its tab, and follows it in the order. */
+  /**
+   * The new terminal `id` takes half the part of `of`, in its tab, and follows it in the order. A part
+   * split as often as a tab can be gets a tab of its own beside it instead.
+   */
   private addPane(of: string, id: string, direction: SplitDirection): void {
     const ids = [...this.terminals.keys()].filter((key) => key !== id)
     ids.splice(ids.indexOf(of) + 1, 0, id)
     this.applyOrder(ids)
     const index = this.splits.findIndex((split) => paneIds(split).includes(of))
+    if (index !== -1 && !canInsertPane(this.splits[index], of)) return
     if (index === -1) this.splits = [...this.splits, splitPane(of, of, id, direction) as PaneSplit]
     else this.splits = this.splits.map((split, i) => (i === index ? (splitPane(split, of, id, direction) as PaneSplit) : split))
   }

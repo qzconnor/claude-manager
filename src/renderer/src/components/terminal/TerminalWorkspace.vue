@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { layoutPanes, type PaneDivider, type PaneRect } from '@shared/panes'
 import { dockRect } from '@/lib/tab-drag'
 import { inOpeningOrder } from '@/lib/tabs'
@@ -115,11 +115,16 @@ const inActiveTab = (id: string) => terminals.activeTab?.panes.some((p) => p.id 
  * and neither its screenshots nor the clicks on it would work.
  */
 const driven = (id: string) => browsers.controls.get(id)?.active === true
-/** Not in the order of the tabs: reordering them would move the elements, and a browser would load again. */
-const panes = computed(() => inOpeningOrder(terminals.terminals))
+/**
+ * Not in the order of the tabs: reordering them would move the elements, and a browser would load again.
+ * Browsers of the last run load once they are shown or Claude drives them (see `terminals.sleeping`).
+ */
+const panes = computed(() => inOpeningOrder(terminals.terminals.filter((t) => !terminals.sleeping.has(t.id))))
 /** In the tab in front, unless another part of it is maximized. */
 const onScreen = (id: string) => inActiveTab(id) && (!zoomed.value || zoomed.value === id)
 const inBackground = (id: string) => !onScreen(id) && driven(id)
+const waking = computed(() => [...terminals.sleeping].filter((id) => onScreen(id) || browsers.controls.get(id)?.busy === true || driven(id)))
+watch(waking, (ids) => ids.forEach((id) => terminals.wake(id)), { immediate: true })
 </script>
 
 <template>

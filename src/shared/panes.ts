@@ -7,8 +7,11 @@ import type { PaneNode, PaneSplit, SplitDirection } from './types'
 
 /** The smallest share a part can be resized to. */
 export const MIN_RATIO = 0.05
-/** Deeper trees are refused; nobody splits a tab into that many tiny parts. */
-const MAX_DEPTH = 16
+/**
+ * The most splits on the way from the root to a part. Deeper trees are refused, also from the file of
+ * the last run, so nothing may split further; nobody splits a tab into that many tiny parts.
+ */
+export const MAX_SPLIT_DEPTH = 16
 
 /** Steps from the root to a split: into its `first` or its `second` part. */
 export type SplitPath = readonly ('first' | 'second')[]
@@ -43,6 +46,24 @@ export function paneIds(node: PaneNode): string[] {
 
 export function hasPane(node: PaneNode, id: string): boolean {
   return isSplit(node) ? hasPane(node.first, id) || hasPane(node.second, id) : node === id
+}
+
+/** How many splits lie on the longest way from the root to a part; 0 for a single part. */
+export function splitDepth(node: PaneNode): number {
+  return isSplit(node) ? 1 + Math.max(splitDepth(node.first), splitDepth(node.second)) : 0
+}
+
+/** How many splits lie above the part of `id`; -1 when it isn't in the tree. */
+export function depthOf(node: PaneNode, id: string): number {
+  if (!isSplit(node)) return node === id ? 0 : -1
+  const below = Math.max(depthOf(node.first, id), depthOf(node.second, id))
+  return below === -1 ? -1 : below + 1
+}
+
+/** Whether `added` (a part, or the parts of another tab) fits beside the part of `id` within `MAX_SPLIT_DEPTH`. */
+export function canInsertPane(node: PaneNode, id: string, added: PaneNode = id): boolean {
+  const depth = depthOf(node, id)
+  return depth !== -1 && depth + 1 + splitDepth(added) <= MAX_SPLIT_DEPTH
 }
 
 /** Splits the part of `id` in half: `id` keeps the left (`row`) or upper (`column`) half, `added` gets the other. */
@@ -144,7 +165,7 @@ export function parsePaneNode(value: unknown): PaneNode | null {
       seen.add(node)
       return node
     }
-    if (!node || typeof node !== 'object' || depth >= MAX_DEPTH) return null
+    if (!node || typeof node !== 'object' || depth >= MAX_SPLIT_DEPTH) return null
     const split = node as Record<string, unknown>
     if (split.direction !== 'row' && split.direction !== 'column') return null
     if (typeof split.ratio !== 'number' || !Number.isFinite(split.ratio)) return null
