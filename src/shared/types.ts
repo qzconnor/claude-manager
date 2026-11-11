@@ -933,6 +933,18 @@ export interface SettingsImportResult {
   settings: AppSettings
   /** Settings of the file left as they were: paths that don't exist on this computer. */
   skipped: string[]
+  /**
+   * Settings of the file that decide what runs or what Claude may do without asking (the program,
+   * its options, the shells, the API …): not taken over until the user confirms them, then with
+   * `patch`. Null when the file changes none of them.
+   */
+  held: HeldSettings | null
+}
+
+export interface HeldSettings {
+  patch: DeepPartial<AppSettings>
+  /** Each held setting with the value from the file, for the question. */
+  changes: { label: string; value: string }[]
 }
 
 export type DeepPartial<T> = {

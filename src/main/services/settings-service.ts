@@ -2,7 +2,7 @@ import { statSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDefaultSettings as sharedDefaults } from '@shared/defaults'
-import type { AppSettings, DeepPartial, SettingsImportResult } from '@shared/types'
+import type { AppSettings, DeepPartial, HeldSettings, SettingsImportResult } from '@shared/types'
 import { isPlainObject, mergeKnown } from '@shared/utils'
 import { readJson, readJsonGuardedSync, writeJsonAtomic } from '../lib/json-file'
 import { TypedEmitter } from '../lib/typed-emitter'
@@ -75,8 +75,49 @@ export class SettingsService extends TypedEmitter<Events> {
     const imported = migrate(settingsIn(data)) as Record<string, unknown>
     dropLocal(imported)
     const skipped = dropMissingPaths(imported)
-    return { settings: await this.update(imported as DeepPartial<AppSettings>), skipped }
+    const held = holdSensitive(imported, this.settings)
+    return { settings: await this.update(imported as DeepPartial<AppSettings>), skipped, held }
   }
+}
+
+/**
+ * Settings that decide what runs (the program and its options, the message sent after a switch) or
+ * what Claude may do without asking. A file from someone else could run anything with them, so an
+ * import takes them over only once the user confirmed. `widens`: held only when the file turns it on.
+ */
+const SENSITIVE: { section: keyof AppSettings; key: string; label: string; widens?: boolean }[] = [
+  { section: 'claude', key: 'executablePath', label: 'Pfad zu Claude Code' },
+  { section: 'claude', key: 'defaultArgs', label: 'Startoptionen' },
+  { section: 'claude', key: 'continuePrompt', label: 'Nachricht nach einem Account-Wechsel' },
+  { section: 'claude', key: 'browserToolsAllowed', label: 'Browser ohne Nachfrage bedienen', widens: true },
+  { section: 'claude', key: 'shellTools', label: 'Shell-Tabs steuern', widens: true },
+  { section: 'claude', key: 'shellToolsAllowed', label: 'Shell-Tabs ohne Nachfrage', widens: true },
+  { section: 'api', key: 'enabled', label: 'Lokale API', widens: true },
+]
+
+/** Takes the sensitive settings that would change out of `imported`; null when there are none. */
+export function holdSensitive(imported: Record<string, unknown>, current: AppSettings): HeldSettings | null {
+  const patch: Record<string, Record<string, unknown>> = {}
+  const changes: HeldSettings['changes'] = []
+  for (const { section, key, label, widens } of SENSITIVE) {
+    const values = imported[section]
+    if (!isPlainObject(values) || !(key in values)) continue
+    const value = values[key]
+    const now = (current[section] as unknown as Record<string, unknown>)[key]
+    const changing = widens ? value === true && now !== true : JSON.stringify(value) !== JSON.stringify(now)
+    if (!changing) continue
+    delete values[key]
+    patch[section] = { ...patch[section], [key]: value }
+    changes.push({ label, value: shownValue(value) })
+  }
+  return changes.length > 0 ? { patch: patch as DeepPartial<AppSettings>, changes } : null
+}
+
+function shownValue(value: unknown): string {
+  if (value === true) return 'an'
+  if (value === false) return 'aus'
+  if (Array.isArray(value)) return value.length > 0 ? value.map(String).join(' ') : '(keine)'
+  return typeof value === 'string' && value.trim() ? value : '(leer)'
 }
 
 /** The settings in an exported file, or the file itself when it is a settings.json. */
