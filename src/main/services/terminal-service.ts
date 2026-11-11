@@ -44,6 +44,7 @@ import {
   readContextUsage,
   readLiveSession,
   readSessionLimit,
+  readStartedAt,
   readSessionTitles,
   readTurnOutcome,
   scannedTitle,
@@ -167,6 +168,8 @@ interface TerminalRecord {
   hooks: HookState | null
   /** The sessions the process had, oldest first: `/clear` starts another one in it. */
   sessionIds: string[]
+  /** Since when (ms) the tab knows its current session: one `/clear` starts is written after that. */
+  sessionSince: number
   /** The folder Claude Code last named for the session in `sessions/<pid>.json`; null until it did. */
   liveCwd: string | null
   /** The folders the tab's session worked in, the current one first: `/cd` moves it to another one. */
@@ -909,10 +912,56 @@ export class TerminalService extends TypedEmitter<Events> {
     return null
   }
 
-  /** The tab's process works in another session now (`/clear`, `/resume`): with its name, if it has one. */
+  /**
+   * The tab's process works in another session now (`/clear`, `/resume`): with its name, if it has
+   * one. The tab's own name goes to a session `/clear` started, not to one `/resume` opened.
+   */
   private switchSession(record: TerminalRecord, sessionId: string): void {
+    const first = record.info.sessionId === null
+    const known = record.sessionIds.includes(sessionId)
+    const since = record.sessionSince
     followSession(record, sessionId)
-    this.shareName(record)
+    record.sessionSince = Date.now()
+    if (first) {
+      this.shareName(record)
+      return
+    }
+    const { info } = record
+    const name = this.names?.get(sessionId)
+    if (name === undefined) return
+    if (name !== null) {
+      info.fixedTitle = true
+      info.title = name
+      return
+    }
+    if (!info.fixedTitle) return
+    // It was in the tab before without a name: the name was removed, or it is one `/resume` opened.
+    if (known) followSessionTitle(info)
+    else void this.nameIfNew(record, sessionId, since)
+  }
+
+  /**
+   * Gives the tab's name to the session it switched to if `/clear` started it: its transcript isn't
+   * written yet, or began after the tab knew its previous session (`since`). A session `/resume`
+   * opened keeps its own (missing) name: the tab follows its title instead.
+   */
+  private async nameIfNew(record: TerminalRecord, sessionId: string, since: number): Promise<void> {
+    let startedAt: number | null
+    try {
+      const { projectsDir } = this.accounts.paths(record.info.accountId)
+      const file = (await this.findTabTranscript(projectsDir, record, sessionId)) ?? (await findTranscript(projectsDir, sessionId))
+      startedAt = file ? await readStartedAt(file) : null
+    } catch {
+      return
+    }
+    const { info } = record
+    if (!this.names || info.sessionId !== sessionId || !info.fixedTitle || this.names.get(sessionId) !== null) return
+    if (startedAt === null || startedAt >= since) {
+      this.names.set(sessionId, info.title)
+      return
+    }
+    followSessionTitle(info)
+    this.emitChanged()
   }
 
   /**
@@ -1341,11 +1390,18 @@ function newRecord(info: TerminalInfo, defaultTitle: string, process: Pty.IPty |
     viewed: false,
     hooks: null,
     sessionIds: info.sessionId ? [info.sessionId] : [],
+    sessionSince: Date.now(),
     liveCwd: null,
     folders: info.cwd ? [info.cwd] : [],
     pastedImages: new Map(),
     keptImages: new Map(),
   }
+}
+
+/** The tab drops its name and shows its session's title (it comes with the next round). */
+function followSessionTitle(info: TerminalInfo): void {
+  info.fixedTitle = false
+  info.title = info.autoTitle
 }
 
 /** The tab's session is now `sessionId`; the sessions the process had before stay known. */

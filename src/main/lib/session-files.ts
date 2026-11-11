@@ -259,6 +259,36 @@ export function contextUsage(text: string): ContextReading | null {
 }
 
 /** The end of a transcript, from the first complete line on. */
+/** Read from the start of a transcript for when the session started. */
+const HEAD_BYTES = 64 * 1024
+
+/**
+ * When the session started: the time of the first entry of its transcript, or when the file was made
+ * if the start of it names none.
+ */
+export async function readStartedAt(file: string): Promise<number> {
+  const handle = await open(file, 'r')
+  try {
+    const { size, birthtimeMs, mtimeMs } = await handle.stat()
+    const length = Math.min(size, HEAD_BYTES)
+    const buffer = Buffer.alloc(length)
+    await handle.read(buffer, 0, length, 0)
+    for (const line of buffer.toString('utf8').split('\n')) {
+      if (!line.includes('"timestamp"')) continue
+      try {
+        const entry = JSON.parse(line) as { timestamp?: unknown }
+        const time = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN
+        if (Number.isFinite(time)) return time
+      } catch {
+        // cut off at the end of the head
+      }
+    }
+    return birthtimeMs > 0 ? birthtimeMs : mtimeMs
+  } finally {
+    await handle.close()
+  }
+}
+
 async function readTail(file: string): Promise<string> {
   const handle = await open(file, 'r')
   try {

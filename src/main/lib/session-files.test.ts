@@ -17,6 +17,7 @@ import {
   readRelocatedCwd,
   readSessionLimit,
   readSessionTitles,
+  readStartedAt,
   readTurnOutcome,
   scannedTitle,
   sessionFiles,
@@ -450,6 +451,21 @@ describe('readTurnOutcome', () => {
     const file = join(dir, `${SESSION}.jsonl`)
     await writeFile(file, jsonl(user('Fix it', 0), assistant([toolUse('toolu_01', 'Bash', { command: 'ls' })], 1)))
     expect((await readTurnOutcome(file, T0)).waiting).toEqual({ tool: 'Bash', detail: 'ls' })
+  })
+})
+
+describe('readStartedAt', () => {
+  it('reads when the session started from its first entry with a time', async () => {
+    const file = join(dir, `${SESSION}.jsonl`)
+    await writeFile(file, jsonl({ type: 'summary', summary: 'Alt' }, user('Fix it', -60), user('Again', 0)))
+    expect(await readStartedAt(file)).toBe(T0 - 60_000)
+  })
+
+  it('takes when the file was made without a time in it', async () => {
+    const file = join(dir, `${SESSION}.jsonl`)
+    await writeFile(file, '{"type":"summary"}\n')
+    const { birthtimeMs, mtimeMs } = await stat(file)
+    expect(await readStartedAt(file)).toBe(birthtimeMs > 0 ? birthtimeMs : mtimeMs)
   })
 })
 
