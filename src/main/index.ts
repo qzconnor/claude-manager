@@ -30,6 +30,7 @@ import { AutoSwitch } from './services/auto-switch'
 import { SessionHandoff } from './services/session-handoff'
 import { SessionHooks } from './services/session-hooks'
 import { SessionServer } from './services/session-server'
+import { SessionNames } from './services/session-names'
 import { SessionService } from './services/session-service'
 import { SettingsService } from './services/settings-service'
 import { TerminalRestore } from './services/terminal-restore'
@@ -82,7 +83,10 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     const win = mainWindow
     return win && !win.isDestroyed() ? dialogs.show(win, options) : null
   })
-  const terminals = new TerminalService(accounts, cli, settings, trust)
+  // The names the user gave sessions: tabs, the session list and the API show them.
+  const sessionNames = new SessionNames(userDataDir)
+  sessionNames.init()
+  const terminals = new TerminalService(accounts, cli, settings, trust, sessionNames)
   const workspaces = new WorkspaceService(userDataDir)
   workspaces.init()
   const themes = new ThemeService(userDataDir, (path) => shell.trashItem(path))
@@ -109,7 +113,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   })
   sessionHooks.init()
   terminals.addSessionArgs(sessionHooks)
-  const sessions = new SessionService(accounts, indexer, terminals)
+  const sessions = new SessionService(accounts, indexer, terminals, sessionNames)
   sessions.init()
   const handoff = new SessionHandoff(accounts, sessions, terminals, settings)
   const usage = new UsageService(accounts, settings, indexer, userDataDir, userAgent)

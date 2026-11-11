@@ -8,6 +8,7 @@ import {
   GitBranchIcon,
   GitForkIcon,
   ListChecksIcon,
+  PencilIcon,
   PlayIcon,
   Trash2Icon,
 } from '@lucide/vue'
@@ -37,6 +38,7 @@ import { formatBytes, formatRelative } from '@/lib/format'
 import { sessionFolder } from '@/lib/session-tree'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
+import { useUiStore } from '@/stores/ui'
 
 const props = defineProps<{
   session: SessionSummary
@@ -61,6 +63,7 @@ const accountSwitch = useAccountSwitch()
 /** A folder holds the sessions of all accounts: the dot before the title tells whose, as in the tabs. */
 const account = computed(() => accounts.get(props.session.accountId))
 const removal = useSessionRemoval()
+const ui = useUiStore()
 const menuOpen = ref(false)
 
 /** In selection mode the checked sessions stand out, otherwise the one shown on the right. */
@@ -87,6 +90,10 @@ const worktreeTitle = computed(() => {
   if (!worktree) return ''
   return [`Worktree ${worktree.name}`, worktree.branch && `Branch ${worktree.branch}`, worktree.path].filter(Boolean).join('\n')
 })
+
+function rename() {
+  ui.sessionRenameRequest = { sessionId: props.session.id, title: props.session.title, name: props.session.name }
+}
 
 async function copyId() {
   await navigator.clipboard.writeText(props.session.id)
@@ -192,6 +199,10 @@ async function copyId() {
       </ContextMenuGroup>
       <ContextMenuSeparator />
       <ContextMenuGroup>
+        <ContextMenuItem @select="rename">
+          <PencilIcon />
+          Umbenennen…
+        </ContextMenuItem>
         <ContextMenuItem :disabled="!sessionFolder(session)" @select="openFolder">
           <FolderOpenIcon />
           Projektordner öffnen

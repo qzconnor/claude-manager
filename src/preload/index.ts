@@ -124,6 +124,7 @@ const api: ManagerApi = {
     continueWith: (accountId, sessionId, targetAccountId) =>
       invoke(IpcInvoke.sessionsContinueWith, accountId, sessionId, targetAccountId),
     remove: (sessions) => invoke(IpcInvoke.sessionsRemove, sessions),
+    rename: (sessionId, name) => invoke(IpcInvoke.sessionsRename, sessionId, name),
     onChanged: (cb) => subscribe(IpcEvent.sessionsChanged, cb),
   },
   workspaces: {

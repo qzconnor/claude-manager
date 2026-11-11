@@ -8,7 +8,7 @@ export type SessionSort = 'recent' | 'name' | 'size' | 'count'
 
 /**
  * A folder in the session list with its sessions, of all accounts: a project of a workspace or of a
- * start folder, or a folder of its own.
+ * start folder (with the folders in it that sessions ran in), or a folder of its own.
  */
 export interface SessionProject {
   /** Unique in the list. */
@@ -17,9 +17,17 @@ export interface SessionProject {
   path: string | null
   /** Last part of the path, e.g. `claude-manager`; `~` for the home folder. */
   name: string
-  /** Where the folder lies, shortened with `~`; empty for a project, which lies in its workspace. */
+  /** Where the folder lies, shortened with `~`; empty in a workspace or start folder, where it lies in the folder above. */
   parent: string
+  /** The sessions in the folder and in all folders below it. */
   sessions: SessionSummary[]
+  /** The sessions in the folder itself. */
+  own: SessionSummary[]
+  /**
+   * The folders in it that sessions ran in, also deeper down: every level between the folder and its
+   * sessions is one, however deep. Only in a workspace or start folder; a folder of its own has none.
+   */
+  folders: SessionProject[]
   /** ISO time of the newest session; null without sessions. */
   updatedAt: string | null
   sizeBytes: number
@@ -63,12 +71,14 @@ export interface TreeRoots {
   startFolders: readonly string[]
 }
 
-/** Where a folder shows in the list: the root (workspace or start folder) and the project in it. */
+/** Where a folder shows in the list: the root (workspace or start folder) and the folder in it. */
 export interface Placement {
   /** Null for a folder of its own. */
   rootId: string | null
-  /** Null for the sessions of a root's own folder. */
+  /** The folder itself, maybe deep in a project; null for the sessions of a root's own folder. */
   projectId: string | null
+  /** The folders from the root's project down to `projectId`, the outermost first; empty without one. */
+  folderIds: string[]
 }
 
 /** The section of the folders in no workspace. */
@@ -107,7 +117,10 @@ function childPath(root: string, name: string): string {
   return /[\\/]$/.test(root) ? `${root}${name}` : `${root}${separator}${name}`
 }
 
-/** Finds the root a folder lies in and the project in it. */
+/**
+ * Finds the root a folder lies in and the folders between them: the project in the root, the folders
+ * in it, down to the folder itself (`chain`, empty for the root's own folder).
+ */
 function placer(roots: TreeRoots) {
   const workspaces = roots.workspaces.map((w) => w.path)
   const starts = roots.startFolders.filter((s) => s.trim())
@@ -121,20 +134,28 @@ function placer(roots: TreeRoots) {
     const kind = workspace ? 'workspace' : 'start'
     const root = workspace ?? workspaceOf(path, starts)
     if (!root) return null
-    const segment = pathSegments(path)[pathSegments(folderKey(root)).length]
-    if (!segment) return { kind, root, project: null } as const
-    const project = childPath(root, segment)
-    // As the folder is spelled on disk, not as some session wrote it.
-    const spelled = listed.get(folderKey(project))
-    return { kind, root, project: spelled ? childPath(root, spelled) : project } as const
+    const [first, ...deeper] = pathSegments(path).slice(pathSegments(folderKey(root)).length)
+    if (!first) return { kind, root, chain: [] as string[] } as const
+    // The project as it is spelled on disk, not as some session wrote it; below it as the session wrote it.
+    let folder = childPath(root, listed.get(folderKey(childPath(root, first))) ?? first)
+    const chain = [folder]
+    for (const segment of deeper) {
+      folder = childPath(folder, segment)
+      chain.push(folder)
+    }
+    return { kind, root, chain } as const
   }
 }
 
 /** Where the list shows sessions of the folder `path` (null: unknown, by Claude's `projectKey`). */
 export function placeFolder(path: string | null, projectKey: string, roots: TreeRoots): Placement {
   const place = placer(roots)(path)
-  if (!place) return { rootId: null, projectId: folderId(path, projectKey) }
-  return { rootId: rootId(place.kind, place.root), projectId: place.project ? folderId(place.project, '') : null }
+  if (!place) {
+    const id = folderId(path, projectKey)
+    return { rootId: null, projectId: id, folderIds: [id] }
+  }
+  const folderIds = place.chain.map((folder) => folderId(folder, ''))
+  return { rootId: rootId(place.kind, place.root), projectId: folderIds.at(-1) ?? null, folderIds }
 }
 
 /** Where the list shows a session. */
@@ -147,14 +168,21 @@ interface Bucket {
   path: string | null
   projectKey: string
   sessions: SessionSummary[]
+  /** The folders in it sessions ran in, by id; only in a root. */
+  folders: Map<string, Bucket>
+}
+
+function newBucket(path: string | null, projectKey: string): Bucket {
+  return { id: folderId(path, projectKey), path, projectKey, sessions: [], folders: new Map() }
 }
 
 /**
  * The sessions as the list shows them: workspaces with all their subfolders as projects (also those
  * without sessions while `showEmpty`, so sessions can start there), sessions in the workspace's own
- * folder beside them; the other folders by themselves; start folders like workspaces, but only with
- * the projects sessions ran in. Workspaces keep their order; folders are ordered by `sort`, ties by
- * the newest session and the name; their sessions newest first, or the largest first when sorting by size.
+ * folder beside them; in a project the folders sessions ran in, level by level down to them; the other
+ * folders by themselves; start folders like workspaces, but only with the projects sessions ran in.
+ * Workspaces keep their order; folders are ordered by `sort`, ties by the newest session and the name;
+ * their sessions newest first, or the largest first when sorting by size.
  */
 export function buildSessionTree(
   sessions: readonly SessionSummary[],
@@ -168,8 +196,8 @@ export function buildSessionTree(
   for (const workspace of roots.workspaces) {
     const projects = new Map<string, Bucket>()
     for (const name of workspace.projects) {
-      const path = childPath(workspace.path, name)
-      projects.set(folderId(path, ''), { id: folderId(path, ''), path, projectKey: '', sessions: [] })
+      const project = newBucket(childPath(workspace.path, name), '')
+      projects.set(project.id, project)
     }
     rootBuckets.set(rootId('workspace', workspace.path), { kind: 'workspace', path: workspace.path, own: [], projects })
   }
@@ -179,9 +207,12 @@ export function buildSessionTree(
     const placed = place(path)
     if (!placed) {
       const id = folderId(path, session.projectKey)
-      const bucket = folders.get(id)
-      if (bucket) bucket.sessions.push(session)
-      else folders.set(id, { id, path, projectKey: session.projectKey, sessions: [session] })
+      let folder = folders.get(id)
+      if (!folder) {
+        folder = newBucket(path, session.projectKey)
+        folders.set(id, folder)
+      }
+      folder.sessions.push(session)
       continue
     }
     const id = rootId(placed.kind, placed.root)
@@ -190,14 +221,21 @@ export function buildSessionTree(
       root = { kind: placed.kind, path: placed.root, own: [], projects: new Map() }
       rootBuckets.set(id, root)
     }
-    if (!placed.project) {
-      root.own.push(session)
-      continue
+    // Level by level: the project, the folders in it, the folder the session ran in.
+    let level = root.projects
+    let folder: Bucket | null = null
+    for (const path of placed.chain) {
+      const id = folderId(path, '')
+      let next = level.get(id)
+      if (!next) {
+        next = newBucket(path, session.projectKey)
+        level.set(id, next)
+      }
+      folder = next
+      level = next.folders
     }
-    const projectId = folderId(placed.project, '')
-    const bucket = root.projects.get(projectId)
-    if (bucket) bucket.sessions.push(session)
-    else root.projects.set(projectId, { id: projectId, path: placed.project, projectKey: session.projectKey, sessions: [session] })
+    if (folder) folder.sessions.push(session)
+    else root.own.push(session)
   }
 
   const { sort, home, showEmpty } = options
@@ -207,10 +245,13 @@ export function buildSessionTree(
     return list
   }
 
+  const compare = comparer(sort)
   const toProject = (bucket: Bucket, inRoot: boolean): SessionProject => {
-    const list = sortSessions(bucket.sessions)
+    const own = sortSessions(bucket.sessions)
+    const folders = [...bucket.folders.values()].map((f) => toProject(f, true)).sort(compare)
+    const list = folders.length > 0 ? sortSessions([...own, ...folders.flatMap((f) => f.sessions)]) : own
     // A folder of its own is spelled as its newest session writes it, e.g. after renaming its case.
-    const path = inRoot ? bucket.path : ([...list].sort(newestFirst).map(sessionFolder).find((p) => p !== null) ?? bucket.path)
+    const path = inRoot ? bucket.path : ([...own].sort(newestFirst).map(sessionFolder).find((p) => p !== null) ?? bucket.path)
     const described = describeFolder(path, bucket.projectKey, home)
     return {
       id: bucket.id,
@@ -218,12 +259,13 @@ export function buildSessionTree(
       name: described.name,
       parent: inRoot ? '' : described.parent,
       sessions: list,
+      own,
+      folders,
       updatedAt: newestOf(list),
       sizeBytes: list.reduce((sum, s) => sum + s.sizeBytes, 0),
     }
   }
 
-  const compare = comparer(sort)
   const result: SessionTree = { workspaces: [], folders: [], starts: [] }
   for (const [id, bucket] of rootBuckets) {
     const projects = [...bucket.projects.values()]
@@ -252,6 +294,11 @@ export function buildSessionTree(
   result.starts.sort((a, b) => (startOrder.get(a.id) ?? 0) - (startOrder.get(b.id) ?? 0))
   result.folders = [...folders.values()].map((f) => toProject(f, false)).sort(compare)
   return result
+}
+
+/** The folders and all folders in them, each before the ones in it. */
+export function allFolders(folders: readonly SessionProject[]): SessionProject[] {
+  return folders.flatMap((f) => [f, ...allFolders(f.folders)])
 }
 
 function newestFirst(a: { updatedAt: string }, b: { updatedAt: string }): number {

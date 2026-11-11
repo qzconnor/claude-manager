@@ -17,6 +17,7 @@ import { TypedEmitter } from '../lib/typed-emitter'
 import type { ConversationResult, IndexedSession, TranscriptSearchHit } from '../workers/indexer-protocol'
 import type { AccountService } from './account-service'
 import type { IndexerClient } from './indexer-client'
+import type { SessionNames } from './session-names'
 import type { TerminalService } from './terminal-service'
 
 type Events = { changed: [accountId: string] }
@@ -43,9 +44,19 @@ export class SessionService extends TypedEmitter<Events> {
     private readonly accounts: AccountService,
     private readonly indexer: IndexerClient,
     private readonly terminals: TerminalService,
+    private readonly names: SessionNames,
   ) {
     super()
     accounts.on('changed', () => this.syncWatchers())
+    // A session named or renamed: the lists show it at once. Which account has it doesn't matter, it is cheap.
+    names.on('changed', () => {
+      for (const account of this.accounts.list()) this.emit('changed', account.id)
+    })
+  }
+
+  /** Names the session (empty: it shows Claude Code's title again); also its tabs and the API show it. */
+  rename(sessionId: string, name: string): void {
+    this.names.set(sessionId, name)
   }
 
   init(): void {
@@ -211,13 +222,15 @@ export class SessionService extends TypedEmitter<Events> {
 
   private toSummary(accountId: string, s: IndexedSession): SessionSummary {
     this.filePaths.set(`${accountId}:${s.id}`, s.filePath)
+    const name = this.names.get(s.id)
     return {
       id: s.id,
       accountId,
       projectKey: s.projectKey,
       cwd: s.cwd && localPath(s.cwd),
       worktree: s.worktree ? { ...s.worktree, path: localPath(s.worktree.path), originalCwd: localPath(s.worktree.originalCwd) } : null,
-      title: s.title,
+      title: name ?? s.title,
+      name,
       firstPrompt: s.firstPrompt,
       lastPrompt: s.lastPrompt,
       gitBranch: s.gitBranch,

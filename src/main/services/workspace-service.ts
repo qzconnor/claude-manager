@@ -171,17 +171,22 @@ export class WorkspaceService extends TypedEmitter<Events> {
     return { path: target, leftover }
   }
 
-  /** Makes the folder `parent\name` with a `cm_prompts.md` and lists it as a workspace. */
+  /**
+   * Makes the folder `parent\name` with a `cm_prompts.md` and lists it as a workspace. Folders that are
+   * there already (also `name` itself) are used as they are; a `cm_prompts.md` in it keeps its text
+   * unless `prompt` brings one.
+   */
   async create(input: WorkspaceCreateInput): Promise<Workspace> {
     const error = workspaceNameError(input.name)
     if (error) throw new Error(error)
     if (!isAbsolute(input.parent)) throw new Error('Wähle den Ordner, in dem der Workspace entstehen soll.')
     const path = join(clean(input.parent), input.name.trim())
-    if (existsSync(path)) {
-      throw new Error(`„${path}“ gibt es schon. Vorhandene Ordner werden über ihr Kontextmenü zum Workspace.`)
-    }
-    await mkdir(path, { recursive: true })
-    await writeFile(join(path, WORKSPACE_PROMPT_FILE), normalizePrompt(input.prompt), 'utf8')
+    const info = await stat(path).catch(() => null)
+    if (info && !info.isDirectory()) throw new Error(`„${path}“ ist eine Datei, kein Ordner.`)
+    if (!info) await mkdir(path, { recursive: true })
+    const prompt = normalizePrompt(input.prompt)
+    const file = join(path, WORKSPACE_PROMPT_FILE)
+    if (prompt || !existsSync(file)) await writeFile(file, prompt, 'utf8')
     return this.add(path)
   }
 

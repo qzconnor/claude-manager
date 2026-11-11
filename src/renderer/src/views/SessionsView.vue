@@ -52,6 +52,7 @@ import { attempt } from '@/lib/errors'
 import { formatBytes } from '@/lib/format'
 import { containsTerms, searchText } from '@/lib/search'
 import {
+  allFolders,
   buildSessionTree,
   FOLDERS_SECTION_ID,
   opensByDefault,
@@ -271,12 +272,14 @@ const sections = computed<Section[]>(() => {
 })
 const workspaceSections = computed(() => sections.value.filter((s) => s.root?.kind === 'workspace'))
 
-const projects = computed(() => sections.value.flatMap((s) => s.projects))
+/** Every folder of the list, also those deep in a project. */
+const projects = computed(() => sections.value.flatMap((s) => allFolders(s.projects)))
 /** The sessions in the list, in its order. */
 const shown = computed(() => sections.value.flatMap((s) => [...s.projects.flatMap((p) => p.sessions), ...s.sessions]))
 const total = computed(() => shown.value.length)
 const totalBytes = computed(() => shown.value.reduce((sum, s) => sum + s.sizeBytes, 0))
-const folderCount = computed(() => projects.value.filter((p) => p.sessions.length > 0).length)
+/** The folders sessions ran in (a folder that only leads to them doesn't count). */
+const folderCount = computed(() => projects.value.filter((p) => p.own.length > 0).length)
 
 const emptyMessage = computed(() => {
   const filtered = age.value !== null || size.value !== null
@@ -320,9 +323,9 @@ function setOpen(id: string, open: boolean) {
 
 const openProjects = computed(() => new Set(projects.value.filter((p) => isOpen(p.id)).map((p) => p.id)))
 
-/** The folders with sessions in the open sections. */
+/** The folders with sessions in the open sections, also those deep in a project. */
 const reachableProjects = computed(() =>
-  sections.value.filter((s) => isOpen(s.id)).flatMap((s) => s.projects.filter((p) => p.sessions.length > 0)),
+  sections.value.filter((s) => isOpen(s.id)).flatMap((s) => allFolders(s.projects).filter((p) => p.sessions.length > 0)),
 )
 const allOpen = computed(
   () => reachableProjects.value.length > 0 && reachableProjects.value.every((p) => openProjects.value.has(p.id)),
@@ -339,10 +342,23 @@ function toggleAll() {
   }
 }
 
-/** Opens the section and the folder of a place in the list. */
+/** Opens the section and the folder of a place in the list, with every folder above it. */
 function revealPlace(place: Placement) {
   keepOpen(place.rootId ?? FOLDERS_SECTION_ID, true)
-  if (place.projectId) keepOpen(place.projectId, true)
+  for (const id of place.folderIds) keepOpen(id, true)
+}
+
+/**
+ * Opens or closes a folder. Opened, a folder that only leads to another one (no sessions of its own,
+ * one folder in it) opens that too, down to the sessions: no click per level.
+ */
+function openFolder(project: SessionProject, open: boolean) {
+  setOpen(project.id, open)
+  let folder = project
+  while (open && folder.own.length === 0 && folder.folders.length === 1) {
+    folder = folder.folders[0]!
+    setOpen(folder.id, true)
+  }
 }
 
 /** Opens the section and the folder of a session. */
@@ -368,11 +384,12 @@ const allState = computed(() => {
 })
 
 /** The sessions one can see, top to bottom: a Shift+click range leaves out closed folders. */
-const visibleOrder = computed(() =>
-  sections.value
-    .filter((s) => isOpen(s.id))
-    .flatMap((s) => [...s.projects.filter((p) => openProjects.value.has(p.id)).flatMap((p) => p.sessions), ...s.sessions]),
-)
+const visibleOrder = computed(() => {
+  // As a folder shows them: the folders in it first, then its own sessions.
+  const inFolder = (p: SessionProject): SessionSummary[] =>
+    openProjects.value.has(p.id) ? [...p.folders.flatMap(inFolder), ...p.own] : []
+  return sections.value.filter((s) => isOpen(s.id)).flatMap((s) => [...s.projects.flatMap(inFolder), ...s.sessions])
+})
 
 function startSelecting() {
   selecting.value = true
@@ -525,7 +542,7 @@ watch(
 /** The folders the list shows, to find out which of them aren't there (any more). */
 const shownFolders = computed(() => {
   const { workspaces: inWorkspaces, starts, folders } = tree.value
-  const paths = [...inWorkspaces, ...starts].flatMap((root) => root.projects.map((p) => p.path)).concat(folders.map((f) => f.path))
+  const paths = [...inWorkspaces, ...starts].flatMap((root) => allFolders(root.projects).map((p) => p.path)).concat(folders.map((f) => f.path))
   return [...new Set(paths.filter((path): path is string => !!path))].sort()
 })
 const checkFolders = () => workspaces.checkFolders(shownFolders.value)
@@ -714,7 +731,7 @@ onActivated(() => {
             :can-move-down="section.root?.kind === 'workspace' && workspaceSections.indexOf(section) < workspaceSections.length - 1"
             @update:open="setOpen(section.id, $event)"
             @move="moveSection(section, $event)"
-            @open-project="(project, open) => setOpen(project.id, open)"
+            @open-project="openFolder"
             @select="select"
             @toggle="toggle"
             @check="checkProject"

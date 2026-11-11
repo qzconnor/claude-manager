@@ -513,7 +513,13 @@ export interface SessionSummary {
   cwd: string | null
   /** The latest worktree the session worked in; it belongs with `worktree.originalCwd`. */
   worktree: SessionWorktree | null
+  /** What the app shows: the session's `name`, otherwise the title Claude Code gave it (as in `/resume`). */
   title: string
+  /**
+   * The name the user gave the session in the app (renaming its tab or the session in the list); null
+   * without one. It counts over Claude Code's title, also one it generates again later.
+   */
+  name: string | null
   firstPrompt: string | null
   lastPrompt: string | null
   gitBranch: string | null

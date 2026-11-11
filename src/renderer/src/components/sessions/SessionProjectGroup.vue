@@ -55,12 +55,15 @@ import SessionListItem from './SessionListItem.vue'
 const PAGE_SIZE = 50
 
 /**
- * A folder in the session list (a project of a workspace, or a folder of its own): its sessions of all
- * accounts below it, opened and closed like a folder in a tree.
+ * A folder in the session list (a project of a workspace, a folder in one, or a folder of its own): the
+ * folders in it that sessions ran in and its own sessions of all accounts below it, opened and closed
+ * like a folder in a tree.
  */
 const props = defineProps<{
   project: SessionProject
   open: boolean
+  /** The folders in it shown open, by id. */
+  openFolders?: Set<string>
   /**
    * In no workspace: the menu offers to make it, or the folder it lies in, a workspace. A project of a
    * workspace can become one itself, then the list shows it by itself.
@@ -72,15 +75,19 @@ const props = defineProps<{
   terms?: string[]
   selecting?: boolean
   checked?: Set<string>
-  /** Shown from elsewhere (e.g. the dashboard): stands out for a moment. */
-  highlighted?: boolean
+  /** The folder shown from elsewhere (e.g. the dashboard), by id: it stands out for a moment. */
+  highlighted?: string | null
 }>()
 const emit = defineEmits<{
   'update:open': [open: boolean]
   select: [session: SessionSummary]
   toggle: [session: SessionSummary, range: boolean]
-  /** Check or uncheck all sessions of the folder. */
+  /** Check or uncheck all sessions of the folder, also those in the folders in it. */
   check: [value: boolean]
+  /** A folder in it was opened or closed. */
+  openFolder: [folder: SessionProject, open: boolean]
+  /** All sessions of a folder in it were checked or unchecked. */
+  checkFolder: [folder: SessionProject, value: boolean]
 }>()
 
 const launcher = useLauncher()
@@ -90,7 +97,8 @@ const workspaces = useWorkspacesStore()
 const folderMove = useFolderMove()
 const menuOpen = ref(false)
 const limit = ref(PAGE_SIZE)
-const visible = computed(() => props.project.sessions.slice(0, limit.value))
+/** Its own sessions; those in its folders are with them. */
+const visible = computed(() => props.project.own.slice(0, limit.value))
 
 const checkState = computed(() => {
   const count = props.project.sessions.filter((s) => props.checked?.has(sessionKey(s.accountId, s.id))).length
@@ -173,7 +181,7 @@ async function copyPath() {
           :class="
             cn(
               'group/project flex h-8 scroll-mt-2 items-center gap-1 rounded-md pr-1 transition-colors hover:bg-muted/60',
-              (menuOpen || highlighted) && 'bg-muted/60',
+              (menuOpen || highlighted === project.id) && 'bg-muted/60',
             )
           "
         >
@@ -304,6 +312,28 @@ async function copyPath() {
     <CollapsibleContent
       :class="cn('flex flex-col gap-0.5 border-l py-0.5 pl-1.5', selecting ? 'ml-[2.65rem]' : 'ml-[0.9rem]')"
     >
+      <!-- Every level down to the sessions, however deep; the folders before the sessions, as in a tree. -->
+      <SessionProjectGroup
+        v-for="folder in project.folders"
+        :key="folder.id"
+        :project="folder"
+        :open="openFolders?.has(folder.id) ?? false"
+        :open-folders="openFolders"
+        :convertible="convertible"
+        :selected="selected"
+        :now="now"
+        :hits="hits"
+        :terms="terms"
+        :selecting="selecting"
+        :checked="checked"
+        :highlighted="highlighted"
+        @update:open="emit('openFolder', folder, $event)"
+        @check="emit('checkFolder', folder, $event)"
+        @open-folder="(f, o) => emit('openFolder', f, o)"
+        @check-folder="(f, v) => emit('checkFolder', f, v)"
+        @select="emit('select', $event)"
+        @toggle="(session, range) => emit('toggle', session, range)"
+      />
       <SessionListItem
         v-for="session in visible"
         :key="session.id"
@@ -318,13 +348,13 @@ async function copyPath() {
         @toggle="emit('toggle', session, $event)"
       />
       <Button
-        v-if="project.sessions.length > limit"
+        v-if="project.own.length > limit"
         variant="ghost"
         size="sm"
         class="self-start text-muted-foreground"
         @click="limit += PAGE_SIZE"
       >
-        Weitere {{ Math.min(PAGE_SIZE, project.sessions.length - limit) }} von {{ project.sessions.length - limit }} anzeigen
+        Weitere {{ Math.min(PAGE_SIZE, project.own.length - limit) }} von {{ project.own.length - limit }} anzeigen
       </Button>
     </CollapsibleContent>
   </Collapsible>
