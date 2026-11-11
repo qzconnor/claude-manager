@@ -157,6 +157,11 @@ const TREE = [
           },
           { id: 'claude.defaultArgs', label: 'Standard-Argumente', keywords: 'Parameter Optionen Modell model' },
           { id: 'claude.defaultCwd', label: 'Standard-Arbeitsordner', keywords: 'Ordner Verzeichnis Downloads Projekt' },
+          {
+            id: 'claude.hideSecrets',
+            label: 'Token und API-Key vor Befehlen verbergen',
+            keywords: 'Sicherheit Umgebung Umgebungsvariablen Bash Hooks MCP CLAUDE_CODE_SUBPROCESS_ENV_SCRUB',
+          },
           { id: 'claude.autoSwitch', label: 'Bei einem Limit automatisch wechseln', keywords: 'Account Rate Limit' },
           { id: 'claude.continuePrompt', label: 'Nachricht nach Account-Wechsel', keywords: 'Prompt weitermachen fortsetzen Limit' },
         ],

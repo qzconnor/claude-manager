@@ -40,6 +40,10 @@ const continuePrompt = useSetting(
   (s) => s.claude.continuePrompt,
   (continuePrompt) => ({ claude: { continuePrompt } }),
 )
+const hideSecretsFromCommands = useSetting(
+  (s) => s.claude.hideSecretsFromCommands,
+  (hideSecretsFromCommands) => ({ claude: { hideSecretsFromCommands } }),
+)
 const autoSwitch = useSetting(
   (s) => s.claude.autoSwitch,
   (autoSwitch) => ({ claude: { autoSwitch } }),
@@ -112,7 +116,7 @@ async function recheck() {
       anchor="claude.program"
       title="Claude Code"
       description="Programm und Startoptionen."
-      :reset="{ claude: ['executablePath', 'defaultArgs', 'defaultCwd', 'autoSwitch', 'continuePrompt'] }"
+      :reset="{ claude: ['executablePath', 'defaultArgs', 'defaultCwd', 'hideSecretsFromCommands', 'autoSwitch', 'continuePrompt'] }"
     >
       <SettingField anchor="claude.installation" label="Gefundene Installation">
         <Badge v-if="app.info?.claudeExecutable" variant="outline" class="max-w-80">
@@ -166,6 +170,14 @@ async function recheck() {
             :placeholder="app.info ? shortenPath(app.info.fallbackCwd, app.info.homeDir) : 'Downloads'"
           />
         </div>
+      </SettingField>
+      <SettingField
+        anchor="claude.hideSecrets"
+        for="hide-secrets"
+        label="Token und API-Key vor Befehlen verbergen"
+        description="Sessions mit einem Token- oder API-Key-Account bekommen ihn über die Umgebung, und so sieht ihn jeder Befehl, den Claude ausführt. Eingeschaltet entfernt Claude Code ihn dort (auch aus Hooks und MCP-Servern). Claude Code startet dann aber immer im normalen Berechtigungsmodus, --permission-mode und --dangerously-skip-permissions wirken nicht."
+      >
+        <Switch id="hide-secrets" v-model="hideSecretsFromCommands" />
       </SettingField>
       <SettingField
         anchor="claude.autoSwitch"

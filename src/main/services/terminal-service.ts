@@ -192,6 +192,11 @@ type Events = {
   turnEnded: [id: string, turn: TurnEnd]
 }
 
+/** Whether the environment for a session holds a token or API key of the app. */
+export function hasSecret(set: Record<string, string>): boolean {
+  return 'CLAUDE_CODE_OAUTH_TOKEN' in set || 'ANTHROPIC_API_KEY' in set
+}
+
 export class TerminalService extends TypedEmitter<Events> {
   private readonly terminals = new Map<string, TerminalRecord>()
   /** Tabs with more than one terminal; every other terminal has a tab of its own. */
@@ -346,6 +351,11 @@ export class TerminalService extends TypedEmitter<Events> {
     for (const [key, value] of Object.entries(accountEnv.set)) {
       deleteEnv(env, key)
       env[key] = value
+    }
+    // A token or API key in the environment reaches every command Claude runs; Claude Code can keep it out.
+    if (settings.claude.hideSecretsFromCommands && hasSecret(accountEnv.set)) {
+      deleteEnv(env, 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB')
+      env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = '1'
     }
     // The theme the program starts with, for programs that can't ask the terminal (see setColorScheme).
     if (this.dark !== null) {

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AccountService } from './account-service'
 import type { ClaudeCli } from './claude-cli'
 import type { SettingsService } from './settings-service'
-import { currentWorktree, movedTo, TerminalService } from './terminal-service'
+import { currentWorktree, hasSecret, movedTo, TerminalService } from './terminal-service'
 import type { WorkspaceTrust } from './workspace-trust'
 
 vi.mock('electron', () => ({ app: { getPath: () => '' } }))
@@ -133,5 +133,13 @@ describe('resuming a session that is open elsewhere', () => {
     await own.open({ accountId: 'a', resumeSessionId: '99999999-2222-4333-8444-555555555555' })
     expect(ask).not.toHaveBeenCalled()
     expect(ensure).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('hasSecret', () => {
+  it('knows the environment of a token or API key account', () => {
+    expect(hasSecret({ CLAUDE_CONFIG_DIR: 'x', CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-x' })).toBe(true)
+    expect(hasSecret({ ANTHROPIC_API_KEY: 'sk-ant-api03-x' })).toBe(true)
+    expect(hasSecret({ CLAUDE_CONFIG_DIR: 'x' })).toBe(false)
   })
 })

@@ -811,6 +811,12 @@ export interface ClaudeSettings {
   continuePrompt: string
   /** A session that hits a limit continues by itself with the next free account. */
   autoSwitch: boolean
+  /**
+   * A token or API key the app gives a session stays out of the commands Claude runs (Bash, hooks, MCP
+   * servers): Claude Code removes it there (`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`). Claude Code then
+   * always starts in the default permission mode, whatever `--permission-mode` says.
+   */
+  hideSecretsFromCommands: boolean
   /** Sessions the app starts get its browser as a tool (an MCP server of the app, `--mcp-config`). */
   browserTools: boolean
   /** Claude Code uses the browser without asking before every action (`--allowedTools`). */
