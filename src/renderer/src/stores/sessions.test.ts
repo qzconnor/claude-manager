@@ -67,6 +67,22 @@ async function loaded(...initial: SessionGroup[]) {
 }
 
 describe('sessions store', () => {
+  it('says why loading failed, until it works again', async () => {
+    const store = useSessionsStore()
+    let reject: (error: Error) => void = () => {}
+    api.sessions.list.mockImplementationOnce(() => new Promise((_, r) => (reject = r)))
+    const failing = store.load()
+    reject(new Error("Error invoking remote method 'sessions:list': Error: Der Indexer läuft nicht"))
+    await failing
+
+    expect(store).toMatchObject({ loaded: false, loading: false, error: 'Der Indexer läuft nicht' })
+
+    const again = store.load()
+    answers.shift()?.resolve([group('a', 's1')])
+    await again
+    expect(store).toMatchObject({ loaded: true, error: null })
+  })
+
   it('drops the sessions of an account that was removed', async () => {
     const store = await loaded(group('a', 's1'), group('b', 's2'))
 

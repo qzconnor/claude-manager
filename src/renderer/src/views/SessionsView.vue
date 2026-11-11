@@ -28,6 +28,7 @@ import AccountDot from '@/components/common/AccountDot.vue'
 import SessionDetailPanel from '@/components/sessions/SessionDetailPanel.vue'
 import SessionFilterChip, { type FilterOption } from '@/components/sessions/SessionFilterChip.vue'
 import SessionRootSection from '@/components/sessions/SessionRootSection.vue'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -699,10 +700,28 @@ onActivated(() => {
 
       <!-- Room for the scrollbar is kept, so the rows don't move when it comes; the padding evens out its width. -->
       <div ref="list" class="min-h-0 flex-1 overflow-y-auto py-2 pr-0.5 pl-2.5 [scrollbar-gutter:stable]">
-        <div v-if="!sessions.loaded" class="flex flex-col gap-3 p-2">
+        <div v-if="!sessions.loaded && sessions.error" class="p-2">
+          <Alert variant="destructive">
+            <TriangleAlertIcon />
+            <AlertTitle>Sessions konnten nicht geladen werden</AlertTitle>
+            <AlertDescription class="flex flex-col items-start gap-2">
+              <span>{{ sessions.error }}</span>
+              <Button variant="outline" size="sm" :disabled="sessions.loading" @click="reload">
+                <Spinner v-if="sessions.loading" />
+                Erneut versuchen
+              </Button>
+            </AlertDescription>
+          </Alert>
+        </div>
+        <div v-else-if="!sessions.loaded" class="flex flex-col gap-3 p-2">
           <Skeleton v-for="i in 8" :key="i" class="h-8 w-full" />
         </div>
         <div v-else class="flex flex-col gap-3">
+          <!-- Reading again failed: the list stays as it was. -->
+          <p v-if="sessions.error" class="flex items-center gap-2 px-3 py-1 text-xs text-destructive">
+            <TriangleAlertIcon class="size-3.5 shrink-0" />
+            <span class="min-w-0">Neu einlesen fehlgeschlagen: {{ sessions.error }}</span>
+          </p>
           <p
             v-for="failure in accountErrors"
             :key="failure.accountId"

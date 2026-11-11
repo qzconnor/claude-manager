@@ -1,11 +1,14 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { SessionGroup, SessionRef, SessionRemoveResult } from '@shared/types'
+import { errorMessage } from '@/lib/errors'
 
 export const useSessionsStore = defineStore('sessions', () => {
   const groups = ref<SessionGroup[]>([])
   const loading = ref(false)
   const loaded = ref(false)
+  /** Why the last full load failed; the list says so instead of loading on and on. */
+  const error = ref<string | null>(null)
   /** Sessions are being moved to the recycle bin. */
   const removing = ref(false)
   let pending: Promise<void> | null = null
@@ -13,6 +16,7 @@ export const useSessionsStore = defineStore('sessions', () => {
   const requests = new Map<string, number>()
   let requestCount = 0
 
+  /** Reads all accounts' sessions. Doesn't throw: a failure is in `error`. */
   async function load(): Promise<void> {
     if (pending) return pending
     // What it brings is newer than the answers to the requests before it.
@@ -23,6 +27,10 @@ export const useSessionsStore = defineStore('sessions', () => {
       .then((next) => {
         groups.value = next
         loaded.value = true
+        error.value = null
+      })
+      .catch((failure: unknown) => {
+        error.value = errorMessage(failure)
       })
       .finally(() => {
         loading.value = false
@@ -71,5 +79,5 @@ export const useSessionsStore = defineStore('sessions', () => {
     if (loaded.value) void reloadAccount(accountId)
   })
 
-  return { groups, loading, loaded, removing, load, reloadAccount, remove }
+  return { groups, loading, loaded, error, removing, load, reloadAccount, remove }
 })

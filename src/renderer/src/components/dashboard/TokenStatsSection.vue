@@ -6,9 +6,12 @@ import {
   DatabaseZapIcon,
   FolderKanbanIcon,
   MessagesSquareIcon,
+  TriangleAlertIcon,
 } from '@lucide/vue'
 import { computed, onActivated, ref, watch } from 'vue'
 import AccountSelect from '@/components/common/AccountSelect.vue'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Field, FieldLabel } from '@/components/ui/field'
@@ -16,9 +19,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
-import { toastError } from '@/lib/errors'
 import { formatDateTime, formatNumber, formatTokens } from '@/lib/format'
-import { useUsageStore } from '@/stores/usage'
+import { statsKey, useUsageStore } from '@/stores/usage'
 import FolderUsageCard from './FolderUsageCard.vue'
 import StatTile from './StatTile.vue'
 import TokenChart from './TokenChart.vue'
@@ -32,15 +34,15 @@ const usage = useUsageStore()
 const days = ref<number>(30)
 const includeCacheRead = ref(false)
 
-const stats = computed(() => {
-  const s = usage.stats[accountId.value]
-  return s && s.days.length === days.value ? s : null
-})
-const loading = computed(() => usage.statsLoading[accountId.value] ?? false)
+const key = computed(() => statsKey(accountId.value, days.value))
+/** Of this account and period; while another one is computed, the last one of it. */
+const stats = computed(() => usage.stats[key.value] ?? null)
+const loading = computed(() => usage.statsLoading[key.value] ?? false)
+const error = computed(() => usage.statsErrors[key.value] ?? null)
 const hasData = computed(() => (stats.value?.totals.messages ?? 0) > 0)
 
 function load() {
-  usage.loadStats(accountId.value, days.value).catch((error) => toastError(error, 'Statistik konnte nicht geladen werden'))
+  void usage.loadStats(accountId.value, days.value)
 }
 
 watch([accountId, days], load, { immediate: true })
@@ -80,10 +82,19 @@ function shortModel(model: string): string {
       </div>
     </div>
 
-    <div v-if="!stats" class="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+    <Alert v-if="error" variant="destructive">
+      <TriangleAlertIcon />
+      <AlertTitle>{{ stats ? 'Statistik konnte nicht neu berechnet werden' : 'Statistik konnte nicht berechnet werden' }}</AlertTitle>
+      <AlertDescription class="flex flex-col items-start gap-2">
+        <span>{{ error }}</span>
+        <Button variant="outline" size="sm" :disabled="loading" @click="load">Erneut versuchen</Button>
+      </AlertDescription>
+    </Alert>
+
+    <div v-if="!stats && !error" class="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
       <Skeleton v-for="i in 6" :key="i" class="h-20" />
     </div>
-    <div v-else class="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+    <div v-else-if="stats" class="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
       <StatTile label="Input" :icon="ArrowDownToLineIcon" :value="formatTokens(stats.totals.input)" />
       <StatTile label="Output" :icon="ArrowUpFromLineIcon" :value="formatTokens(stats.totals.output)" />
       <StatTile label="Cache-Write" :icon="DatabaseZapIcon" :value="formatTokens(stats.totals.cacheCreation)" />
@@ -92,7 +103,7 @@ function shortModel(model: string): string {
       <StatTile label="Sessions" :icon="FolderKanbanIcon" :value="formatNumber(stats.sessionCount)" />
     </div>
 
-    <div class="grid gap-4 xl:grid-cols-[2fr_1fr]">
+    <div v-if="stats || !error" class="grid gap-4 xl:grid-cols-[2fr_1fr]">
       <Card>
         <CardHeader>
           <CardTitle>Tokens pro Tag</CardTitle>
@@ -148,6 +159,6 @@ function shortModel(model: string): string {
       </Card>
     </div>
 
-    <FolderUsageCard :stats="stats" :loading="loading" :days="days" />
+    <FolderUsageCard v-if="stats || !error" :stats="stats" :loading="loading" :days="days" />
   </section>
 </template>
