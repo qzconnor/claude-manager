@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { moveSessions, projectFolderName } from './session-move'
+import { moveSession, moveSessions, projectFolderName } from './session-move'
 
 const S1 = '11111111-1111-4111-8111-111111111111'
 const S2 = '22222222-2222-4222-8222-222222222222'
@@ -103,5 +103,66 @@ describe('moveSessions', () => {
     expect(result).toEqual({ moved: 0, skipped: 2 })
     expect(lines(running)).toEqual([{ type: 'user' }])
     expect(lines(join(projects, 'F--Andere-shop', `${S2}.jsonl`))).toEqual([{ type: 'assistant' }])
+  })
+})
+
+describe('moveSession', () => {
+  let projects: string
+
+  beforeEach(() => {
+    projects = mkdtempSync(join(tmpdir(), 'cm-move-one-'))
+  })
+
+  afterEach(() => {
+    rmSync(projects, { recursive: true, force: true })
+  })
+
+  function transcript(cwd: string, id: string, text = '{"type":"user"}\n'): string {
+    const dir = join(projects, projectFolderName(cwd))
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, `${id}.jsonl`)
+    writeFileSync(file, text)
+    return file
+  }
+
+  const lines = (file: string) =>
+    readFileSync(file, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+
+  it('moves one session into another folder as /cd does, the others and the memory stay', async () => {
+    const file = transcript('F:\\Downloads', S1)
+    mkdirSync(join(projects, 'F--Downloads', S1, 'subagents'), { recursive: true })
+    const stays = transcript('F:\\Downloads', S2)
+    mkdirSync(join(projects, 'F--Downloads', 'memory'))
+
+    expect(await moveSession(projects, { id: S1, cwd: 'F:\\Downloads', filePath: file }, 'F:\\Kunden\\shop')).toBe(true)
+
+    const moved = join(projects, 'F--Kunden-shop', `${S1}.jsonl`)
+    expect(lines(moved)).toEqual([{ type: 'user' }, { type: 'relocated', sessionId: S1, relocatedCwd: 'F:\\Kunden\\shop' }])
+    expect(existsSync(join(projects, 'F--Kunden-shop', S1, 'subagents'))).toBe(true)
+    expect(existsSync(file)).toBe(false)
+    expect(existsSync(stays)).toBe(true)
+    expect(existsSync(join(projects, 'F--Downloads', 'memory'))).toBe(true)
+    expect(existsSync(join(projects, 'F--Kunden-shop', 'memory'))).toBe(false)
+  })
+
+  it('removes the project folder it leaves once it is empty', async () => {
+    const file = transcript('F:\\Downloads', S1)
+
+    expect(await moveSession(projects, { id: S1, cwd: 'F:\\Downloads', filePath: file }, 'F:\\Kunden\\shop')).toBe(true)
+
+    expect(existsSync(join(projects, 'F--Downloads'))).toBe(false)
+  })
+
+  it('leaves the session where it is when a copy lies in the new folder', async () => {
+    const file = transcript('F:\\Downloads', S1)
+    const copy = transcript('F:\\Kunden\\shop', S1, '{"type":"assistant"}\n')
+
+    expect(await moveSession(projects, { id: S1, cwd: 'F:\\Downloads', filePath: file }, 'F:\\Kunden\\shop')).toBe(false)
+
+    expect(lines(file)).toEqual([{ type: 'user' }])
+    expect(lines(copy)).toEqual([{ type: 'assistant' }])
   })
 })

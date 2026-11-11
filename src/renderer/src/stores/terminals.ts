@@ -897,6 +897,14 @@ export const useTerminalsStore = defineStore('terminals', () => {
     return info
   }
 
+  /** Moves the tab's session to the folder `to` by starting it again there; null when the folder isn't trusted. */
+  async function moveSession(id: string, to: string): Promise<TerminalInfo | null> {
+    if (!byId.value.has(id)) return null
+    const info = await window.api.terminals.moveSession(id, to)
+    if (info) replace(id, info)
+    return info
+  }
+
   /** Opens a session from the history with another account's limits. */
   async function continueSession(accountId: string, sessionId: string, targetAccountId: string): Promise<TerminalInfo | null> {
     const info = await window.api.sessions.continueWith(accountId, sessionId, targetAccountId)
@@ -1150,6 +1158,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     restart,
     continueWith,
     restartSession,
+    moveSession,
     continueSession,
     cycle,
     activateAt,

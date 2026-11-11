@@ -1,3 +1,4 @@
+import { folderKey } from '@shared/folders'
 import type { Account, TerminalCreateOptions, TerminalInfo } from '@shared/types'
 import { canLendCredentials } from '@shared/utils'
 import { assertNoNewerCopy, copySession, locateTranscript } from '../lib/session-files'
@@ -51,6 +52,49 @@ export class SessionHandoff extends TypedEmitter<Events> {
     const old = this.terminals.get(terminalId)
     if (old.mode !== 'session') throw new Error('Nur Claude-Code-Sessions lassen sich mit ihrem Verlauf neu starten.')
     return this.handOver(old, this.accounts.get(old.authAccountId), false)
+  }
+
+  /**
+   * Moves the tab's session to the folder `to`, as `/cd` does, by starting it again: the process ends,
+   * the session moves (see SessionService.move) and goes on in the tab in the new folder with its
+   * conversation. What the input held and wasn't sent is lost. Not while Claude works. Null when the
+   * user doesn't trust `to`: the tab then keeps running where it was. Should the move fail, the session
+   * goes on where it was, and the error follows.
+   */
+  async moveTerminal(terminalId: string, to: string): Promise<TerminalInfo | null> {
+    const old = this.terminals.get(terminalId)
+    if (old.mode !== 'session') throw new Error('Nur Claude-Code-Sessions lassen sich verschieben.')
+    if (!old.sessionId) throw new Error('Welche Session in diesem Tab läuft, ist noch nicht bekannt.')
+    if (old.status === 'running' && (old.busy || old.compacting || old.subagents > 0)) {
+      throw new Error('Claude arbeitet gerade. Sobald es fertig ist, lässt sich die Session verschieben.')
+    }
+    if (this.switching.has(terminalId)) throw new Error('Der Wechsel läuft bereits.')
+    this.switching.add(terminalId)
+    try {
+      const sessionId = old.sessionId
+      const located = await locateTranscript(this.accounts.paths(old.accountId).projectsDir, sessionId, old.cwd)
+      if (folderKey(located?.cwd ?? old.cwd) === folderKey(to)) throw new Error('Die Session ist schon in diesem Ordner.')
+      const cwd = await this.terminals.trustedCwd(old.accountId, to)
+      if (cwd === null) return null
+      // Two processes must never write to the same transcript: the old one ends first.
+      await this.terminals.stop(terminalId)
+      let failed: unknown = null
+      // Nothing written yet: the session simply starts anew in the new folder.
+      if (located) await this.sessions.move(old.accountId, sessionId, cwd).catch((error: unknown) => (failed = error))
+      const options = await this.prepare(old.accountId, sessionId, failed ? (located?.cwd ?? old.cwd) : cwd, this.accounts.get(old.authAccountId))
+      const info = this.terminals.create({
+        ...options,
+        title: old.fixedTitle ? old.title : null,
+        muted: old.muted,
+        replaces: terminalId,
+      })
+      this.emit('replaced', terminalId, info)
+      this.terminals.close(terminalId)
+      if (failed) throw failed
+      return info
+    } finally {
+      this.switching.delete(terminalId)
+    }
   }
 
   /** `carryOn`: a session that stopped at its limit gets the continue prompt. */

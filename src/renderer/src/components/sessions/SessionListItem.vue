@@ -39,6 +39,7 @@ import { sessionFolder } from '@/lib/session-tree'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
 import { useUiStore } from '@/stores/ui'
+import SessionMoveMenu from './SessionMoveMenu.vue'
 
 const props = defineProps<{
   session: SessionSummary
@@ -172,7 +173,7 @@ async function copyId() {
         </ItemContent>
       </Item>
     </ContextMenuTrigger>
-    <ContextMenuContent class="w-56">
+    <ContextMenuContent class="w-64">
       <ContextMenuGroup>
         <ContextMenuItem @select="launcher.resume(session)">
           <PlayIcon />
@@ -207,6 +208,7 @@ async function copyId() {
           <FolderOpenIcon />
           Projektordner öffnen
         </ContextMenuItem>
+        <SessionMoveMenu v-if="menuOpen" :session="session" />
         <ContextMenuItem @select="copyId">
           <CopyIcon />
           Session-ID kopieren

@@ -1,5 +1,5 @@
 import { watch, type FSWatcher } from 'node:fs'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, stat } from 'node:fs/promises'
 import { shell } from 'electron'
 import type {
   SessionDetail,
@@ -10,9 +10,9 @@ import type {
   SessionSummary,
   TranscriptToolDetail,
 } from '@shared/types'
-import { windowsPath } from '@shared/folders'
+import { folderKey, windowsPath } from '@shared/folders'
 import { liveSessionIds, sessionFiles } from '../lib/session-files'
-import { moveSessions } from '../lib/session-move'
+import { moveSession, moveSessions } from '../lib/session-move'
 import { TypedEmitter } from '../lib/typed-emitter'
 import type { ConversationResult, IndexedSession, TranscriptSearchHit } from '../workers/indexer-protocol'
 import type { AccountService } from './account-service'
@@ -218,6 +218,32 @@ export class SessionService extends TypedEmitter<Events> {
       }
     }
     return moved
+  }
+
+  /**
+   * The session goes on in the folder `to`, as after `/cd` in Claude Code: its transcript moves into the
+   * project folder of `to`, so Claude Code resumes it there. Not while a Claude Code has it open, it
+   * would go on writing where it was: there `/cd` moves it.
+   */
+  async move(accountId: string, sessionId: string, to: string): Promise<void> {
+    const folder = await stat(to).catch(() => null)
+    if (!folder?.isDirectory()) throw new Error(`Den Ordner gibt es nicht: ${to}`)
+    const paths = this.accounts.paths(accountId)
+    // Re-scan first: the file paths are only known for listed sessions.
+    const [group] = await this.list(accountId)
+    const summary = group?.sessions.find((s) => s.id === sessionId)
+    const filePath = this.filePaths.get(`${accountId}:${sessionId}`)
+    if (!summary || !filePath) throw new Error('Session nicht gefunden.')
+    if (summary.cwd && folderKey(summary.cwd) === folderKey(to)) throw new Error('Die Session ist schon in diesem Ordner.')
+    if ((await liveSessionIds(paths.sessionsDir)).has(sessionId)) {
+      throw new Error('Die Session läuft gerade in einem Claude Code außerhalb der App. Beende es dort, oder verschiebe sie dort mit /cd.')
+    }
+    if (!(await moveSession(paths.projectsDir, { id: sessionId, cwd: summary.cwd, filePath }, to))) {
+      throw new Error('Im neuen Ordner liegt schon eine Kopie dieser Session.')
+    }
+    this.filePaths.delete(`${accountId}:${sessionId}`)
+    this.terminals.followMovedSession(accountId, sessionId, to)
+    this.emit('changed', accountId)
   }
 
   private toSummary(accountId: string, s: IndexedSession): SessionSummary {

@@ -13,7 +13,7 @@ import type {
 import { sameData } from '@shared/utils'
 import { errorMessage } from '@/lib/errors'
 import { absolutePath, ancestors, GIT_STATUSES, recordTouch, TOUCH_KINDS, treePathOf, type TouchRecord } from '@/lib/file-tree'
-import type { DiffFile } from '@/lib/workspace'
+import { diffOfTab, diffTab, type DiffFile } from '@/lib/workspace'
 import { useAppStore } from './app'
 import { useTerminalsStore, type GroupView } from './terminals'
 
@@ -74,6 +74,8 @@ interface Saved {
   hiddenKinds: FileTouchKind[]
   /** Long lines of the review of all changes wrap. */
   diffWrap: boolean
+  /** Tabs of a file's changes shown without the tree (see `bare`). */
+  bare: string[]
 }
 
 /** The values of a saved list that are among `known`. */
@@ -166,6 +168,12 @@ export const useFileTreeStore = defineStore('file-tree', () => {
   const open = reactive(new Set<string>())
   const remembered: Record<string, string[]> =
     saved.expanded && typeof saved.expanded === 'object' ? { ...saved.expanded } : {}
+  /**
+   * Tabs of a file's changes in another group than their tree's tab that show them without the tree:
+   * `/diff` opens all changes beside the session, whose tree is beside it already. The group's button
+   * brings the tree back there.
+   */
+  const bare = reactive(new Set(Array.isArray(saved.bare) ? saved.bare.filter((tab) => typeof tab === 'string') : []))
   /** The open tabs of the last run are only taken over once the terminals are loaded. */
   let ready = false
 
@@ -194,6 +202,15 @@ export const useFileTreeStore = defineStore('file-tree', () => {
       if ([...activity.value.keys()].some((id) => !ids.has(id))) {
         activity.value = new Map([...activity.value].filter(([id]) => ids.has(id)))
       }
+    },
+  )
+  // A closed file's tab is forgotten: opened again, it shows the tree as any other.
+  watch(
+    () => terminals.groups,
+    (groups) => {
+      if (!ready || bare.size === 0) return
+      const tabs = new Set(groups.flatMap((g) => g.tabs.map((t) => t.id)))
+      for (const tab of bare) if (!tabs.has(tab)) bare.delete(tab)
     },
   )
   terminals.onReplaced((oldId, newId) => {
@@ -227,13 +244,17 @@ export const useFileTreeStore = defineStore('file-tree', () => {
         hiddenStatuses: [...hiddenStatuses],
         hiddenKinds: [...hiddenKinds],
         diffWrap: diffWrap.value,
+        bare: [...bare],
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
     } catch {
       // Storage full or blocked: the trees are just not remembered.
     }
   }
-  watch([width, showIgnored, diffShare, filtersOpen, diffWrap, filters, hiddenStatuses, hiddenKinds, () => [...open].join('\n')], save)
+  watch(
+    [width, showIgnored, diffShare, filtersOpen, diffWrap, filters, hiddenStatuses, hiddenKinds, () => [...open].join('\n'), () => [...bare].join('\n')],
+    save,
+  )
 
   /**
    * The tree of a tab: its folder is the one its session works in (a worktree's folder for a session in
@@ -273,6 +294,38 @@ export const useFileTreeStore = defineStore('file-tree', () => {
     setOpen(id, !open.has(id))
   }
 
+  /** A group shows a file's changes while its tree belongs to a tab of another group: the file has a say of its own. */
+  function apart(target: TreeTarget, group: GroupView): boolean {
+    return !!diffOfTab(group.active) && !group.tabs.some((t) => t.id === target.id)
+  }
+
+  /** The tree `target` (the group's, see `targetOfGroup`) is beside the tab the group shows. */
+  function shownIn(target: TreeTarget, group: GroupView): boolean {
+    return open.has(target.id) && !(apart(target, group) && bare.has(group.active!))
+  }
+
+  /**
+   * Opens or closes the tree beside the tab a group shows. A file's changes apart from their tree's tab
+   * do so for themselves: the tree stays as it is beside that tab.
+   */
+  function toggleIn(target: TreeTarget, group: GroupView): void {
+    if (!apart(target, group)) return toggle(target.id)
+    const tab = group.active!
+    if (shownIn(target, group)) {
+      bare.add(tab)
+    } else {
+      bare.delete(tab)
+      open.add(target.id)
+    }
+  }
+
+  /** Closes the tree beside the tab of a group (`groupId`), in one tab bar the tab's tree. */
+  function close(target: TreeTarget, groupId?: string | null): void {
+    const group = groupId ? terminals.groups.find((g) => g.id === groupId) : undefined
+    if (group && shownIn(target, group)) toggleIn(target, group)
+    else setOpen(target.id, false)
+  }
+
   function setWidth(next: number): void {
     width.value = clampWidth(next)
   }
@@ -305,13 +358,17 @@ export const useFileTreeStore = defineStore('file-tree', () => {
   /**
    * Shows all changes of a session's folder, as the knob of its tree does: `/diff` was typed in the
    * session (setting `claude.diffCommand`). In groups as a tab that stays in the group right of the
-   * session's, so the session stays in view; otherwise beside the session's terminal.
+   * session's, so the session stays in view, and without the tree, which is beside the session already
+   * (unless it was open apart from the session before); otherwise beside the session's terminal.
    */
   function showAllChanges(id: string): void {
     const target = targetOf(terminals.terminals.find((t) => t.id === id))
     if (!target) return
-    if (terminals.grouped) terminals.openDiffBeside({ root: target.root, path: '' }, id)
-    else showDiff(target, '')
+    if (!terminals.grouped) return showDiff(target, '')
+    const file = { root: target.root, path: '' }
+    const placed = terminals.groupOf(diffTab(file))
+    if (!placed || placed.tabs.some((t) => t.id === id)) bare.add(diffTab(file))
+    terminals.openDiffBeside(file, id)
   }
 
   // ── Trees by folder ──
@@ -755,6 +812,9 @@ export const useFileTreeStore = defineStore('file-tree', () => {
     isOpen,
     setOpen,
     toggle,
+    shownIn,
+    toggleIn,
+    close,
     setWidth,
     setDiffShare,
     showDiff,

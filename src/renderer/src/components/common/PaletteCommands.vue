@@ -203,10 +203,10 @@ const closesBrowser = computed(
           v-if="treeTarget"
           value="toggle-file-tree"
           filter-text="Dateibaum ein- ausblenden Dateien Explorer Ordner Tree"
-          @select="run(() => fileTree.toggle(treeTarget))"
+          @select="run(() => fileTree.toggle(treeTarget, fileTree.focusedGroup.value))"
         >
           <FilesIcon />
-          {{ fileTree.shown(treeTarget) ? 'Dateibaum schließen' : 'Dateibaum öffnen' }}
+          {{ fileTree.shown(treeTarget, fileTree.focusedGroup.value) ? 'Dateibaum schließen' : 'Dateibaum öffnen' }}
           <CommandShortcut>Strg+Umschalt+E</CommandShortcut>
         </CommandItem>
         <CommandItem v-if="group && terminals.groups.length > 1" value="close-group" @select="run(() => closeGroup(group!.id))">

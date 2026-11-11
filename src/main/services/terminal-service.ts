@@ -789,10 +789,35 @@ export class TerminalService extends TypedEmitter<Events> {
    * it is restored or continued in. True when the tab's folder changed.
    */
   private followFolder(record: TerminalRecord, liveCwd: string): boolean {
-    const { info } = record
-    const folder = movedTo(record.liveCwd, liveCwd, info.cwd)
+    const folder = movedTo(record.liveCwd, liveCwd, record.info.cwd)
     record.liveCwd = liveCwd
     if (!folder) return false
+    this.moveTab(record, folder)
+    return true
+  }
+
+  /**
+   * The app moved the session to the folder `cwd` while it didn't run (see SessionService.move): its
+   * ended tabs go along, as with `/cd`, so they show it there and continue it there.
+   */
+  followMovedSession(accountId: string, sessionId: string, cwd: string): void {
+    let changed = false
+    for (const record of this.terminals.values()) {
+      const { info } = record
+      if (record.process || info.mode !== 'session' || info.accountId !== accountId) continue
+      if ((info.sessionId ?? info.resumeSessionId) !== sessionId) continue
+      this.moveTab(record, cwd)
+      // Gone from the worktree, as `/cd` leaves it.
+      info.worktree = null
+      followTitle(info, this.autoTitle(record))
+      changed = true
+    }
+    if (changed) this.emitChanged()
+  }
+
+  /** The tab's session works in `folder` now: the tab's tree, branch, title and new shells beside it go along. */
+  private moveTab(record: TerminalRecord, folder: string): void {
+    const { info } = record
     info.cwd = folder
     record.folders = [folder, ...record.folders.filter((f) => folderKey(f) !== folderKey(folder))]
     // Its transcript went along: looked for again in the new folder.
@@ -802,7 +827,6 @@ export class TerminalService extends TypedEmitter<Events> {
     } catch {
       // The account is gone: the tab keeps its title.
     }
-    return true
   }
 
   /**

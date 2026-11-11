@@ -626,6 +626,21 @@ export function useTerminal(options: UseTerminalOptions) {
     }
     el.addEventListener('contextmenu', onContextMenu)
     cleanups.push(() => el.removeEventListener('contextmenu', onContextMenu))
+    // With right-click paste the right button belongs to the app: a program that uses the mouse doesn't
+    // get it as well. Claude Code does, and under Windows and Linux it pastes on a right-click itself,
+    // so the text came twice. The press and release stop before xterm, which would report them.
+    const onRightButton = (event: MouseEvent) => {
+      if (event.button !== 2 || !settingsStore.settings.terminal.rightClickPaste || t.modes.mouseTrackingMode === 'none') return
+      event.stopPropagation()
+      // xterm focuses the terminal on a press; it doesn't see this one.
+      if (event.type === 'mousedown') t.focus()
+    }
+    el.addEventListener('mousedown', onRightButton, true)
+    el.addEventListener('mouseup', onRightButton, true)
+    cleanups.push(() => {
+      el.removeEventListener('mousedown', onRightButton, true)
+      el.removeEventListener('mouseup', onRightButton, true)
+    })
 
     // Subscribe before fetching the buffer; the stream offsets remove any overlap.
     let end = -1

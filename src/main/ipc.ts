@@ -283,6 +283,9 @@ export function registerIpc(ctx: AppContext): void {
     ctx.handoff.continueTerminal(requireString(id, 'id'), requireString(accountId, 'accountId')),
   )
   ipcMain.handle(IpcInvoke.terminalsRestartSession, (_e, id: unknown) => ctx.handoff.restartTerminal(requireString(id, 'id')))
+  ipcMain.handle(IpcInvoke.terminalsMoveSession, (_e, id: unknown, to: unknown) =>
+    ctx.handoff.moveTerminal(requireString(id, 'id'), requirePath(to, 'to')),
+  )
   ipcMain.handle(IpcInvoke.terminalsSetMuted, (_e, id: unknown, muted: unknown) => {
     if (typeof muted !== 'boolean') throw new Error('Ungültiger Parameter: muted')
     ctx.terminals.setMuted(requireString(id, 'id'), muted)
@@ -409,6 +412,11 @@ export function registerIpc(ctx: AppContext): void {
     const id = requireString(sessionId, 'sessionId')
     if (!SESSION_ID_RE.test(id)) throw new Error('Ungültige Session-ID.')
     ctx.sessions.rename(id, name)
+  })
+  ipcMain.handle(IpcInvoke.sessionsMove, (_e, accountId: unknown, sessionId: unknown, to: unknown) => {
+    const id = requireString(sessionId, 'sessionId')
+    if (!SESSION_ID_RE.test(id)) throw new Error('Ungültige Session-ID.')
+    return ctx.sessions.move(ctx.accounts.get(requireString(accountId, 'accountId')).id, id, requirePath(to, 'to'))
   })
   ctx.sessions.on('changed', (accountId) => broadcast(IpcEvent.sessionsChanged, accountId))
 

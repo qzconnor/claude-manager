@@ -112,7 +112,7 @@ const rootId = (kind: SessionRoot['kind'], path: string) => `${kind}\n${folderKe
 const folderId = (path: string | null, projectKey: string) => `folder\n${path ? folderKey(path) : `#${projectKey}`}`
 
 /** `name` in the folder `root`, with the root's kind of separator. */
-function childPath(root: string, name: string): string {
+export function childPath(root: string, name: string): string {
   const separator = root.includes('\\') || /^[a-z]:/i.test(root) ? '\\' : '/'
   return /[\\/]$/.test(root) ? `${root}${name}` : `${root}${separator}${name}`
 }

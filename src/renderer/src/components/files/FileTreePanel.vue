@@ -693,7 +693,7 @@ const iconButton =
             Pfad kopieren
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem @select="fileTree.setOpen(target.id, false)">
+          <DropdownMenuItem @select="fileTree.close(target, groupId)">
             <XIcon />
             Dateibaum schließen
           </DropdownMenuItem>

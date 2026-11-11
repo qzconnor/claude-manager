@@ -64,10 +64,47 @@ async function appendLine(file: string, line: string): Promise<void> {
 }
 
 /**
+ * Moves the session to the folder `cwd` as `/cd` does: the transcript and the folder next to it into
+ * the project folder of `cwd`, then a `relocated` entry, so Claude Code resumes it there. Resolves to
+ * that project folder; null when a transcript of the session lies there already (a copy), then nothing moved.
+ */
+async function relocate(projectsDir: string, session: MovableSession, cwd: string): Promise<string | null> {
+  const source = dirname(session.filePath)
+  const targetDir = join(projectsDir, projectFolderName(cwd))
+  let transcript = session.filePath
+  if (folderKey(source) !== folderKey(targetDir)) {
+    transcript = join(targetDir, basename(session.filePath))
+    if (await exists(transcript)) return null
+    await mkdir(targetDir, { recursive: true })
+    // Subagents and saved tool output first: Claude Code finds the session once the transcript is there.
+    const extras = join(source, session.id)
+    if ((await isDirectory(extras)) && !(await exists(join(targetDir, session.id)))) {
+      await rename(extras, join(targetDir, session.id))
+    }
+    await rename(session.filePath, transcript)
+  }
+  await appendLine(transcript, JSON.stringify({ type: 'relocated', sessionId: session.id, relocatedCwd: cwd }))
+  return targetDir
+}
+
+/**
+ * One session goes on in the folder `to`, as after `/cd` in Claude Code. The memory stays: it belongs
+ * to the project, not to the session. The project folder it leaves goes if nothing else is in it.
+ * False when a transcript of the session lies in the new place already (a copy): then nothing moved.
+ * The caller makes sure no running Claude Code has the session open.
+ */
+export async function moveSession(projectsDir: string, session: MovableSession, to: string): Promise<boolean> {
+  const target = await relocate(projectsDir, session, to)
+  if (target === null) return false
+  const source = dirname(session.filePath)
+  if (folderKey(source) !== folderKey(target)) await rmdir(source).catch(() => undefined)
+  return true
+}
+
+/**
  * The sessions that worked in the folder `from` (or below it), which is now `to`, go along, as `/cd`
- * moves a session: the transcript and the folder next to it into the project folder of the new place,
- * then a `relocated` entry, so Claude Code resumes them there. Sessions in `live` are open in a running
- * Claude Code and stay: two writers must never share a transcript. The project's memory goes along too.
+ * moves a session (see `relocate`). Sessions in `live` are open in a running Claude Code and stay: two
+ * writers must never share a transcript. The project's memory goes along too.
  */
 export async function moveSessions(
   projectsDir: string,
@@ -87,25 +124,13 @@ export async function moveSessions(
       continue
     }
     try {
-      const source = dirname(session.filePath)
-      const targetDir = join(projectsDir, projectFolderName(cwd))
-      let transcript = session.filePath
-      if (folderKey(source) !== folderKey(targetDir)) {
-        transcript = join(targetDir, basename(session.filePath))
-        if (await exists(transcript)) {
-          result.skipped++
-          continue
-        }
-        await mkdir(targetDir, { recursive: true })
-        // Subagents and saved tool output first: Claude Code finds the session once the transcript is there.
-        const extras = join(source, session.id)
-        if ((await isDirectory(extras)) && !(await exists(join(targetDir, session.id)))) {
-          await rename(extras, join(targetDir, session.id))
-        }
-        await rename(session.filePath, transcript)
-        if (!folders.has(source)) folders.set(source, targetDir)
+      const target = await relocate(projectsDir, session, cwd)
+      if (target === null) {
+        result.skipped++
+        continue
       }
-      await appendLine(transcript, JSON.stringify({ type: 'relocated', sessionId: session.id, relocatedCwd: cwd }))
+      const source = dirname(session.filePath)
+      if (folderKey(source) !== folderKey(target) && !folders.has(source)) folders.set(source, target)
       result.moved++
     } catch (error) {
       console.warn(`[sessions] session ${session.id} could not move along`, error)
