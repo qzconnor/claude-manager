@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useId } from 'vue'
+import { computed, useId } from 'vue'
 import type { FileTouchKind, GitFileStatus } from '@shared/types'
 import { Switch } from '@/components/ui/switch'
 import { STATUS_CLASS, STATUS_LABEL, STATUS_LETTER, TOUCH_KINDS } from '@/lib/file-tree'
@@ -10,9 +10,10 @@ import { useFileTreeStore } from '@/stores/file-tree'
 /**
  * The filters of the trees, unfolded below a tree's folder: only the files git sees changed, only those
  * Claude touched in the tab's session, or both together; each narrowed by kind. Below them whether the
- * files git ignores show. They hold for every tree and are remembered.
+ * files git ignores show. They hold for every tree and are remembered. Beside that the session's activity
+ * can be cleared.
  */
-defineProps<{
+const props = defineProps<{
   /** The changes by state, the states there are. */
   statuses: { status: GitFileStatus; count: number }[]
   /** How many files of the tree Claude touched in each way. */
@@ -21,10 +22,15 @@ defineProps<{
   git: boolean
   /** The tab works with Claude; a shell has no activity. */
   session: boolean
+  /** The tab whose activity the tree shows. */
+  terminalId: string
 }>()
 
 const fileTree = useFileTreeStore()
 const id = useId()
+
+/** All files of the session's activity, also those outside this tree (e.g. before `/cd`). */
+const recorded = computed(() => fileTree.activityOf(props.terminalId)?.size ?? 0)
 
 function toggle<T>(set: Set<T>, value: T) {
   if (!set.delete(value)) set.add(value)
@@ -101,6 +107,17 @@ const chips = 'ml-auto flex min-h-[20px] flex-wrap items-center justify-end gap-
     <div class="flex h-[24px] items-center gap-2">
       <Switch :id="`${id}-ignored`" v-model="fileTree.showIgnored" size="sm" />
       <label :for="`${id}-ignored`" class="min-w-0 flex-1 cursor-pointer truncate">Ignorierte Dateien zeigen</label>
+      <!-- Once the work is done (committed …), the activity starts anew; `/clear` does that by itself. -->
+      <button
+        v-if="session"
+        type="button"
+        :disabled="recorded === 0"
+        class="h-[20px] shrink-0 cursor-pointer rounded-md px-[6px] text-[11px] text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-default disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+        v-tooltip="recorded === 0 ? 'Claude hat in dieser Session noch keine Datei angefasst' : `Vergisst die ${files(recorded)}, die Claude in dieser Session angefasst hat`"
+        @click="fileTree.clearActivity(terminalId)"
+      >
+        Aktivität leeren
+      </button>
     </div>
   </div>
 </template>

@@ -641,6 +641,38 @@ export const useFileTreeStore = defineStore('file-tree', () => {
   const activityOf = (id: string | null | undefined): ReadonlyMap<string, TouchRecord> | null =>
     id ? (activity.value.get(id) ?? null) : null
 
+  /** Forgets what Claude did in the tabs' sessions, e.g. once the work is done; the tabs record anew. */
+  function clearActivity(...terminalIds: string[]): void {
+    const gone = terminalIds.filter((id) => activity.value.has(id))
+    if (gone.length === 0) return
+    const next = new Map(activity.value)
+    for (const id of gone) next.delete(id)
+    activity.value = next
+  }
+
+  /**
+   * The session each tab worked in when last seen. Another one in the same tab (`/clear`, `/resume`)
+   * starts its activity anew; the first one a tab names (at its start, after a restart) doesn't.
+   */
+  const sessionIds = new Map<string, string>()
+  watch(
+    () => terminals.terminals,
+    (list) => {
+      const ids = new Set<string>()
+      const changed: string[] = []
+      for (const terminal of list) {
+        ids.add(terminal.id)
+        if (!terminal.sessionId) continue
+        const before = sessionIds.get(terminal.id)
+        if (before && before !== terminal.sessionId) changed.push(terminal.id)
+        sessionIds.set(terminal.id, terminal.sessionId)
+      }
+      for (const id of sessionIds.keys()) if (!ids.has(id)) sessionIds.delete(id)
+      clearActivity(...changed)
+    },
+    { immediate: true },
+  )
+
   // ── Reviewing the changes ──
 
   /**
@@ -731,6 +763,7 @@ export const useFileTreeStore = defineStore('file-tree', () => {
     showAllChanges,
     touchesOf,
     activityOf,
+    clearActivity,
     seenOf,
     setSeen,
     hold,
