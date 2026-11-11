@@ -26,6 +26,7 @@ import type { ApiServer } from './api/api-server'
 import { claudeInChromeStatus } from './browser/claude-in-chrome'
 import type { AppContext } from './context'
 import { listFontFamilies } from './lib/fonts'
+import type { KeptImage } from './lib/kept-images'
 import { SESSION_ID_RE } from './lib/session-files'
 import { isTreePath } from './services/file-tree-service'
 import { browserDownloads } from './window/browser-downloads'
@@ -70,14 +71,14 @@ const CLIPBOARD_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/we
 /** A larger image isn't kept; Claude Code takes none of that size either. */
 const MAX_CLIPBOARD_IMAGE_BYTES = 32 * 1024 * 1024
 
-/** The image in the clipboard as a data URL; null without one. */
-async function clipboardImage(): Promise<string | null> {
+/** The image in the clipboard; null without one. */
+async function clipboardImage(): Promise<KeptImage | null> {
   for (const item of await clipboard.read()) {
     const type = CLIPBOARD_IMAGE_TYPES.find((candidate) => item.types.includes(candidate))
     if (!type) continue
     const blob = await item.getType(type)
     if (!(blob instanceof Blob) || blob.size === 0 || blob.size > MAX_CLIPBOARD_IMAGE_BYTES) return null
-    return `data:${type};base64,${Buffer.from(await blob.arrayBuffer()).toString('base64')}`
+    return { mediaType: type, data: Buffer.from(await blob.arrayBuffer()) }
   }
   return null
 }

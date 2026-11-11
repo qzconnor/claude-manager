@@ -34,6 +34,7 @@ import {
   type HookState,
   type HookTurnEnd,
 } from '../lib/hook-events'
+import { KeptImages, type KeptImage } from '../lib/kept-images'
 import { choosePastedImage, newPastedImageScan, readPastedImage, scanPastedImages, type PastedImageScan } from '../lib/pasted-images'
 import { fallbackSessionFolder } from '../lib/session-folder'
 import { readCompactLimit } from '../lib/auto-compact'
@@ -89,8 +90,6 @@ const TURN_END_TIMEOUT_MS = 8000
 const HOOK_END_GRACE_MS = 1500
 /** Changes the hooks report while Claude works (one tool after the other) go out together. */
 const HOOK_CHANGES_MS = 100
-/** The most pasted images a tab keeps before they are sent. */
-const MAX_KEPT_IMAGES = 20
 /** Arguments with which Claude Code picks the session itself. */
 const SESSION_CHOICE_ARG_RE = /^(-c|--continue|-r|--resume|--session-id|--from-pr|--teleport)(=|$)/
 
@@ -180,7 +179,6 @@ interface TerminalRecord {
   /** The transcripts of these sessions with their pasted images read so far, by session. */
   pastedImages: Map<string, PastedImageTranscript>
   /** Images the user pasted that weren't sent yet, by number: copies of the clipboard (data URLs). */
-  keptImages: Map<number, string>
 }
 
 interface PastedImageTranscript {
@@ -217,6 +215,8 @@ export function hasSecret(set: Record<string, string>): boolean {
 
 export class TerminalService extends TypedEmitter<Events> {
   private readonly terminals = new Map<string, TerminalRecord>()
+  /** Pasted images of all tabs, until they are sent. */
+  private readonly keptImages = new KeptImages()
   /** Tabs with more than one terminal; every other terminal has a tab of its own. */
   private splits: PaneSplit[] = []
   private readonly trackTimer: NodeJS.Timeout
@@ -571,6 +571,7 @@ export class TerminalService extends TypedEmitter<Events> {
       if (closing.flushTimer) clearTimeout(closing.flushTimer)
       this.kill(each)
       this.terminals.delete(each)
+      this.keptImages.forget(each)
     }
     this.splits = dropPanes(this.splits, new Set(ids))
     this.emitChanged()
@@ -674,7 +675,7 @@ export class TerminalService extends TypedEmitter<Events> {
 
   /** The numbers of the images pasted into the tab's sessions (`[Image #N]`): sent ones and those kept when pasted. */
   async pastedImageIds(id: string): Promise<number[]> {
-    const ids = new Set<number>(this.terminals.get(id)?.keptImages.keys())
+    const ids = new Set<number>(this.keptImages.ids(id))
     for (const { scan } of await this.pastedImageTranscripts(id)) for (const n of scan.images.keys()) ids.add(n)
     return [...ids].sort((a, b) => a - b)
   }
@@ -694,27 +695,21 @@ export class TerminalService extends TypedEmitter<Events> {
       const src = await read()
       if (src) {
         // Sent: the copy isn't needed any more.
-        record.keptImages.delete(n)
+        this.keptImages.delete(id, n)
         return { src, sent: true }
       }
     }
-    const kept = record.keptImages.get(n)
+    const kept = this.keptImages.get(id, n)
     if (kept) return { src: kept, sent: false }
     const src = found && found.at.time < since ? await read() : null
     return src ? { src, sent: true } : null
   }
 
-  /** Keeps image `n` the user just pasted into the tab's session (a data URL), until it is sent. */
-  keepPastedImage(id: string, n: number, src: string): boolean {
+  /** Keeps image `n` the user just pasted into the tab's session, until it is sent. */
+  keepPastedImage(id: string, n: number, image: KeptImage): boolean {
     const record = this.terminals.get(id)
     if (!record || record.info.mode !== 'session') return false
-    record.keptImages.delete(n)
-    record.keptImages.set(n, src)
-    // Pasted and never sent: the oldest go.
-    for (const old of record.keptImages.keys()) {
-      if (record.keptImages.size <= MAX_KEPT_IMAGES) break
-      record.keptImages.delete(old)
-    }
+    this.keptImages.keep(id, n, image)
     return true
   }
 
@@ -1406,7 +1401,6 @@ function newRecord(info: TerminalInfo, defaultTitle: string, process: Pty.IPty |
     liveCwd: null,
     folders: info.cwd ? [info.cwd] : [],
     pastedImages: new Map(),
-    keptImages: new Map(),
   }
 }
 
