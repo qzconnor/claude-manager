@@ -234,8 +234,8 @@ describe('FileTreeService with git', () => {
     git(repo, 'add', '-A')
     git(repo, 'commit', '-qm', 'init')
     expect((await service.status(repo))?.ignored).toEqual(['node_modules/'])
-    const told: { dirs: string[]; git: boolean }[] = []
-    service.on('changed', (_root, dirs, git) => told.push({ dirs, git }))
+    const told: { dirs: string[]; git: boolean; repo: boolean }[] = []
+    service.on('changed', (_root, dirs, git, repo) => told.push({ dirs, git, repo }))
     service.watch([{ root: repo, dirs: [''] }])
     await new Promise((resolve) => setTimeout(resolve, 300))
 
@@ -248,6 +248,10 @@ describe('FileTreeService with git', () => {
 
     await writeFile(join(repo, 'app.ts'), 'x')
     await expect.poll(() => told.some((t) => t.git && t.dirs.includes('')), { timeout: 3000 }).toBe(true)
+    // A file changed, the repository didn't: a diff of another file needn't ask again.
+    expect(told.some((t) => t.repo)).toBe(false)
+    git(repo, 'add', 'app.ts')
+    await expect.poll(() => told.some((t) => t.repo), { timeout: 3000 }).toBe(true)
   })
 
   it('asks git again outside a repository only after a while, at once when .git appears', async () => {

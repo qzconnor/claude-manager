@@ -103,6 +103,7 @@ interface WatchedRoot {
   /** Folders whose entries changed since the last report. */
   pending: Set<string>
   gitChanged: boolean
+  repoChanged: boolean
   timer: NodeJS.Timeout | null
   /** Watches again what failed (see `retryWatch`). */
   retry: NodeJS.Timeout | null
@@ -122,8 +123,11 @@ interface RunningShell {
 }
 
 type Events = {
-  /** Entries of these folders (relative, '' is the root) may have changed; `git`: also what git sees (see `gitMayTell`). */
-  changed: [root: string, dirs: string[], git: boolean]
+  /**
+   * Entries of these folders (relative, '' is the root) may have changed; `git`: also what git sees
+   * (see `gitMayTell`); `repo`: the repository itself (its index, HEAD, refs: a commit, a checkout).
+   */
+  changed: [root: string, dirs: string[], git: boolean, repo: boolean]
   /** Files a session's Claude reads, searches, writes or commits. */
   touched: [terminalId: string, touches: FileTouch[]]
 }
@@ -418,6 +422,7 @@ export class FileTreeService extends TypedEmitter<Events> {
           shown: dirs,
           pending: new Set(),
           gitChanged: false,
+          repoChanged: false,
           timer: null,
           retry: null,
         }
@@ -445,13 +450,13 @@ export class FileTreeService extends TypedEmitter<Events> {
     const root = watched.path
     try {
       const watcher = watch(root, { recursive: true }, (event, file) => {
-        if (!file) return this.note(key, '', true)
+        if (!file) return this.note(key, '', true, true)
         const parts = file.toString().split(/[\\/]/)
         // The git folder inside the tree: its state, no entries the tree shows. `git init` makes it.
         const gitAt = parts.indexOf('.git')
         if (gitAt >= 0) {
           if (gitAt === 0 && !watched.git) this.repoAppeared(key, watched)
-          if (gitStateChange(parts.slice(gitAt + 1))) this.note(key, null, true)
+          if (gitStateChange(parts.slice(gitAt + 1))) this.note(key, null, true, true)
           return
         }
         const dir = parts.slice(0, -1).join('/')
@@ -490,7 +495,7 @@ export class FileTreeService extends TypedEmitter<Events> {
           // `git init` in the tree: from now on its repository is watched too.
           const gitInit = !dir && name === '.git'
           if (gitInit && !watched.git) this.repoAppeared(key, watched)
-          this.note(key, dir, gitInit || !name || this.gitMayTell(key, dir ? `${dir}/${name}` : name, event))
+          this.note(key, dir, gitInit || !name || this.gitMayTell(key, dir ? `${dir}/${name}` : name, event), gitInit)
           if (name && this.shells.size > 0) this.noteShellWrite(join(path, name))
         })
         // Deleted or no longer readable: the tree lets go of it when it disappears there. Its own
@@ -544,7 +549,7 @@ export class FileTreeService extends TypedEmitter<Events> {
       // git writes the index and HEAD through a lock file it renames, so the folder is watched.
       const watcher = watch(gitDir, (_event, file) => {
         const name = file?.toString()
-        if (name === 'index' || name === 'HEAD') this.note(key, null, true)
+        if (name === 'index' || name === 'HEAD') this.note(key, null, true, true)
         // Filters added to its config are switched off too (see `guard`).
         if (name === 'config' || name === 'config.worktree') for (const root of watched.roots) this.guards.delete(root)
       })
@@ -570,24 +575,26 @@ export class FileTreeService extends TypedEmitter<Events> {
       if (!RECURSIVE && !watched.dirs.has('')) this.watchDirs(key, watched, new Set(['', ...watched.dirs.keys()]))
       if (!watched.git) this.findGitDir(key, watched)
       // What changed meanwhile isn't known: the tree reads its folder and state again.
-      this.note(key, '', true)
+      this.note(key, '', true, true)
     }, WATCH_RETRY_MS)
   }
 
-  /** `dir`: a folder whose entries changed (null: none); `git`: the repository's state changed. */
-  private note(key: string, dir: string | null, git: boolean): void {
+  /** `dir`: a folder whose entries changed (null: none); `git`: what git sees may have changed; `repo`: the repository. */
+  private note(key: string, dir: string | null, git: boolean, repo = false): void {
     const watched = this.watched.get(key)
     if (!watched) return
     if (dir !== null) watched.pending.add(dir)
     if (git) watched.gitChanged = true
+    if (repo) watched.repoChanged = true
     watched.timer ??= setTimeout(() => {
       watched.timer = null
       const dirs = [...watched.pending]
-      const gitChanged = watched.gitChanged
+      const { gitChanged, repoChanged } = watched
       watched.pending.clear()
       watched.gitChanged = false
+      watched.repoChanged = false
       if (this.watched.get(key) !== watched) return
-      for (const root of watched.roots) this.emit('changed', root, dirs, gitChanged)
+      for (const root of watched.roots) this.emit('changed', root, dirs, gitChanged, repoChanged)
     }, BATCH_MS)
   }
 

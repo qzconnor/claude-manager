@@ -16,6 +16,7 @@ import {
   diffMode,
   numberDigits,
   parsePatch,
+  sameDiff,
   unchangedNote,
   type DiffLine,
   type ParsedDiff,
@@ -70,21 +71,28 @@ const whole = shallowRef<readonly DiffLine[] | null>(null)
 let request = 0
 /** A file's first answer scrolls to its first change. */
 let fresh = true
+/** Which file (and whether whole) `diff` is of. */
+let shown = ''
 
 async function load(): Promise<void> {
   const id = ++request
   const { root, path } = props
+  const of = `${root}\0${path}\0${full.value}`
   loading.value = true
   try {
     const next = await window.api.files.diff(root, path, full.value)
     if (id !== request) return
-    diff.value = Object.freeze(next)
     error.value = null
+    // The same as before (asked again after a commit, say): nothing is parsed, highlighted or loaded again.
+    if (shown === of && diff.value && sameDiff(diff.value, next)) return
+    diff.value = Object.freeze(next)
+    shown = of
     if (next.patch && !next.tooLarge && !full.value && languageOf(path)) void loadWhole(id, root, path)
     else whole.value = null
   } catch (e) {
     if (id !== request) return
     diff.value = null
+    shown = ''
     error.value = errorMessage(e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
   } finally {
     if (id === request) loading.value = false
@@ -117,7 +125,7 @@ watch(full, () => {
   void load()
 })
 
-// Its folder is watched (on Linux only open folders are), and a change there or in git asks again.
+// Its folder is watched (on Linux only open folders are): a change there, or of the repository (a commit), asks again.
 let unpin = fileTree.pinDir(props.root, dir.value)
 watch([() => props.root, dir], ([root, folder]) => {
   unpin()
@@ -125,8 +133,8 @@ watch([() => props.root, dir], ([root, folder]) => {
 })
 
 let reloadTimer: ReturnType<typeof setTimeout> | null = null
-const offChanged = window.api.files.onChanged((root, dirs, git) => {
-  if (root !== props.root || !(git || dirs.includes(dir.value))) return
+const offChanged = window.api.files.onChanged((root, dirs, _git, repo) => {
+  if (root !== props.root || !(repo || dirs.includes(dir.value))) return
   if (reloadTimer) clearTimeout(reloadTimer)
   reloadTimer = setTimeout(() => {
     reloadTimer = null

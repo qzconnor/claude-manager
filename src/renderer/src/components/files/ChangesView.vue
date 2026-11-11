@@ -223,7 +223,7 @@ if (restored) {
   pump()
 }
 
-// The folders of the files are watched (on Linux only open folders are); a change there, or in git, asks again.
+// The folders of the files are watched (on Linux only open folders are); a change there, or of the repository, asks again.
 const pins = new Map<string, () => void>()
 watch(
   () => [props.root, [...new Set(paths.value.map(parentPath))].join('\n')] as const,
@@ -245,9 +245,9 @@ watch(
 
 const stale = new Set<string>()
 let reloadTimer: ReturnType<typeof setTimeout> | null = null
-const offChanged = window.api.files.onChanged((root, dirs, gitChanged) => {
+const offChanged = window.api.files.onChanged((root, dirs, _git, repo) => {
   if (root !== props.root) return
-  for (const path of paths.value) if (gitChanged || dirs.includes(parentPath(path))) stale.add(path)
+  for (const path of paths.value) if (repo || dirs.includes(parentPath(path))) stale.add(path)
   if (stale.size === 0 || reloadTimer) return
   reloadTimer = setTimeout(() => {
     reloadTimer = null

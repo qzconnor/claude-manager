@@ -11,6 +11,7 @@ import {
   MAX_DIFF_COLUMNS,
   numberDigits,
   parsePatch,
+  sameDiff,
   shownText,
   unchangedNote,
   wrapOffsets,
@@ -139,6 +140,16 @@ describe('diffMode', () => {
     expect(diffColumns(lines)).toBe(Math.max(...lines.map((l) => l.text.length)))
     expect(diffColumns([{ kind: 'add', text: 'x'.repeat(MAX_DIFF_COLUMNS * 2), old: null, new: 1 }])).toBe(MAX_DIFF_COLUMNS)
     expect(numberDigits([])).toBe(1)
+  })
+})
+
+describe('sameDiff', () => {
+  it('tells an answer that says the same from one that changed', () => {
+    expect(sameDiff(diff({ patch: PATCH }), diff({ patch: PATCH }))).toBe(true)
+    expect(sameDiff(diff({ text: 'a' }), diff({ text: 'a' }))).toBe(true)
+    expect(sameDiff(diff({ patch: PATCH }), diff({ patch: `${PATCH} ` }))).toBe(false)
+    expect(sameDiff(diff({ text: 'a' }), diff({ text: 'a', missing: true }))).toBe(false)
+    expect(sameDiff(diff({ text: 'a' }), diff({ text: 'a', repo: false }))).toBe(false)
   })
 })
 

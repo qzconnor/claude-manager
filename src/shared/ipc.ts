@@ -556,8 +556,11 @@ export interface ManagerApi {
     searchList(root: string): Promise<FileSearchList>
     /** Watches these trees, replacing the ones of the previous call; an empty list stops watching. */
     watch(trees: FileTreeWatch[]): Promise<void>
-    /** Entries of these folders (relative, '' is the root) may have changed; `git`: also the repository's state. */
-    onChanged(cb: (root: string, dirs: string[], git: boolean) => void): Unsubscribe
+    /**
+     * Entries of these folders (relative, '' is the root) may have changed; `git`: also what git sees
+     * (not for changes in folders it ignores); `repo`: the repository itself (a commit, a checkout).
+     */
+    onChanged(cb: (root: string, dirs: string[], git: boolean, repo: boolean) => void): Unsubscribe
     /** The changes of a file (relative to `root`) since the last commit; `full`: with the whole file around them. */
     diff(root: string, path: string, full: boolean): Promise<FileDiff>
     /** Files a session's Claude (or one of its subagents) reads, writes or commits, as it happens. */

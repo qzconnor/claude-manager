@@ -577,7 +577,7 @@ export function registerIpc(ctx: AppContext): void {
     if (!isTreeDir(path) || path === '') throw new Error('Ungültiger Parameter: path')
     return ctx.files.diff(requirePath(root, 'root'), path, full === true)
   })
-  ctx.files.on('changed', (root, dirs, git) => broadcast(IpcEvent.filesChanged, root, dirs, git))
+  ctx.files.on('changed', (root, dirs, git, repo) => broadcast(IpcEvent.filesChanged, root, dirs, git, repo))
   ctx.files.on('touched', (terminalId, touches) => broadcast(IpcEvent.filesTouched, terminalId, touches))
 
   // --- `cm` command --------------------------------------------------------

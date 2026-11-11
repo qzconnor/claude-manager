@@ -196,6 +196,18 @@ export function numberDigits(lines: readonly DiffLine[]): number {
 /** Whether a file was looked at while reviewing the changes: yes, not yet, or it changed since. */
 export type SeenState = 'yes' | 'no' | 'changed'
 
+/** Whether two answers for a file say the same: asked again, it hasn't changed. */
+export function sameDiff(a: FileDiff, b: FileDiff): boolean {
+  return (
+    a.patch === b.patch &&
+    a.text === b.text &&
+    a.repo === b.repo &&
+    a.binary === b.binary &&
+    a.tooLarge === b.tooLarge &&
+    a.missing === b.missing
+  )
+}
+
 /** A short fingerprint of a diff (FNV-1a), to tell whether a file changed since it was looked at. */
 export function diffHash(diff: FileDiff): string {
   const source = `${diff.patch}\0${diff.text ?? ''}\0${diff.missing}`
