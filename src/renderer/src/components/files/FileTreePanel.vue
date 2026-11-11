@@ -45,7 +45,6 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useFileTreeModel } from '@/composables/useFileTreeModel'
 import { useLauncher } from '@/composables/useLauncher'
-import { formatArgs } from '@/lib/args'
 import { attempt } from '@/lib/errors'
 import { fileIcon, type FileIconInfo } from '@/lib/file-icons'
 import {
@@ -73,6 +72,8 @@ import {
   type TreeRow,
 } from '@/lib/file-tree'
 import { TOUCH_ICON } from '@/lib/file-touch'
+import { shellKind } from '@/lib/platform'
+import { pastedPaths } from '@/lib/shell-quote'
 import { terminalBus } from '@/lib/terminal-bus'
 import { cn } from '@/lib/utils'
 import { DEFAULT_TREE_WIDTH, SEPARATOR, useFileTreeStore, type TreeTarget } from '@/stores/file-tree'
@@ -580,7 +581,7 @@ function onContextMenu(event: MouseEvent) {
 
 /**
  * Hands the entry to the session: Claude gets an `@` mention (relative to the folder it works in), a
- * shell the quoted path.
+ * shell the path quoted so that it runs nothing in it.
  */
 function mention(path: string, dir: boolean) {
   let text: string
@@ -588,7 +589,7 @@ function mention(path: string, dir: boolean) {
     const target = dir ? `${path}/` : path
     text = /\s/.test(target) ? `@"${target}" ` : `@${target} `
   } else {
-    text = `${formatArgs([abs(path)])} `
+    text = `${pastedPaths([abs(path)], props.target.session.mode, shellKind)} `
   }
   if (!terminalBus.paste(props.target.session.id, text)) void navigator.clipboard.writeText(text.trim())
 }

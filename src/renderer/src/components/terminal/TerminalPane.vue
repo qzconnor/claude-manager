@@ -7,8 +7,9 @@ import { useClock } from '@/composables/useClock'
 import { useTerminal } from '@/composables/useTerminal'
 import { useTerminalActions } from '@/composables/useTerminalActions'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
-import { formatArgs } from '@/lib/args'
 import { FILE_TREE_DRAG_TYPE } from '@/lib/file-tree'
+import { shellKind } from '@/lib/platform'
+import { pastedPaths } from '@/lib/shell-quote'
 import { terminalBus } from '@/lib/terminal-bus'
 import { cn } from '@/lib/utils'
 import { useBrowsersStore } from '@/stores/browsers'
@@ -87,7 +88,7 @@ function onDrop(event: DragEvent) {
   event.preventDefault()
   const fromTree = event.dataTransfer!.getData(FILE_TREE_DRAG_TYPE)
   const paths = fromTree ? [fromTree] : [...event.dataTransfer!.files].map((file) => window.api.app.pathForFile(file)).filter(Boolean)
-  if (paths.length) term.paste(formatArgs(paths))
+  if (paths.length) term.paste(pastedPaths(paths, props.terminal.mode, shellKind))
 }
 
 // The limit hint stays away once dismissed, until the session hits a limit again.
