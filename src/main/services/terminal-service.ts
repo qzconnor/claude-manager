@@ -58,7 +58,7 @@ import { TrimmedModes } from '../lib/terminal-modes'
 import { claudeActivity, TitleReader } from '../lib/terminal-title'
 import { TypedEmitter } from '../lib/typed-emitter'
 import type { AccountService } from './account-service'
-import { displayCommand, type ClaudeCli } from './claude-cli'
+import { displayCommand, type ClaudeCli, type ResolvedCommand } from './claude-cli'
 import type { SessionNames } from './session-names'
 import type { SettingsService } from './settings-service'
 import type { WorkspaceTrust } from './workspace-trust'
@@ -331,62 +331,62 @@ export class TerminalService extends TypedEmitter<Events> {
     const args: string[] = []
     let providers: SessionArgsProvider[] = []
     let sessionId: string | null = null
-    if (mode === 'login') {
-      args.push('auth', 'login')
-      // Imported accounts know who should log in: the login page starts with that email.
-      const email = account.expectedLogin?.email
-      if (email && this.cli.loginTakesEmail()) args.push('--email', email)
-    } else {
-      const extra = [...settings.claude.defaultArgs, ...auth.extraArgs, ...(options.args ?? [])]
-      if (options.resumeSessionId) {
-        if (!SESSION_ID_RE.test(options.resumeSessionId)) throw new Error('Ungültige Session-ID.')
-        args.push('--resume', options.resumeSessionId)
-        if (options.forkSession) args.push('--fork-session')
-        else sessionId = options.resumeSessionId
-      } else if (mode === 'session' && !extra.some((arg) => SESSION_CHOICE_ARG_RE.test(arg))) {
-        // Name the session up front so the tab knows it before Claude Code reports it.
-        sessionId = randomUUID()
-        args.push('--session-id', sessionId)
-      }
-      if (mode === 'session') {
-        providers = [...this.sessionArgs]
-        for (const provider of providers) args.push(...provider.args(id, extra, cwd))
-      }
-      // Before the extra args: an option there that takes several values would swallow it.
-      const prompt = options.prompt?.trim()
-      if (prompt && mode === 'session') args.push(prompt)
-      const last = providers.flatMap((provider) => provider.lastArgs?.(id, extra, cwd) ?? [])
-      const end = extra.indexOf('--')
-      args.push(...(end === -1 ? [...extra, ...last] : [...extra.slice(0, end), ...last, ...extra.slice(end)]))
-    }
-
-    const env = this.cli.baseEnv()
-    const accountEnv = this.accounts.launchEnv(account.id, auth.id)
-    for (const key of accountEnv.unset) deleteEnv(env, key)
-    for (const [key, value] of Object.entries(accountEnv.set)) {
-      deleteEnv(env, key)
-      env[key] = value
-    }
-    // A token or API key in the environment reaches every command Claude runs; Claude Code can keep it out.
-    if (settings.claude.hideSecretsFromCommands && hasSecret(accountEnv.set)) {
-      deleteEnv(env, 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB')
-      env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = '1'
-    }
-    // The theme the program starts with, for programs that can't ask the terminal (see setColorScheme).
-    if (this.dark !== null) {
-      deleteEnv(env, 'COLORFGBG')
-      env.COLORFGBG = colorFgBg(this.dark)
-    }
-
-    const command = mode === 'shell' ? shellCommand() : this.cli.command(args)
-    const cols = clampSize(options.cols, 120)
-    const rows = clampSize(options.rows, 32)
+    let command: ResolvedCommand
     let proc: Pty.IPty
+    // What the providers set up for the session (its token, its config files) goes again when it doesn't start.
     try {
+      if (mode === 'login') {
+        args.push('auth', 'login')
+        // Imported accounts know who should log in: the login page starts with that email.
+        const email = account.expectedLogin?.email
+        if (email && this.cli.loginTakesEmail()) args.push('--email', email)
+      } else {
+        const extra = [...settings.claude.defaultArgs, ...auth.extraArgs, ...(options.args ?? [])]
+        if (options.resumeSessionId) {
+          if (!SESSION_ID_RE.test(options.resumeSessionId)) throw new Error('Ungültige Session-ID.')
+          args.push('--resume', options.resumeSessionId)
+          if (options.forkSession) args.push('--fork-session')
+          else sessionId = options.resumeSessionId
+        } else if (mode === 'session' && !extra.some((arg) => SESSION_CHOICE_ARG_RE.test(arg))) {
+          // Name the session up front so the tab knows it before Claude Code reports it.
+          sessionId = randomUUID()
+          args.push('--session-id', sessionId)
+        }
+        if (mode === 'session') {
+          providers = [...this.sessionArgs]
+          for (const provider of providers) args.push(...provider.args(id, extra, cwd))
+        }
+        // Before the extra args: an option there that takes several values would swallow it.
+        const prompt = options.prompt?.trim()
+        if (prompt && mode === 'session') args.push(prompt)
+        const last = providers.flatMap((provider) => provider.lastArgs?.(id, extra, cwd) ?? [])
+        const end = extra.indexOf('--')
+        args.push(...(end === -1 ? [...extra, ...last] : [...extra.slice(0, end), ...last, ...extra.slice(end)]))
+      }
+
+      const env = this.cli.baseEnv()
+      const accountEnv = this.accounts.launchEnv(account.id, auth.id)
+      for (const key of accountEnv.unset) deleteEnv(env, key)
+      for (const [key, value] of Object.entries(accountEnv.set)) {
+        deleteEnv(env, key)
+        env[key] = value
+      }
+      // A token or API key in the environment reaches every command Claude runs; Claude Code can keep it out.
+      if (settings.claude.hideSecretsFromCommands && hasSecret(accountEnv.set)) {
+        deleteEnv(env, 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB')
+        env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = '1'
+      }
+      // The theme the program starts with, for programs that can't ask the terminal (see setColorScheme).
+      if (this.dark !== null) {
+        deleteEnv(env, 'COLORFGBG')
+        env.COLORFGBG = colorFgBg(this.dark)
+      }
+
+      command = mode === 'shell' ? shellCommand() : this.cli.command(args)
       proc = loadPty().spawn(command.file, command.args, {
         name: 'xterm-256color',
-        cols,
-        rows,
+        cols: clampSize(options.cols, 120),
+        rows: clampSize(options.rows, 32),
         cwd,
         env,
         useConpty: true,

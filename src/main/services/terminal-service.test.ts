@@ -91,6 +91,26 @@ describe('following /cd', () => {
   })
 })
 
+describe('a start that fails', () => {
+  it('gives back what the session got from the providers (token, config files)', () => {
+    const account = { id: 'a', name: 'A', defaultCwd: tmpdir(), extraArgs: [] }
+    const accounts = {
+      get: () => account,
+      launchEnv: () => {
+        throw new Error('Schlüsselbund gesperrt')
+      },
+    }
+    const settings = { get: () => ({ claude: { defaultArgs: [], defaultCwd: null } }) }
+    const cli = { baseEnv: () => ({}) }
+    const own = new TerminalService(accounts as unknown as AccountService, cli as unknown as ClaudeCli, settings as unknown as SettingsService, {} as WorkspaceTrust)
+    const release = vi.fn()
+    own.addSessionArgs({ args: () => ['--mcp-config', 'x.json'], release })
+    expect(() => own.create({ accountId: 'a' })).toThrow('Schlüsselbund gesperrt')
+    expect(release).toHaveBeenCalledOnce()
+    expect(own.list()).toEqual([])
+  })
+})
+
 describe('resuming a session that is open elsewhere', () => {
   const SESSION = '11111111-2222-4333-8444-555555555555'
   let dir: string
