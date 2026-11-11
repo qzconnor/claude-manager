@@ -1,5 +1,5 @@
 import { homedir, release } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { app, BrowserWindow, nativeTheme, shell } from 'electron'
 import { IpcEvent } from '@shared/ipc'
 import type { AppInfo } from '@shared/types'
@@ -12,6 +12,7 @@ import { CommandIntegration } from './cli/command-integration'
 import { isLaunchRequest, readLaunchRequest, resolveLaunch, type LaunchRequest } from './cli/launch'
 import type { AppContext } from './context'
 import { announceQuitting, forwardWindowState, registerApiIpc, registerIpc } from './ipc'
+import { takeJsonProblems } from './lib/json-file'
 import { linuxPackage } from './lib/linux'
 import { AUTOSTART_ARG, setLaunchAtLogin } from './lib/login-item'
 import { selectLinuxPasswordStore } from './lib/secrets'
@@ -330,6 +331,17 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
 
   // Started by the system at login: with the tray icon the window stays hidden until it is opened.
   const firstWindow = openWindow({ hidden: process.argv.includes(AUTOSTART_ARG) && tray.visible })
+  // Accounts, settings … that were broken or locked at the start: the user learns what the app did.
+  const problems = takeJsonProblems()
+  if (problems.length > 0) {
+    void dialogs.show(firstWindow, {
+      kind: 'alert',
+      warning: true,
+      title: problems.length === 1 ? 'Eine Datei der App war nicht in Ordnung' : 'Dateien der App waren nicht in Ordnung',
+      description: problems.map((problem) => problem.message).join('\n\n'),
+      code: dirname(problems[0].file),
+    })
+  }
   if (launchRequest) {
     // Wait for the page so it can select the new tab.
     firstWindow.webContents.once('did-finish-load', () => void openFromCommandLine(launchRequest))

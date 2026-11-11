@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { readJsonSync, writeJsonAtomic } from '../lib/json-file'
+import { readJsonGuardedSync, writeJsonAtomic } from '../lib/json-file'
 import { SESSION_ID_RE } from '../lib/session-files'
 import { TypedEmitter } from '../lib/typed-emitter'
 
@@ -37,7 +37,7 @@ export class SessionNames extends TypedEmitter<Events> {
   }
 
   init(): void {
-    const data = readJsonSync<Partial<NamesFile>>(this.file)
+    const data = readJsonGuardedSync<Partial<NamesFile>>(this.file)
     const names = data?.names && typeof data.names === 'object' ? data.names : {}
     for (const [id, name] of Object.entries(names)) {
       const clean = typeof name === 'string' ? cleanSessionName(name) : ''
@@ -58,7 +58,7 @@ export class SessionNames extends TypedEmitter<Events> {
     if ((this.names.get(id) ?? null) === next) return
     if (next) this.names.set(id, next)
     else this.names.delete(id)
-    void writeJsonAtomic(this.file, { names: Object.fromEntries(this.names) } satisfies NamesFile).catch((error) =>
+    void writeJsonAtomic(this.file, { names: Object.fromEntries(this.names) } satisfies NamesFile, { guarded: true }).catch((error) =>
       console.warn('[session-names] could not be saved', error),
     )
     this.emit('changed', sessionId, next)

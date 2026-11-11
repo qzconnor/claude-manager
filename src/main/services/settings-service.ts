@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { createDefaultSettings as sharedDefaults } from '@shared/defaults'
 import type { AppSettings, DeepPartial, SettingsImportResult } from '@shared/types'
 import { isPlainObject, mergeKnown } from '@shared/utils'
-import { readJson, readJsonSync, writeJsonAtomic } from '../lib/json-file'
+import { readJson, readJsonGuardedSync, writeJsonAtomic } from '../lib/json-file'
 import { TypedEmitter } from '../lib/typed-emitter'
 
 /** The defaults of this platform (e.g. the terminal font). */
@@ -26,7 +26,7 @@ export class SettingsService extends TypedEmitter<Events> {
   constructor(userDataDir: string) {
     super()
     this.file = join(userDataDir, 'settings.json')
-    this.settings = sanitize(mergeKnown(createDefaultSettings(), migrate(readJsonSync(this.file))))
+    this.settings = sanitize(mergeKnown(createDefaultSettings(), migrate(readJsonGuardedSync(this.file))))
   }
 
   get(): AppSettings {
@@ -37,7 +37,7 @@ export class SettingsService extends TypedEmitter<Events> {
     const previous = this.settings
     // An invalid value in the patch (e.g. null) leaves the setting as it was.
     this.settings = sanitize(mergeKnown(this.settings, patch), previous)
-    await writeJsonAtomic(this.file, this.settings)
+    await writeJsonAtomic(this.file, this.settings, { guarded: true })
     this.emit('changed', this.get(), previous)
     return this.get()
   }
@@ -46,7 +46,7 @@ export class SettingsService extends TypedEmitter<Events> {
     const defaults = createDefaultSettings()
     const previous = this.settings
     this.settings = section ? { ...this.settings, [section]: defaults[section] } : defaults
-    await writeJsonAtomic(this.file, this.settings)
+    await writeJsonAtomic(this.file, this.settings, { guarded: true })
     this.emit('changed', this.get(), previous)
     return this.get()
   }

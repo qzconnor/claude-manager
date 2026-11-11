@@ -14,7 +14,7 @@ import type {
 } from '@shared/types'
 import { canLendCredentials, maskSecret } from '@shared/utils'
 import { claudePaths, defaultClaudeConfigDir, type ClaudePaths } from '../lib/claude-paths'
-import { readJson, readJsonSync, writeJsonAtomic } from '../lib/json-file'
+import { readJsonGuarded, readJsonSync, writeJsonAtomic } from '../lib/json-file'
 import { decryptSecret, encryptSecret } from '../lib/secrets'
 import { TypedEmitter } from '../lib/typed-emitter'
 import { AUTH_OVERRIDE_ENV } from './claude-cli'
@@ -109,7 +109,7 @@ export class AccountService extends TypedEmitter<Events> {
   async init(): Promise<void> {
     await this.profiles.init()
     this.profiles.on('resolved', () => this.rebuild())
-    const data = await readJson<AccountsFile>(this.file)
+    const data = await readJsonGuarded<AccountsFile>(this.file)
     this.stored = Array.isArray(data?.accounts) ? data.accounts.filter(isStoredAccount) : []
     if (!this.stored.some((a) => a.id === SYSTEM_ACCOUNT_ID)) {
       this.stored.unshift({
@@ -125,7 +125,9 @@ export class AccountService extends TypedEmitter<Events> {
         secretHint: null,
         expectedLogin: null,
       })
-      await this.persist()
+      // A file that couldn't be read isn't replaced (see readJsonGuarded): the default account is only
+      // added in memory then.
+      await this.persist().catch((error) => console.warn('[accounts] could not be saved', error))
     }
     await this.loadSecrets()
     this.rebuild()
@@ -356,7 +358,7 @@ export class AccountService extends TypedEmitter<Events> {
         changed = true
       }
     }
-    if (changed) await this.persist()
+    if (changed) await this.persist().catch((error) => console.warn('[accounts] could not be saved', error))
   }
 
   /** All or nothing: when an item fails, the items copied so far are removed again. */
@@ -383,7 +385,7 @@ export class AccountService extends TypedEmitter<Events> {
   }
 
   private async persist(): Promise<void> {
-    await writeJsonAtomic(this.file, { version: 1, accounts: this.stored } satisfies AccountsFile)
+    await writeJsonAtomic(this.file, { version: 1, accounts: this.stored } satisfies AccountsFile, { guarded: true })
   }
 
   private rebuild(forceEmit = false): void {
