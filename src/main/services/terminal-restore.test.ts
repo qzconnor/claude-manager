@@ -435,6 +435,24 @@ describe('TerminalRestore while running', () => {
     expect(await readSaved()).toHaveLength(1)
   })
 
+  it('keeps the tabs while the system shuts down, and follows them again if it does not', async () => {
+    terminalList = [info({ id: 'a' })]
+    const service = start()
+    await service.init()
+    vi.useFakeTimers()
+    try {
+      service.hold(60_000)
+      // The processes end before the app: their tabs close.
+      terminalList = []
+      terminalEvents.fire('changed', terminalList)
+      expect(await readSaved()).toHaveLength(1)
+      vi.advanceTimersByTime(60_000)
+      expect(await readSaved()).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not start following when disposed while restoring', async () => {
     await writeFile(file, JSON.stringify([{ accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'session', sessionId: S1, title: 'T' }]))
     const service = start()

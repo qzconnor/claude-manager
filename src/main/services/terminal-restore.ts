@@ -68,6 +68,9 @@ export class TerminalRestore {
   private written: string
   private offs: (() => void)[] = []
   private disposed = false
+  /** Until then (ms) the file keeps the tabs as they were: see `hold`. */
+  private heldUntil = 0
+  private holdTimer: NodeJS.Timeout | undefined
   /** Tabs that didn't open: they stay in the file for the next start, or a `retry`. */
   private pending: { tab: SavedTerminal; reason: string }[] = []
   /** What didn't open at the start, for the window to tell. */
@@ -99,6 +102,7 @@ export class TerminalRestore {
   /** Stops following the tabs. Must run before quitting closes them all. */
   dispose(): void {
     this.disposed = true
+    clearTimeout(this.holdTimer)
     for (const off of this.offs) off()
     this.offs = []
   }
@@ -206,7 +210,25 @@ export class TerminalRestore {
     }
   }
 
+  /**
+   * Keeps the tabs as they are now for `ms`: the system is about to shut down or log off, and its
+   * processes end before the app does, which would close tabs and leave them out of the file. Should
+   * the session go on after all, the tabs are followed again after that time.
+   */
+  hold(ms: number): void {
+    if (this.disposed) return
+    this.heldUntil = 0
+    this.save()
+    this.heldUntil = Date.now() + ms
+    clearTimeout(this.holdTimer)
+    this.holdTimer = setTimeout(() => {
+      this.heldUntil = 0
+      if (!this.disposed) this.save()
+    }, ms)
+  }
+
   private save(): void {
+    if (Date.now() < this.heldUntil) return
     const tabs = this.settings.get().general.restoreTerminals ? this.snapshot() : []
     const json = JSON.stringify(tabs)
     if (json === this.written) return

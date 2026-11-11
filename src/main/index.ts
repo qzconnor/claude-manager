@@ -1,6 +1,6 @@
 import { homedir, release } from 'node:os'
 import { dirname, join } from 'node:path'
-import { app, BrowserWindow, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, nativeTheme, powerMonitor, shell } from 'electron'
 import { IpcEvent } from '@shared/ipc'
 import type { AppInfo } from '@shared/types'
 import { ApiServer } from './api/api-server'
@@ -45,6 +45,9 @@ import { WindowDialogs } from './window/dialogs'
 import { createMainWindow, openAppWindows, revealWindow } from './window/main-window'
 import { WindowMaterialController } from './window/material'
 import { AppTray } from './window/tray'
+
+/** How long the open tabs stay as they are once the system asks to shut down or log off. */
+const SESSION_END_HOLD_MS = 60_000
 
 app.setName('Claude Manager')
 // Development builds get their own profile. With the installed app's profile they would fail to get
@@ -192,6 +195,35 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   /** The app is quitting: the window really closes instead of going to the tray. */
   let quitting = false
 
+  let cleanedUp = false
+  /**
+   * Ends what runs and remembers what is open, once. Runs on `before-quit`, and when the system shuts
+   * down or logs off, where Windows sends no `before-quit`.
+   */
+  const cleanUp = () => {
+    if (cleanedUp) return
+    cleanedUp = true
+    quitting = true
+    tray.dispose()
+    updates.dispose()
+    api.dispose()
+    // Before the tabs close, otherwise an empty list would be remembered (here and in the window).
+    restore.dispose()
+    announceQuitting()
+    terminals.disposeAll()
+    browserMcp.dispose()
+    sessionHooks.dispose()
+    sessionServer.dispose()
+    usage.dispose()
+    workspaces.dispose()
+    themes.dispose()
+    git.dispose()
+    files.dispose()
+    sessions.dispose()
+    accounts.dispose()
+    indexer.dispose()
+  }
+
   /** Brings the window to the front, also out of the tray. */
   const showWindow = () => {
     if (mainWindow) revealWindow(mainWindow)
@@ -298,8 +330,11 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
       win.flashFrame(false)
       notifications.windowFocused()
     })
-    // Windows is shutting down or logging off: the window must not hold it back.
-    win.on('session-end', () => (quitting = true))
+    // Windows asks before it shuts down or logs off: the terminals' processes may end before the app,
+    // the tabs stay remembered as they are. Another app may still stop it, then they are followed again.
+    win.on('query-session-end', () => restore.hold(SESSION_END_HOLD_MS))
+    // Windows shuts down or logs off: no `before-quit` comes, and the window must not hold it back.
+    win.on('session-end', cleanUp)
 
     win.on('close', (event) => {
       // Asked already, or the page has asked before installing an update.
@@ -388,25 +423,12 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     if (!tray.visible) app.quit()
   })
 
-  app.on('before-quit', () => {
-    quitting = true
-    tray.dispose()
-    updates.dispose()
-    api.dispose()
-    // Before the tabs close, otherwise an empty list would be remembered (here and in the window).
-    restore.dispose()
-    announceQuitting()
-    terminals.disposeAll()
-    browserMcp.dispose()
-    sessionHooks.dispose()
-    sessionServer.dispose()
-    usage.dispose()
-    workspaces.dispose()
-    themes.dispose()
-    git.dispose()
-    files.dispose()
-    sessions.dispose()
-    accounts.dispose()
-    indexer.dispose()
-  })
+  app.on('before-quit', cleanUp)
+  // Linux shuts down or logs off: the app ends now, without asking, while its terminals still run.
+  if (process.platform === 'linux') {
+    powerMonitor.on('shutdown', () => {
+      cleanUp()
+      app.quit()
+    })
+  }
 }
