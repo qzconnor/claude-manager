@@ -47,6 +47,7 @@ import { claudeActivity, TitleReader } from '../lib/terminal-title'
 import { TypedEmitter } from '../lib/typed-emitter'
 import type { AccountService } from './account-service'
 import { displayCommand, type ClaudeCli } from './claude-cli'
+import type { SessionNames } from './session-names'
 import type { SettingsService } from './settings-service'
 import type { WorkspaceTrust } from './workspace-trust'
 
@@ -208,9 +209,12 @@ export class TerminalService extends TypedEmitter<Events> {
     private readonly cli: ClaudeCli,
     private readonly settings: SettingsService,
     private readonly trust: WorkspaceTrust,
+    /** The names the user gave sessions; without them a tab's name stays with the tab. */
+    private readonly names: Pick<SessionNames, 'get' | 'set' | 'on'> | null = null,
   ) {
     super()
     this.trackTimer = setInterval(() => void this.track(), TRACK_INTERVAL_MS)
+    names?.on('changed', (sessionId, name) => this.applySessionName(sessionId, name))
   }
 
   /** Gives the sessions started from now on more options (see SessionArgsProvider). */
@@ -366,6 +370,7 @@ export class TerminalService extends TypedEmitter<Events> {
     }
     let markExited!: () => void
     const record = newRecord(info, defaultTitle, proc, new Promise((resolve) => (markExited = resolve)))
+    this.shareName(record)
     this.add(record, options)
 
     proc.onData((data) => this.handleData(record, data))
@@ -524,13 +529,15 @@ export class TerminalService extends TypedEmitter<Events> {
 
   /**
    * Gives the tab a name of its own; the session's title stays known (`autoTitle`). An empty title
-   * lets the tab follow the session's title again.
+   * lets the tab follow the session's title again. The name of a session tab is its session's name:
+   * the session list and everything else shows it too (see SessionNames).
    */
   rename(id: string, title: string): void {
     const { info } = this.require(id)
-    const next = title.trim().slice(0, 120)
+    const next = title.replace(/\s+/g, ' ').trim().slice(0, 120)
     info.fixedTitle = next.length > 0
     info.title = next || info.autoTitle
+    if (this.names && info.mode === 'session' && info.sessionId) this.names.set(info.sessionId, next || null)
     this.emitChanged()
   }
 
@@ -749,7 +756,7 @@ export class TerminalService extends TypedEmitter<Events> {
     const live = await readLiveSession(paths.sessionsDir, info.pid, Date.parse(info.createdAt))
     let changed = false
     if (live && live.sessionId !== info.sessionId) {
-      followSession(record, live.sessionId)
+      this.switchSession(record, live.sessionId)
       changed = true
     }
     // Before the transcript: after `/cd` it is in the project folder of the new folder.
@@ -812,6 +819,46 @@ export class TerminalService extends TypedEmitter<Events> {
       if (file) return file
     }
     return null
+  }
+
+  /** The tab's process works in another session now (`/clear`, `/resume`): with its name, if it has one. */
+  private switchSession(record: TerminalRecord, sessionId: string): void {
+    followSession(record, sessionId)
+    this.shareName(record)
+  }
+
+  /**
+   * The name of a session tab is the name of its session: a session with a name gives the tab that
+   * name, a tab with a name of its own gives it to a session without one, also to the next one after
+   * `/clear`, so the tab keeps its name. True when the tab's title changed.
+   */
+  private shareName(record: TerminalRecord): boolean {
+    const { info } = record
+    if (!this.names || info.mode !== 'session' || !info.sessionId) return false
+    const name = this.names.get(info.sessionId)
+    if (name === null) {
+      if (info.fixedTitle) this.names.set(info.sessionId, info.title)
+      return false
+    }
+    if (info.fixedTitle && info.title === name) return false
+    info.fixedTitle = true
+    info.title = name
+    return true
+  }
+
+  /** The session was named (renamed in the session list) or lost its name: its tabs show it. */
+  private applySessionName(sessionId: string, name: string | null): void {
+    let changed = false
+    for (const { info } of this.terminals.values()) {
+      if (info.mode !== 'session' || info.sessionId?.toLowerCase() !== sessionId.toLowerCase()) continue
+      const fixedTitle = name !== null
+      const title = name ?? info.autoTitle
+      if (info.fixedTitle === fixedTitle && info.title === title) continue
+      info.fixedTitle = fixedTitle
+      info.title = title
+      changed = true
+    }
+    if (changed) this.emitChanged()
   }
 
   /** The session's title as Claude Code shows it; after `/clear` the new session has none yet. */
@@ -915,7 +962,7 @@ export class TerminalService extends TypedEmitter<Events> {
     let changed = !info.hooks
     info.hooks = true
     if (state.sessionId && state.sessionId !== info.sessionId) {
-      followSession(record, state.sessionId)
+      this.switchSession(record, state.sessionId)
       changed = true
       // A new session (`/clear`): its title, worktree and limit.
       this.trackSoon()

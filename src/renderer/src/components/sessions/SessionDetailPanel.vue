@@ -10,6 +10,7 @@ import {
   GitBranchIcon,
   GitForkIcon,
   MessagesSquareIcon,
+  PencilIcon,
   PlayIcon,
   Trash2Icon,
   TriangleAlertIcon,
@@ -40,6 +41,7 @@ import { attempt } from '@/lib/errors'
 import { formatBytes, formatDateTime, shortenPath } from '@/lib/format'
 import { sessionFolder } from '@/lib/session-tree'
 import { useAppStore } from '@/stores/app'
+import { useUiStore } from '@/stores/ui'
 import TranscriptView from './TranscriptView.vue'
 
 const props = defineProps<{
@@ -50,6 +52,7 @@ const props = defineProps<{
 }>()
 
 const app = useAppStore()
+const ui = useUiStore()
 const launcher = useLauncher()
 const accountSwitch = useAccountSwitch()
 const removal = useSessionRemoval()
@@ -60,6 +63,10 @@ const folder = computed(() => sessionFolder(props.summary))
 
 function openFolder() {
   if (folder.value) void attempt(() => window.api.app.openPath(folder.value!), 'Ordner konnte nicht geöffnet werden')
+}
+
+function rename() {
+  ui.sessionRenameRequest = { sessionId: props.summary.id, title: props.summary.title, name: props.summary.name }
 }
 
 async function copyId() {
@@ -109,6 +116,14 @@ async function copyId() {
         <div class="flex shrink-0 items-center gap-2">
           <Spinner v-if="loading && detail" class="text-muted-foreground" />
           <ButtonGroup>
+            <Tooltip>
+              <TooltipTrigger as-child>
+                <Button variant="outline" size="icon-sm" aria-label="Umbenennen" @click="rename">
+                  <PencilIcon />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Umbenennen</TooltipContent>
+            </Tooltip>
             <Tooltip>
               <TooltipTrigger as-child>
                 <Button variant="outline" size="icon-sm" aria-label="Session-ID kopieren" @click="copyId">

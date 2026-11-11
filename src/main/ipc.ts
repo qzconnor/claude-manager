@@ -403,6 +403,13 @@ export function registerIpc(ctx: AppContext): void {
     })
     return ctx.sessions.remove(refs)
   })
+  ipcMain.handle(IpcInvoke.sessionsRename, (_e, sessionId: unknown, name: unknown) => {
+    // Empty is allowed: the session shows Claude Code's title again.
+    if (typeof name !== 'string') throw new Error('Ungültiger Parameter: name')
+    const id = requireString(sessionId, 'sessionId')
+    if (!SESSION_ID_RE.test(id)) throw new Error('Ungültige Session-ID.')
+    ctx.sessions.rename(id, name)
+  })
   ctx.sessions.on('changed', (accountId) => broadcast(IpcEvent.sessionsChanged, accountId))
 
   // --- workspaces ----------------------------------------------------------

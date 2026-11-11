@@ -40,11 +40,29 @@ describe('WorkspaceService', () => {
     expect(readFileSync(join(root, 'Leer', 'cm_prompts.md'), 'utf8')).toBe('')
   })
 
-  it('refuses a folder that is there already, or a bad name', async () => {
-    mkdirSync(join(root, 'Da'))
-    await expect(service.create({ parent: root, name: 'Da', prompt: '' })).rejects.toThrow(/gibt es schon/)
+  it('refuses a bad name or a file in the way', async () => {
+    writeFileSync(join(root, 'Datei'), '')
+    await expect(service.create({ parent: root, name: 'Datei', prompt: '' })).rejects.toThrow(/ist eine Datei/)
     await expect(service.create({ parent: root, name: 'a/b', prompt: '' })).rejects.toThrow()
     expect(await service.list()).toEqual([])
+  })
+
+  it('uses folders that are there already, with what lies in them', async () => {
+    const path = join(root, 'Da')
+    mkdirSync(join(path, 'projekt'), { recursive: true })
+    writeFileSync(join(path, 'cm_prompts.md'), 'Schon da.')
+    const created = await service.create({ parent: root, name: 'Da', prompt: '' })
+    expect(created).toMatchObject({ path, exists: true, projects: ['projekt'], hasPrompt: true })
+    // Without a prompt of its own the one there stays.
+    expect(readFileSync(join(path, 'cm_prompts.md'), 'utf8')).toBe('Schon da.')
+    await service.create({ parent: root, name: 'Da', prompt: 'Neu.' })
+    expect(readFileSync(join(path, 'cm_prompts.md'), 'utf8')).toBe('Neu.\n')
+    expect(service.paths()).toEqual([path])
+
+    // Missing folders on the way are made.
+    const deep = await service.create({ parent: join(root, 'neu', 'tiefer'), name: 'Kunden', prompt: '' })
+    expect(deep.path).toBe(join(root, 'neu', 'tiefer', 'Kunden'))
+    expect(existsSync(join(deep.path, 'cm_prompts.md'))).toBe(true)
   })
 
   it('makes an existing folder a workspace and keeps its prompt unless given one', async () => {

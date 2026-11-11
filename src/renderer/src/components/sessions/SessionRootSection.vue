@@ -80,6 +80,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   'update:open': [open: boolean]
+  /** A folder was opened or closed, also one in a project. */
   openProject: [project: SessionProject, open: boolean]
   select: [session: SessionSummary]
   toggle: [session: SessionSummary, range: boolean]
@@ -268,6 +269,7 @@ async function removeWorkspace() {
         :key="project.id"
         :project="project"
         :open="openProjects.has(project.id)"
+        :open-folders="openProjects"
         :convertible="kind !== 'workspace'"
         :selected="selected"
         :now="now"
@@ -275,11 +277,13 @@ async function removeWorkspace() {
         :terms="terms"
         :selecting="selecting"
         :checked="checked"
-        :highlighted="highlighted === project.id"
+        :highlighted="highlighted"
         @update:open="emit('openProject', project, $event)"
+        @open-folder="(folder, open) => emit('openProject', folder, open)"
         @select="emit('select', $event)"
         @toggle="(session, range) => emit('toggle', session, range)"
         @check="emit('check', project, $event)"
+        @check-folder="(folder, value) => emit('check', folder, value)"
       />
       <SessionListItem
         v-for="session in ownSessions"
@@ -324,7 +328,7 @@ async function removeWorkspace() {
             :selected="selected"
             :now="now"
             :selecting="selecting"
-            :highlighted="highlighted === project.id"
+            :highlighted="highlighted"
           />
         </div>
       </template>

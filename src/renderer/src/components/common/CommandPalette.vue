@@ -53,10 +53,9 @@ function onCloseAutoFocus(event: Event) {
     <!-- One column no wider than the dialog: with an auto column the rows' long paths widened it past
          the right edge, which cut off the shortcuts and the scrollbar. In groups it hangs under the
          title bar's search, which is centred in the space left of the caption buttons. The backdrop
-         leaves the title bar out, so the search it opened from stays sharp above it. -->
+         leaves the title bar out (as for every dialog), so the search it opened from stays sharp above it. -->
     <DialogContent
       :show-close-button="false"
-      overlay-class="top-(--titlebar-height)"
       :class="
         cn(
           'app-no-drag top-[calc(var(--titlebar-height)+0.375rem)] translate-y-0 grid-cols-[minmax(0,1fr)] gap-0 overflow-hidden rounded-xl! p-0 sm:max-w-[38rem]',

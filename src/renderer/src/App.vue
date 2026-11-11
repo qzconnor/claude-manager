@@ -4,6 +4,7 @@ import CommandPalette from '@/components/common/CommandPalette.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import DefaultFolderDialog from '@/components/common/DefaultFolderDialog.vue'
 import ProjectDialog from '@/components/common/ProjectDialog.vue'
+import SessionRenameDialog from '@/components/sessions/SessionRenameDialog.vue'
 import ThemeEditorDialog from '@/components/themes/ThemeEditorDialog.vue'
 import WorkspaceDialog from '@/components/common/WorkspaceDialog.vue'
 import WorktreeDialog from '@/components/common/WorktreeDialog.vue'
@@ -69,6 +70,7 @@ onMounted(async () => {
     <WorktreeDialog v-if="ready" />
     <WorkspaceDialog v-if="ready" />
     <ProjectDialog v-if="ready" />
+    <SessionRenameDialog v-if="ready" />
     <ThemeEditorDialog v-if="ready" />
     <Toaster :theme="theme.mode" position="bottom-right" close-button />
     <AppTooltip />

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionSummary } from '@shared/types'
-import { buildSessionTree, placeFolder, placeSession, type SessionSort, type TreeRoots } from './session-tree'
+import { allFolders, buildSessionTree, placeFolder, placeSession, type SessionProject, type SessionSort, type TreeRoots } from './session-tree'
 
 const HOME = 'C:\\Users\\me'
 
@@ -12,6 +12,7 @@ function session(id: string, patch: Partial<SessionSummary> = {}): SessionSummar
     cwd: HOME,
     worktree: null,
     title: id,
+    name: null,
     firstPrompt: null,
     lastPrompt: null,
     gitBranch: null,
@@ -138,6 +139,12 @@ describe('buildSessionTree: workspaces and start folders', () => {
       ['websiteC', `${web}\\websiteC`, '', []],
     ])
     expect(workspace?.sessions.map((s) => s.id)).toEqual(['ws'])
+    // The session deeper in the project is in its folder there, spelled as the project on disk.
+    const [websiteA] = workspace?.projects ?? []
+    expect(websiteA?.own.map((s) => s.id)).toEqual(['a1'])
+    expect(websiteA?.folders.map((f) => [f.name, f.path, f.parent, f.own.map((s) => s.id)])).toEqual([
+      ['src', `${web}\\websiteA\\src`, '', ['a2']],
+    ])
 
     expect(tree.folders.map((p) => p.path)).toEqual([app])
 
@@ -201,12 +208,48 @@ describe('buildSessionTree: workspaces and start folders', () => {
     }
   })
 
-  it('places a folder where the list shows it', () => {
-    expect(placeFolder(`${web}\\websiteA\\src`, 'k', roots)).toEqual(
-      placeSession(session('x', { cwd: 'F:\\WEBSEITEN\\websiteA' }), roots),
-    )
-    expect(placeFolder(web, 'k', roots).projectId).toBeNull()
+  it('places a folder where the list shows it, with the folders above it', () => {
+    expect(placeFolder(`${web}\\websiteA`, 'k', roots)).toEqual(placeSession(session('x', { cwd: 'F:\\WEBSEITEN\\websiteA' }), roots))
+    expect(placeFolder(`${web}\\websiteA\\src\\app`, 'k', roots)).toEqual({
+      rootId: 'workspace\nf:\\webseiten',
+      projectId: 'folder\nf:\\webseiten\\websitea\\src\\app',
+      folderIds: [
+        'folder\nf:\\webseiten\\websitea',
+        'folder\nf:\\webseiten\\websitea\\src',
+        'folder\nf:\\webseiten\\websitea\\src\\app',
+      ],
+    })
+    expect(placeFolder(web, 'k', roots)).toMatchObject({ projectId: null, folderIds: [] })
     expect(placeFolder(app, 'k', roots).rootId).toBeNull()
-    expect(placeFolder(null, 'k', roots)).toEqual({ rootId: null, projectId: 'folder\n#k' })
+    expect(placeFolder(null, 'k', roots)).toEqual({ rootId: null, projectId: 'folder\n#k', folderIds: ['folder\n#k'] })
+  })
+
+  it('shows every folder between a project and its sessions, however deep', () => {
+    const root: TreeRoots = { workspaces: [{ path: 'F:\\Projekte', projects: ['Apps'] }], startFolders: [] }
+    const tree = buildSessionTree(
+      [
+        session('deep', { cwd: 'F:\\Projekte\\Apps\\claude-manager\\src\\main', updatedAt: '2026-11-05T08:00:00.000Z' }),
+        session('app', { cwd: 'F:\\Projekte\\Apps\\claude-manager', updatedAt: '2026-11-04T08:00:00.000Z' }),
+        session('other', { cwd: 'F:\\Projekte\\Apps\\photocraft', updatedAt: '2026-11-03T08:00:00.000Z' }),
+        session('apps', { cwd: 'F:\\Projekte\\Apps', updatedAt: '2026-11-02T08:00:00.000Z' }),
+      ],
+      root,
+      { sort: 'recent', showEmpty: false },
+    )
+    const shape = (f: SessionProject): unknown => [f.name, f.own.map((s) => s.id), f.folders.map(shape)]
+    const [apps] = tree.workspaces[0]?.projects ?? []
+    expect(apps && shape(apps)).toEqual([
+      'Apps',
+      ['apps'],
+      [
+        ['claude-manager', ['app'], [['src', [], [['main', ['deep'], []]]]]],
+        ['photocraft', ['other'], []],
+      ],
+    ])
+    // A folder counts the sessions below it too.
+    expect(apps?.sessions.map((s) => s.id)).toEqual(['deep', 'app', 'other', 'apps'])
+    expect(apps?.folders[0]).toMatchObject({ updatedAt: '2026-11-05T08:00:00.000Z', sizeBytes: 200 })
+    expect(tree.workspaces[0]?.count).toBe(4)
+    expect(allFolders(tree.workspaces[0]?.projects ?? []).map((f) => f.name)).toEqual(['Apps', 'claude-manager', 'src', 'main', 'photocraft'])
   })
 })

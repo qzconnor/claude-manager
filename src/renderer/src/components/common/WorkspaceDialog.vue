@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { FolderCheckIcon } from '@lucide/vue'
+import { refDebounced } from '@vueuse/core'
 import { computed, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
 import { folderKey } from '@shared/folders'
@@ -47,6 +49,10 @@ const saving = ref(false)
 const touched = ref(false)
 /** Moves into the new workspace once it is made. */
 const moving = ref<{ path: string; sessions: number } | null>(null)
+/** The folder of a new workspace is there already: it is used as it is, with what lies in it. */
+const existing = ref(false)
+/** The prompt was typed in, not taken over from the `cm_prompts.md` of a folder that is there. */
+const promptEdited = ref(false)
 
 /** The workspace the folder lies in (not the folder itself): its prompt still applies, before this one. */
 const outer = computed(() => {
@@ -75,6 +81,9 @@ watch(
     saving.value = false
     touched.value = false
     prompt.value = ''
+    loadingPrompt.value = false
+    existing.value = false
+    promptEdited.value = false
     moving.value = next.mode === 'create' ? (next.move ?? null) : null
     if (next.mode === 'create') {
       path.value = ''
@@ -103,6 +112,37 @@ const target = computed(() => {
   if (!dir || !trimmed) return ''
   return /[\\/]$/.test(dir) ? `${dir}${trimmed}` : `${dir}${dir.includes('/') && !dir.includes('\\') ? '/' : '\\'}${trimmed}`
 })
+/** A workspace already: it stays one, the prompt below is saved. */
+const alreadyWorkspace = computed(
+  () => existing.value && workspaces.workspaces.some((w) => folderKey(w.path) === folderKey(target.value)),
+)
+
+// Whether the folder is there already, once typing pauses; its prompt shows unless one was typed in.
+const settledTarget = refDebounced(computed(() => (mode.value === 'create' ? target.value : '')), 250)
+let check = 0
+watch(settledTarget, async (folder) => {
+  const current = ++check
+  loadingPrompt.value = false
+  if (!folder) {
+    existing.value = false
+    if (!promptEdited.value) prompt.value = ''
+    return
+  }
+  const missing = await window.api.app.missingFolders([folder]).catch(() => [folder])
+  if (current !== check) return
+  existing.value = missing.length === 0
+  if (promptEdited.value) return
+  if (!existing.value) {
+    prompt.value = ''
+    return
+  }
+  loadingPrompt.value = true
+  const text = await workspaces.readPrompt(folder).catch(() => '')
+  if (current !== check) return
+  loadingPrompt.value = false
+  prompt.value = text.trimEnd()
+})
+
 const canSave = computed(() => {
   if (saving.value || loadingPrompt.value) return false
   if (mode.value !== 'create') return true
@@ -112,7 +152,10 @@ const canSave = computed(() => {
 const title = computed(() =>
   mode.value === 'create' ? 'Neuer Workspace' : mode.value === 'adopt' ? `„${name.value}“ zum Workspace machen` : `Prompt von „${name.value}“`,
 )
-const action = computed(() => (mode.value === 'create' ? 'Anlegen' : mode.value === 'adopt' ? 'Zum Workspace machen' : 'Speichern'))
+const action = computed(() => {
+  if (mode.value === 'create') return existing.value ? 'Ordner verwenden' : 'Anlegen'
+  return mode.value === 'adopt' ? 'Zum Workspace machen' : 'Speichern'
+})
 
 function focusFirstField() {
   document.getElementById(mode.value === 'create' ? 'workspace-name' : 'workspace-prompt')?.focus()
@@ -125,7 +168,12 @@ async function save() {
   try {
     if (mode.value === 'create') {
       const dir = parent.value.trim()
-      const created = await workspaces.create({ parent: dir, name: name.value.trim(), prompt: prompt.value })
+      const reused = existing.value
+      const was = alreadyWorkspace.value
+      // A folder that is there gets the prompt as the field shows it, also an emptied one.
+      const created = reused
+        ? await workspaces.adopt(target.value, prompt.value)
+        : await workspaces.create({ parent: dir, name: name.value.trim(), prompt: prompt.value })
       try {
         localStorage.setItem(PARENT_KEY, dir)
       } catch {
@@ -138,7 +186,9 @@ async function save() {
         await folderMove.move(move.path, created.path, move.sessions, false)
         return
       }
-      toast.success(`Workspace „${created.name}“ angelegt`)
+      if (!reused) toast.success(`Workspace „${created.name}“ angelegt`)
+      else if (was) toast.success(`„${created.name}“ ist schon ein Workspace`, { description: 'Sein Prompt ist gespeichert.' })
+      else toast.success(`„${created.name}“ ist jetzt ein Workspace`, { description: 'Der vorhandene Ordner wird verwendet, mit allem, was darin liegt.' })
       ui.folderToShow = { path: created.path }
     } else if (mode.value === 'adopt') {
       const adopted = await workspaces.adopt(path.value, prompt.value)
@@ -206,6 +256,16 @@ async function save() {
               <FieldDescription v-if="target" class="font-mono text-xs break-all">
                 {{ shortenPath(target, app.info?.homeDir) }}
               </FieldDescription>
+              <FieldDescription v-if="target && existing" class="flex items-start gap-1.5 text-xs">
+                <FolderCheckIcon class="mt-px size-3.5 shrink-0" />
+                <span>
+                  {{
+                    alreadyWorkspace
+                      ? 'Das ist schon ein Workspace: er bleibt, wie er ist, mit dem Prompt unten.'
+                      : 'Den Ordner gibt es schon: er wird verwendet, mit allem, was darin liegt.'
+                  }}
+                </span>
+              </FieldDescription>
             </Field>
           </template>
           <Field v-else>
@@ -223,12 +283,16 @@ async function save() {
                 spellcheck="false"
                 :disabled="saving || loadingPrompt"
                 class="max-h-[45vh] min-h-36 overflow-y-auto"
+                @input="promptEdited = true"
               />
               <Spinner v-if="loadingPrompt" class="absolute top-3 right-3 size-4 text-muted-foreground" />
             </div>
-            <FieldDescription>
-              {{ mode === 'edit' ? 'Steht' : 'Kommt' }} als <span class="font-mono">{{ WORKSPACE_PROMPT_FILE }}</span> in den
-              Ordner{{ mode === 'edit' ? '' : ', leer wenn du nichts einträgst' }}.
+            <FieldDescription v-if="mode === 'edit' || (existing && !promptEdited && prompt)">
+              Steht als <span class="font-mono">{{ WORKSPACE_PROMPT_FILE }}</span> im Ordner.
+            </FieldDescription>
+            <FieldDescription v-else>
+              Kommt als <span class="font-mono">{{ WORKSPACE_PROMPT_FILE }}</span> in den
+              Ordner{{ existing ? '' : ', leer wenn du nichts einträgst' }}.
             </FieldDescription>
           </Field>
         </FieldGroup>

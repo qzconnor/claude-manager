@@ -69,6 +69,8 @@ export const useUiStore = defineStore('ui', () => {
   const workspaceRequest = ref<WorkspaceRequest | null>(null)
   /** Asks for the name of a new project in a workspace (`ProjectDialog`), then starts a session in it. */
   const projectRequest = ref<{ workspace: string; name: string } | null>(null)
+  /** Asks for a session's name (`SessionRenameDialog`): `name` is the one it has, null without one. */
+  const sessionRenameRequest = ref<{ sessionId: string; title: string; name: string | null } | null>(null)
   /** Asks for a worktree name before a session starts in one (`WorktreeDialog`); `cwd` null asks for the folder too. */
   const worktreeRequest = ref<{ accountId: string; cwd: string | null } | null>(null)
   const themeEditorRequest = ref<ThemeEditorRequest | null>(null)
@@ -115,6 +117,7 @@ export const useUiStore = defineStore('ui', () => {
     worktreeRequest,
     workspaceRequest,
     projectRequest,
+    sessionRenameRequest,
     themeEditorRequest,
     selectedTabEdges,
     hoveredTab,

@@ -92,6 +92,11 @@ const ready = ref(false)
 const state = reactive<BrowserViewState>({ loading: false, canGoBack: false, canGoForward: false, favicon: null })
 /** The page could not be loaded, or its process went away (`crashed`). */
 const failure = ref<{ description: string; url: string; crashed?: boolean } | null>(null)
+/**
+ * The view shows Chromium's white error page (or nothing, after a crash): hidden until a page comes,
+ * also while it tries again. The notices over it are translucent with a window material.
+ */
+const errorPage = ref(false)
 /** The id of the page's contents, once the view is attached: questions and downloads of the page name it. */
 const contentsId = ref<number | null>(null)
 /** The page asks for a user name and password. */
@@ -436,6 +441,7 @@ onMounted(() => {
     updateHistory()
   })
   el.addEventListener('did-navigate', (event) => {
+    errorPage.value = false
     documents++
     iconNamed = false
     // The matches were those of the last document.
@@ -463,6 +469,7 @@ onMounted(() => {
     const { reason } = (event as Event & { details: { reason: string } }).details
     if (reason === 'clean-exit') return
     state.loading = false
+    errorPage.value = true
     failure.value = { crashed: true, description: GONE_REASONS[reason] ?? 'Die Seite ist abgestürzt.', url: url.value }
   })
   el.addEventListener('did-fail-load', (event) => {
@@ -473,7 +480,9 @@ onMounted(() => {
       isMainFrame: boolean
     }
     // -3: aborted, e.g. by the next navigation or by stopping.
-    if (isMainFrame && errorCode !== -3) failure.value = { description: errorDescription || `Fehler ${errorCode}`, url: validatedURL }
+    if (!isMainFrame || errorCode === -3) return
+    errorPage.value = true
+    failure.value = { description: errorDescription || `Fehler ${errorCode}`, url: validatedURL }
   })
   browsers.register(props.terminal.id, {
     state,
@@ -722,7 +731,8 @@ watch(
         The page; this wrapper never goes, a view moved to another parent loads anew. With a size of
         its own the view has that size in the layout (the page's size) and is scaled down to fit.
       -->
-      <div :class="cn('absolute overflow-hidden', !frame && 'inset-0')" :style="viewStyle">
+      <!-- Without a page to show (see errorPage) it looks as an empty tab does. -->
+      <div :class="cn('absolute overflow-hidden', !frame && 'inset-0', errorPage && 'opacity-0')" :style="viewStyle">
         <!-- A click into the page reaches only the page: the view's own focus event says it was meant. -->
         <webview
           ref="view"

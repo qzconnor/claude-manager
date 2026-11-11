@@ -125,6 +125,7 @@ export const IpcInvoke = {
   sessionsSearch: 'sessions:search',
   sessionsContinueWith: 'sessions:continue-with',
   sessionsRemove: 'sessions:remove',
+  sessionsRename: 'sessions:rename',
 
   workspacesList: 'workspaces:list',
   workspacesCreate: 'workspaces:create',
@@ -445,6 +446,11 @@ export interface ManagerApi {
      * Sessions open in a tab or a running Claude Code are kept.
      */
     remove(sessions: SessionRef[]): Promise<SessionRemoveResult>
+    /**
+     * Names the session everywhere in the app (its tabs too), over the title Claude Code gives it; an
+     * empty name lets it show Claude Code's title again.
+     */
+    rename(sessionId: string, name: string): Promise<void>
     onChanged(cb: (accountId: string) => void): Unsubscribe
   }
   /** Folders whose projects (subfolders) share a system prompt, `cm_prompts.md` in the folder. */
