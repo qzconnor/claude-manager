@@ -10,6 +10,8 @@ import {
   parsePaneNode,
   removePanes,
   replacePane,
+  holdSplit,
+  sameShape,
   setRatio,
   splitPane,
 } from './panes'
@@ -66,6 +68,22 @@ describe('removePanes', () => {
 
   it('drops the tabs that are left with one terminal', () => {
     expect(dropPanes([tree, row('x', 'y')], new Set(['x', 'c']))).toEqual([row('a', 'b')])
+  })
+})
+
+describe('sameShape and holdSplit', () => {
+  it('compares how terminals are split, not their shares', () => {
+    expect(sameShape(tree, setRatio(tree, ['second'], 0.3))).toBe(true)
+    expect(sameShape(tree, row('a', row('b', 'c')))).toBe(false)
+    expect(sameShape(tree, row('a', column('c', 'b')))).toBe(false)
+  })
+
+  it('keeps the share of a split being dragged', () => {
+    const dragged = setRatio(tree, [], 0.2) as PaneSplit
+    const other = row('x', 'y')
+    expect(holdSplit([other, tree as PaneSplit], dragged)).toEqual({ splits: [other, dragged], held: dragged })
+    // A terminal of it closed meanwhile: the split is main's again.
+    expect(holdSplit([other], dragged)).toEqual({ splits: [other], held: null })
   })
 })
 

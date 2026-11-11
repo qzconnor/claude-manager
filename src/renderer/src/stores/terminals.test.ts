@@ -291,6 +291,23 @@ describe('changes beside a session', () => {
   })
 })
 
+describe('dragging a divider', () => {
+  it('keeps its share while main reports a working session, and takes main’s again once let go', async () => {
+    const terminals = await load([terminal('s1'), terminal('s2')], [beside('s1', 's2')])
+    const tab = terminals.tabs.find((t) => typeof t.layout !== 'string')!
+    const share = () => (terminals.tabs.find((t) => t.id === tab.id)?.layout as PaneSplit).ratio
+    terminals.resize(tab.id, [], 0.3, false)
+    // A session starts working: main sends its list with the share it knows.
+    changed(main.list.map((t) => (t.id === 's1' ? { ...t, busy: true } : t)), main.splits)
+    expect(share()).toBe(0.3)
+    terminals.resize(tab.id, [], 0.35, true)
+    expect(api.terminals.arrange).toHaveBeenCalledWith({ ...beside('s1', 's2'), ratio: 0.35 })
+    // From now on main's list counts again.
+    changed(main.list, [{ ...beside('s1', 's2'), ratio: 0.6 }])
+    expect(share()).toBe(0.6)
+  })
+})
+
 describe('the groups of the last run', () => {
   it('come back although main reports its terminals before the window loaded them', async () => {
     const saved: Workspace = {

@@ -4,6 +4,7 @@ import { moveItem } from '@shared/order'
 import {
   dropPanes,
   hasPane,
+  holdSplit,
   insertPane,
   isSplit,
   mapPanes,
@@ -149,6 +150,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
   const terminals = ref<TerminalInfo[]>([])
   /** The tabs with more than one terminal, as the main process keeps them. */
   const splits = ref<PaneSplit[]>([])
+  /** The split whose divider is being dragged, with its share so far: main knows it once it is let go. */
+  let resizing: PaneSplit | null = null
   /** The terminals in main's order with their modes: the order main restores them in on the next start. */
   const mainOrder = ref<SavedWorkspace['order']>([])
   /** The groups and their tabs. */
@@ -528,7 +531,10 @@ export const useTerminalsStore = defineStore('terminals', () => {
     const added = next.filter((n) => !retired.has(n.id) && !previous.has(n.id)).map((n) => incoming.get(n.id)!)
     const list = [...known, ...added]
     if (!sameItems(list, current)) terminals.value = list
-    if (!sameData(toRaw(splits.value), nextSplits)) splits.value = nextSplits
+    // A divider being dragged keeps its share: main knows it once it is let go.
+    let incomingSplits = nextSplits
+    if (resizing) ({ splits: incomingSplits, held: resizing } = holdSplit(nextSplits, resizing))
+    if (!sameData(toRaw(splits.value), incomingSplits)) splits.value = incomingSplits
     const order = next.map((t) => ({ id: t.id, mode: t.mode }))
     if (!sameData(toRaw(mainOrder.value), order)) mainOrder.value = order
     const ids = new Set(list.map((t) => t.id))
@@ -1051,6 +1057,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     const layout = setRatio(tab.layout, path, ratio) as PaneSplit
     const ids = new Set(paneIds(layout))
     splits.value = [...dropPanes(splits.value, ids), layout]
+    resizing = save ? null : (plain(layout) as PaneSplit)
     if (save) void window.api.terminals.arrange(plain(layout))
   }
 

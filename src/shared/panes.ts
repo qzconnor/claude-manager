@@ -108,6 +108,22 @@ export function ownerOf(node: PaneNode, id: string, isOwner: (id: string) => boo
   return ownerOf(inner, id, isOwner) ?? paneIds(beside).find(isOwner) ?? null
 }
 
+/** Whether two trees split the same terminals the same way, whatever their shares. */
+export function sameShape(a: PaneNode, b: PaneNode): boolean {
+  if (!isSplit(a) || !isSplit(b)) return a === b
+  return a.direction === b.direction && sameShape(a.first, b.first) && sameShape(a.second, b.second)
+}
+
+/**
+ * `splits` with `held` in place of the split of the same shape: a divider being dragged keeps its share
+ * while a list comes that doesn't know it yet. Null for `held` when no split has its shape any more.
+ */
+export function holdSplit(splits: readonly PaneSplit[], held: PaneSplit): { splits: PaneSplit[]; held: PaneSplit | null } {
+  const index = splits.findIndex((split) => sameShape(split, held))
+  if (index === -1) return { splits: [...splits], held: null }
+  return { splits: splits.map((split, i) => (i === index ? held : split)), held }
+}
+
 /** The split at `path` with another share for its first part. The tree as it is when there is no split there. */
 export function setRatio(node: PaneNode, path: SplitPath, ratio: number): PaneNode {
   if (!isSplit(node)) return node
