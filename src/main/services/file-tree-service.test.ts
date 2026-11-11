@@ -486,6 +486,28 @@ describe('FileTreeService with git', () => {
     await writeFile(join(repo, 'alt.txt'), Buffer.from('Gr\xfc\xdfe\nalt\n', 'latin1'))
     expect((await service.diff(repo, 'alt.txt', false)).text).toBe('Grüße\nalt\n')
   })
+
+  it('shows an image as it was and as it is', async () => {
+    const red = Buffer.from('\x89PNG\r\n\x1a\nred', 'latin1')
+    const blue = Buffer.from('\x89PNG\r\n\x1a\nblue', 'latin1')
+    const url = (bytes: Buffer) => `data:image/png;base64,${bytes.toString('base64')}`
+    const repo = join(dir, 'repo')
+    await mkdir(repo)
+    git(repo, 'init', '-q')
+    await writeFile(join(repo, 'logo.PNG'), red)
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-qm', 'init')
+    // Unchanged: as it is.
+    expect(await service.diff(repo, 'logo.PNG', false)).toMatchObject({ binary: true, image: { before: null, after: url(red) } })
+    await writeFile(join(repo, 'logo.PNG'), blue)
+    expect(await service.diff(repo, 'logo.PNG', false)).toMatchObject({ binary: true, image: { before: url(red), after: url(blue) } })
+    // New: only now.
+    await writeFile(join(repo, 'new.png'), blue)
+    expect((await service.diff(repo, 'new.png', false)).image).toEqual({ before: null, after: url(blue) })
+    // Deleted: only before.
+    await rm(join(repo, 'logo.PNG'))
+    expect(await service.diff(repo, 'logo.PNG', false)).toMatchObject({ missing: true, image: { before: url(red), after: null } })
+  })
 })
 
 describe('FileTreeService.list', () => {

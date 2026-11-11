@@ -60,6 +60,19 @@ const MAX_WATCHED_DIRS = 2000
 /** A file bigger than this isn't shown, nor a diff longer than that (characters). */
 const MAX_DIFF_FILE_BYTES = 4 * 1024 * 1024
 const MAX_PATCH_CHARS = 4 * 1024 * 1024
+/** An image bigger than this shows no preview. */
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024
+/** Images the diff shows as such, by extension; SVG is text and shows as its source. */
+const IMAGE_TYPES: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+}
 /** Lines of context around the changes, and enough of them for the whole file. */
 const DIFF_CONTEXT = 3
 const FULL_CONTEXT = 1_000_000
@@ -238,6 +251,20 @@ export class FileTreeService extends TypedEmitter<Events> {
           }
         }
       }
+    }
+    const type = IMAGE_TYPES[/\.([^./]+)$/.exec(path)?.[1]?.toLowerCase() ?? '']
+    if (type) {
+      // Changed since the last commit (patch): as it was, under its old name when `git mv` moved it.
+      const from = /^rename from (.+)$/m.exec(result.patch)?.[1] ?? `${prefix ?? ''}${path}`
+      const [before, after] = await Promise.all([
+        result.patch ? runGitBuffer(root, ['--no-optional-locks', 'cat-file', 'blob', `HEAD:${from}`]) : null,
+        info && info.size <= MAX_IMAGE_BYTES ? readFile(file).catch(() => null) : null,
+      ])
+      const url = (bytes: Buffer | null) => (bytes && bytes.length <= MAX_IMAGE_BYTES ? `data:${type};base64,${bytes.toString('base64')}` : null)
+      result.image = { before: url(before), after: url(after) }
+      result.binary = true
+      if (info && info.size > MAX_IMAGE_BYTES) result.tooLarge = true
+      return result
     }
     if (!info || result.binary || result.tooLarge || /^@@ /m.test(result.patch)) return result
     if (info.size > MAX_DIFF_FILE_BYTES) {

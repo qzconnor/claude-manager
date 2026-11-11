@@ -139,11 +139,12 @@ export const MAX_DIFF_COLUMNS = 2000
  * What a file's diff shows: its changes; the whole file as added (git doesn't know it yet), as it is
  * (no changes, or outside a repository); or why there is nothing to show.
  */
-export type DiffMode = 'diff' | 'new' | 'unchanged' | 'plain' | 'binary' | 'tooLarge' | 'missing'
+export type DiffMode = 'diff' | 'new' | 'unchanged' | 'plain' | 'image' | 'binary' | 'tooLarge' | 'missing'
 
 /** What a diff shows, with `status` the file's state in git. */
 export function diffMode(diff: FileDiff, status: GitFileStatus | null | undefined): DiffMode {
   if (diff.tooLarge) return 'tooLarge'
+  if (diff.image?.before || diff.image?.after) return 'image'
   if (diff.binary) return 'binary'
   // Without a hunk only the name or the mode changed: the file shows as it is.
   if (/^@@ /m.test(diff.patch)) return 'diff'
@@ -254,13 +255,27 @@ export function sameDiff(a: FileDiff, b: FileDiff): boolean {
     a.repo === b.repo &&
     a.binary === b.binary &&
     a.tooLarge === b.tooLarge &&
-    a.missing === b.missing
+    a.missing === b.missing &&
+    a.image?.before === b.image?.before &&
+    a.image?.after === b.image?.after
   )
+}
+
+/**
+ * An image's data URL for the fingerprint: its length and every so many of its characters. A binary
+ * file's patch is the same whatever changed in it, and megabytes needn't be hashed whole.
+ */
+function sample(url: string | null | undefined): string {
+  if (!url) return ''
+  const step = Math.max(1, Math.floor(url.length / 4096))
+  let picked = `${url.length}:`
+  for (let i = 0; i < url.length; i += step) picked += url[i]
+  return picked
 }
 
 /** A short fingerprint of a diff (FNV-1a), to tell whether a file changed since it was looked at. */
 export function diffHash(diff: FileDiff): string {
-  const source = `${diff.patch}\0${diff.text ?? ''}\0${diff.missing}`
+  const source = `${diff.patch}\0${diff.text ?? ''}\0${diff.missing}\0${sample(diff.image?.before)}\0${sample(diff.image?.after)}`
   let hash = 0x811c9dc5
   for (let i = 0; i < source.length; i++) {
     hash ^= source.charCodeAt(i)

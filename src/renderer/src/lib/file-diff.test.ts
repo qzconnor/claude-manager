@@ -137,6 +137,19 @@ describe('diffMode', () => {
     expect(diffMode(diff({ tooLarge: true, binary: true }), 'modified')).toBe('tooLarge')
   })
 
+  it('shows an image as such, and tells when it changed again', () => {
+    const image = (before: string | null, after: string | null) => diff({ binary: true, patch: 'Binary files a/x.png and b/x.png differ\n', image: { before, after } })
+    expect(diffMode(image('data:a', 'data:b'), 'modified')).toBe('image')
+    expect(diffMode(image(null, 'data:b'), 'untracked')).toBe('image')
+    // Too big on both sides: nothing to show.
+    expect(diffMode(image(null, null), 'modified')).toBe('binary')
+    expect(diffLines(image('data:a', 'data:b'), 'image').lines).toEqual([])
+    // The patch of a binary file stays the same, the image doesn't.
+    expect(sameDiff(image('data:a', 'data:b'), image('data:a', 'data:b'))).toBe(true)
+    expect(sameDiff(image('data:a', 'data:b'), image('data:a', 'data:c'))).toBe(false)
+    expect(diffHash(image('data:a', 'data:b'))).not.toBe(diffHash(image('data:a', 'data:c')))
+  })
+
   it('shows a file only renamed or made executable as it is, and says why', () => {
     const renamed = 'diff --git a/a.ts b/b.ts\nsimilarity index 100%\nrename from a.ts\nrename to b.ts\n'
     const chmod = 'diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode 100755\n'

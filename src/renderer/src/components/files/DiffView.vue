@@ -27,6 +27,7 @@ import { hasLanguage, highlightDiff, languageOf, loadLanguage } from '@/lib/synt
 import { cn } from '@/lib/utils'
 import { SEPARATOR, useFileTreeStore } from '@/stores/file-tree'
 import DiffLineRow from './DiffLineRow.vue'
+import ImageDiff from './ImageDiff.vue'
 
 /**
  * The changes of a file since the last commit, as `git diff HEAD` sees them (staged and not), drawn
@@ -324,6 +325,7 @@ const iconButton =
     <div v-else-if="!diff" class="flex flex-1 justify-center pt-8">
       <Spinner class="size-[16px] text-muted-foreground" />
     </div>
+    <ImageDiff v-else-if="mode === 'image'" :before="diff.image?.before ?? null" :after="diff.image?.after ?? null" />
     <div
       v-else-if="mode === 'binary' || mode === 'tooLarge' || mode === 'missing'"
       class="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center text-xs text-muted-foreground"

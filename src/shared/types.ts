@@ -1160,6 +1160,11 @@ export interface FileDiff {
   tooLarge: boolean
   /** The file isn't there (deleted, or not yet written). */
   missing: boolean
+  /**
+   * An image (PNG, JPEG, GIF, WebP, AVIF, BMP, ICO) as data URLs: as at the last commit, if it changed
+   * since, and as it is now. Null for a side that isn't there or is too big to show.
+   */
+  image?: { before: string | null; after: string | null }
 }
 
 /** What Claude does with a file: reads it, searches it (or a search found it), writes it, or commits it. */

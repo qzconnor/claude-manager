@@ -66,6 +66,7 @@ import { hasLanguage, highlightDiff, languageOf, loadLanguage } from '@/lib/synt
 import { SEPARATOR, useFileTreeStore } from '@/stores/file-tree'
 import ChangesFileHeader from './ChangesFileHeader.vue'
 import DiffLineRow from './DiffLineRow.vue'
+import ImageDiff from './ImageDiff.vue'
 
 /**
  * All changes of a folder since the last commit, file below file, to review them in one go like a
@@ -352,6 +353,8 @@ const PAD = 8
 /** The cards' rings lie outside them: the top one starts this far below the view's edge (px), so its ring shows. */
 const RING = 1
 const INSET = 8
+/** An image's card: its body's height (px), before and now side by side in it. */
+const IMAGE_HEIGHT = 240
 
 interface Block {
   path: string
@@ -365,6 +368,8 @@ interface Block {
   /** Its lines, none while folded or when it has a note instead. */
   lines: readonly DiffLine[]
   note: string | null
+  /** An image instead of lines. */
+  image: { before: string | null; after: string | null } | null
   withSign: boolean
   gutterWidth: number
   /** Where its lines start in rows while they wrap; null while they scroll sideways. */
@@ -423,16 +428,17 @@ const layout = computed(() => {
   for (const path of paths.value) {
     const entry = entries.get(path)
     const collapsed = isCollapsed(path)
-    const note = collapsed ? null : noteOf(entry)
-    const lines = collapsed || note || !entry ? [] : entry.parsed.lines
+    const image = !collapsed && entry?.mode === 'image' ? (entry.diff?.image ?? null) : null
+    const note = collapsed || image ? null : noteOf(entry)
+    const lines = collapsed || note || image || !entry ? [] : entry.parsed.lines
     const withSign = entry?.mode === 'diff' || entry?.mode === 'new'
     const gutterWidth = (entry?.digits ?? 1) + (withSign ? 2 : 0) + 2
     const bodyTop = top + HEAD
     const offsets = entry && lines.length ? offsetsOf(entry, gutterWidth) : null
     const rows = offsets ? offsets[lines.length]! : lines.length
-    const end = collapsed ? bodyTop : bodyTop + (note ? row * 2 : rows * row + BOTTOM)
+    const end = collapsed ? bodyTop : bodyTop + (image ? IMAGE_HEIGHT : note ? row * 2 : rows * row + BOTTOM)
     if (lines.length && !offsets) widest = Math.max(widest, gutterWidth + (entry?.columns ?? 0))
-    blocks.push({ path, top, bodyTop, end, entry, collapsed, lines, note, withSign, gutterWidth, offsets })
+    blocks.push({ path, top, bodyTop, end, entry, collapsed, lines, note, image, withSign, gutterWidth, offsets })
     top = end + GAP
   }
   return { blocks, height: top - GAP + PAD, widest }
@@ -723,6 +729,9 @@ const iconButton =
               </div>
               <div v-if="block.note" class="flex items-center px-3 font-sans text-xs text-muted-foreground" :style="{ height: `${rowHeight * 2}px` }">
                 <span class="truncate">{{ block.note }}</span>
+              </div>
+              <div v-if="block.image" :style="{ height: `${IMAGE_HEIGHT}px` }">
+                <ImageDiff :before="block.image.before" :after="block.image.after" compact />
               </div>
             </div>
           </div>
