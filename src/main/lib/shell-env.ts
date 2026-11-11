@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { userInfo } from 'node:os'
+import { forceKill } from './process-end'
 
 /** A slow shell setup (plugin managers, version managers) must not hold up the start for long. */
 const TIMEOUT_MS = 10_000
@@ -26,8 +27,11 @@ export async function loadShellEnv(): Promise<void> {
   }
 }
 
-function readShellEnv(): Promise<Record<string, string>> {
-  const shell = process.env.SHELL || userInfo().shell || '/bin/sh'
+/** The environment of the login shell `shell`; it has `timeoutMs` to answer. */
+export function readShellEnv(
+  shell = process.env.SHELL || userInfo().shell || '/bin/sh',
+  timeoutMs = TIMEOUT_MS,
+): Promise<Record<string, string>> {
   const mark = randomUUID()
   // Electron prints the environment as JSON: values with line breaks survive, and output of the
   // shell's own startup files (greetings, prompts) is cut off by the marks.
@@ -35,6 +39,7 @@ function readShellEnv(): Promise<Record<string, string>> {
   const command = `'${process.execPath.replaceAll("'", `'\\''`)}' -e '${script.replaceAll("'", `'\\''`)}'`
   return new Promise((resolve, reject) => {
     // -i and -l: interactive login shell, which reads the same files as one in a terminal window.
+    // `detached`: the leader of a process group of its own, which goes as a whole on a timeout.
     const child = spawn(shell, ['-i', '-l', '-c', command], {
       detached: true,
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -42,9 +47,12 @@ function readShellEnv(): Promise<Record<string, string>> {
     })
     let output = ''
     const timer = setTimeout(() => {
-      child.kill()
-      reject(new Error(`${shell} did not answer within ${TIMEOUT_MS / 1000} s`))
-    }, TIMEOUT_MS)
+      // What the startup files started goes too (a plugin manager waiting for the network, the
+      // program asked for the environment): left behind, it would hold on to the output.
+      if (child.pid !== undefined) void forceKill(child.pid)
+      child.stdout.destroy()
+      reject(new Error(`${shell} did not answer within ${timeoutMs / 1000} s`))
+    }, timeoutMs)
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => (output += chunk))
     child.on('error', (error) => {
