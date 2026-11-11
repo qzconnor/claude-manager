@@ -63,7 +63,7 @@ const emit = defineEmits<{ select: [id: string] }>()
 const accounts = useAccountsStore()
 const terminals = useTerminalsStore()
 const launcher = useLauncher()
-const { closeTerminal, closeTab, stopTerminal, restartTerminal } = useTerminalActions()
+const { closeTerminal, closeTab, closeOtherTabs, stopTerminal, restartTerminal } = useTerminalActions()
 const accountSwitch = useAccountSwitch()
 
 const browsers = useBrowsersStore()
@@ -211,12 +211,6 @@ function onMouseDown(event: MouseEvent, id: string) {
   if (event.button === 1) {
     event.preventDefault()
     void closeTerminal(id)
-  }
-}
-
-async function closeOthers() {
-  for (const other of terminals.tabs.filter((t) => t.id !== props.tab.id)) {
-    await closeTab(other)
   }
 }
 
@@ -458,7 +452,7 @@ function openFolder() {
             Tab schließen
             <ContextMenuShortcut v-if="!split">Strg+Umschalt+W</ContextMenuShortcut>
           </ContextMenuItem>
-          <ContextMenuItem :disabled="terminals.tabs.length < 2" @select="closeOthers">
+          <ContextMenuItem :disabled="terminals.tabs.length < 2" @select="closeOtherTabs(tab)">
             Andere Tabs schließen
           </ContextMenuItem>
         </ContextMenuGroup>
