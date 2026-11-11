@@ -15,7 +15,8 @@ export class WorkspaceTrust {
 
   constructor(
     private readonly accounts: AccountService,
-    private readonly ask: TrustQuestion,
+    /** Also asks other questions before a session starts. */
+    readonly ask: TrustQuestion,
   ) {}
 
   /**

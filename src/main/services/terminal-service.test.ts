@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AccountService } from './account-service'
 import type { ClaudeCli } from './claude-cli'
@@ -85,5 +88,50 @@ describe('following /cd', () => {
     // Before the transcript names it, the folder tells it.
     expect(currentWorktree(undefined, WORKTREE, APP, null)).toEqual({ name: 'login-fix', branch: null, path: WORKTREE, originalCwd: APP })
     expect(currentWorktree(scanned, null, APP, null)).toBe(scanned)
+  })
+})
+
+describe('resuming a session that is open elsewhere', () => {
+  const SESSION = '11111111-2222-4333-8444-555555555555'
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'cm-resume-'))
+  })
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  function serviceWith(answer: boolean) {
+    const ask = vi.fn(async () => answer)
+    const ensure = vi.fn(async () => null)
+    const accounts = { paths: () => ({ sessionsDir: dir }), get: () => ({ id: 'a', defaultCwd: dir }) }
+    const settings = { get: () => ({ claude: { defaultCwd: null } }) }
+    const trust = { ask, ensure }
+    const own = new TerminalService(accounts as unknown as AccountService, {} as ClaudeCli, settings as unknown as SettingsService, trust as unknown as WorkspaceTrust)
+    return { own, ask, ensure }
+  }
+
+  it('asks before resuming a session a running Claude Code has open, and stops on no', async () => {
+    // This test's own process stands for the Claude Code that has the session open.
+    await writeFile(join(dir, `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: SESSION }))
+    const { own, ask, ensure } = serviceWith(false)
+    expect(await own.open({ accountId: 'a', resumeSessionId: SESSION })).toBeNull()
+    expect(ask).toHaveBeenCalledOnce()
+    expect(ensure).not.toHaveBeenCalled()
+
+    const yes = serviceWith(true)
+    await yes.own.open({ accountId: 'a', resumeSessionId: SESSION })
+    expect(yes.ensure).toHaveBeenCalledOnce()
+  })
+
+  it('asks nothing for a fork or a session nobody has open', async () => {
+    await writeFile(join(dir, `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: SESSION }))
+    const { own, ask, ensure } = serviceWith(false)
+    await own.open({ accountId: 'a', resumeSessionId: SESSION, forkSession: true })
+    await own.open({ accountId: 'a', resumeSessionId: '99999999-2222-4333-8444-555555555555' })
+    expect(ask).not.toHaveBeenCalled()
+    expect(ensure).toHaveBeenCalledTimes(2)
   })
 })

@@ -271,7 +271,7 @@ export const routes: Route[] = [
       } catch (error) {
         throw new HttpError(400, error instanceof Error ? error.message : String(error))
       }
-      if (!terminal) throw new HttpError(403, 'Dem Ordner wurde in der App nicht vertraut.')
+      if (!terminal) throw new HttpError(403, 'In der App abgelehnt: dem Ordner wird nicht vertraut, oder die Session ist anderswo schon offen.')
       if (optionalBoolean(body, 'activate')) ctx.activateTerminal(terminal.id)
       return terminal
     },

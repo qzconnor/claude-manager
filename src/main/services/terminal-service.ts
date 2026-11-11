@@ -31,6 +31,7 @@ import { readCompactLimit } from '../lib/auto-compact'
 import {
   findTranscript,
   isWorktreeOf,
+  liveSessionIds,
   newTitleScan,
   readContextUsage,
   readLiveSession,
@@ -248,11 +249,46 @@ export class TerminalService extends TypedEmitter<Events> {
   /**
    * Like `create`, but Claude Code only starts in a folder it trusts: the app asks first, instead of
    * Claude Code in the terminal. Null when the user said no.
+   *
+   * Two processes must never write to the same transcript: a session that runs in a tab already is
+   * that tab (returned as it is), one a Claude Code elsewhere has open goes on only after asking.
    */
   async open(options: TerminalCreateOptions): Promise<TerminalInfo | null> {
     if ((options.mode ?? 'session') !== 'session') return this.create(options)
+    const resumed = options.forkSession ? null : options.resumeSessionId
+    if (resumed) {
+      const running = this.runningSession(options.accountId, resumed)
+      if (running) return running
+      if (!(await this.mayResumeElsewhereOpen(options.accountId, resumed))) return null
+    }
     const cwd = await this.trustedCwd(options.accountId, options.cwd)
     return cwd === null ? null : this.create({ ...options, cwd })
+  }
+
+  /** The tab in which the session of the account runs right now. */
+  runningSession(accountId: string, sessionId: string): TerminalInfo | null {
+    for (const t of this.terminals.values()) {
+      if (t.info.mode === 'session' && t.info.status === 'running' && t.info.accountId === accountId && t.info.sessionId === sessionId) {
+        return { ...t.info }
+      }
+    }
+    return null
+  }
+
+  /** True when no Claude Code has the session open, or the user wants to go on anyway. */
+  private async mayResumeElsewhereOpen(accountId: string, sessionId: string): Promise<boolean> {
+    const live = await liveSessionIds(this.accounts.paths(accountId).sessionsDir)
+    if (!live.has(sessionId)) return true
+    const answer = await this.trust.ask({
+      title: 'Diese Session ist schon offen',
+      description:
+        'Ein Claude Code außerhalb dieser Tabs arbeitet gerade in ihr. Laufen beide weiter, schreiben sie durcheinander in denselben Verlauf. ' +
+        'Beende sie dort zuerst, oder öffne einen Fork. Fortsetzen nur, wenn sie dort sicher nicht mehr läuft.',
+      confirmText: 'Trotzdem fortsetzen',
+      cancelText: 'Abbrechen',
+      warning: true,
+    })
+    return answer === true
   }
 
   /** The folder a session of the account starts in, once it is trusted (see `open`). */
