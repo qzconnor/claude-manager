@@ -342,6 +342,11 @@ describe('fileActivity', () => {
     expect(fileActivity(body('PostToolUse', 'Bash', { command: 'git log --oneline' }))?.commit).toBeUndefined()
   })
 
+  it('tells a commit from PowerShell as from bash', () => {
+    expect(fileActivity(body('PostToolUse', 'PowerShell', { command: 'git add -A; git commit -m "fix"' }))?.commit).toBe(resolve('/work'))
+    expect(fileActivity(body('PreToolUse', 'PowerShell', { command: 'git commit -m x' }))?.commit).toBeUndefined()
+  })
+
   it('comes with the call', () => {
     const call = parseHookCall({ ...body('PreToolUse', 'Write', { file_path: resolve('/work/c.ts') }), session_id: SESSION })
     expect(call?.files?.touches).toEqual([{ path: resolve('/work/c.ts'), kind: 'write' }])
@@ -354,6 +359,15 @@ describe('commitsInShell', () => {
     expect(commitsInShell('git -C ../repo commit --amend')).toBe(true)
     expect(commitsInShell('npm test && git commit -am x')).toBe(true)
     expect(commitsInShell('/usr/bin/git commit')).toBe(true)
+  })
+
+  it('finds it in PowerShell too, and over continued lines', () => {
+    expect(commitsInShell('git.exe commit -m x')).toBe(true)
+    expect(commitsInShell("& 'C:\\Program Files\\Git\\cmd\\git.exe' commit -F msg.txt")).toBe(true)
+    expect(commitsInShell('GIT commit -m x')).toBe(true)
+    expect(commitsInShell('git `\n  commit -m x')).toBe(true)
+    expect(commitsInShell('git -C repo \\\n  commit -m x')).toBe(true)
+    expect(commitsInShell('git Commit -m x')).toBe(false)
   })
 
   it('finds no commit in other commands or across separators', () => {

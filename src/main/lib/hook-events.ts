@@ -153,15 +153,20 @@ const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
 const SEARCH_TOOLS = new Set(['Grep', 'Glob'])
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
 /**
- * Whether a shell command commits: `git commit`, also with options between (`git -C repo commit`).
- * Part by part (`;`, `&`, `|`, new line) instead of one pattern over all: `git[^;]*\scommit` backtracks
- * over each `git` of a long command, 64 KB of them took most of a second.
+ * Whether a shell command (bash or PowerShell) commits: `git commit`, also with options between
+ * (`git -C repo commit`), as `git.exe` or `& git`. Part by part (`;`, `&`, `|`, new line) instead of one
+ * pattern over all: `git[^;]*\scommit` backtracks over each `git` of a long command, 64 KB of them took
+ * most of a second. A line ending in `\` (bash) or a backtick (PowerShell) goes on in the next one.
  */
 export function commitsInShell(command: string): boolean {
-  return command.split(/[;&|\n]/).some((part) => {
-    const git = /\bgit\b/.exec(part)
-    return git !== null && /\scommit\b/.test(part.slice(git.index + 3))
-  })
+  return command
+    .replace(/[\\`]\r?\n/g, ' ')
+    .split(/[;&|\n]/)
+    .some((part) => {
+      // Windows finds the program in any case (`GIT commit`), git its own commands only in lower case.
+      const git = /\bgit\b/i.exec(part)
+      return git !== null && /\scommit\b/.test(part.slice(git.index + 3))
+    })
 }
 
 /** The most files of a search that light up. */
@@ -207,7 +212,7 @@ export function fileActivity(body: Record<string, unknown>): FileActivity | null
       ]
       return { ...(maybe.length && { maybe }), shell: { id, cwd, end: false, writes: [] } }
     }
-    const commit = event === 'PostToolUse' && tool === 'Bash' && commitsInShell(command)
+    const commit = event === 'PostToolUse' && commitsInShell(command)
     return { ...(commit && { commit: cwd }), shell: { id, cwd, end: true, writes: files.writes } }
   }
   return null
