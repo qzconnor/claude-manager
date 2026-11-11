@@ -100,7 +100,7 @@ const trees = computed(() => {
   const map = new Map<string, { target: TreeTarget; tab: string; width: number; max: number; current: string | null }>()
   for (const group of terminals.groups) {
     const target = fileTree.targetOfGroup(group)
-    if (!target || !group.active || !fileTree.isOpen(target.id)) continue
+    if (!target || !group.active || !fileTree.shownIn(target, group)) continue
     const max = Math.floor(rectOf(group.id).width * rootWidth.value * MAX_TREE_SHARE)
     const diff = diffOfTab(group.active)
     const current = diff?.root === target.root ? diff.path : null

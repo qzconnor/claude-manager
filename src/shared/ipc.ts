@@ -94,6 +94,7 @@ export const IpcInvoke = {
   terminalsRename: 'terminals:rename',
   terminalsAttach: 'terminals:attach',
   terminalsContinueWith: 'terminals:continue-with',
+  terminalsMoveSession: 'terminals:move-session',
   terminalsRestartSession: 'terminals:restart-session',
   terminalsSetMuted: 'terminals:set-muted',
   terminalsLayouts: 'terminals:layouts',
@@ -126,6 +127,7 @@ export const IpcInvoke = {
   sessionsContinueWith: 'sessions:continue-with',
   sessionsRemove: 'sessions:remove',
   sessionsRename: 'sessions:rename',
+  sessionsMove: 'sessions:move',
 
   workspacesList: 'workspaces:list',
   workspacesCreate: 'workspaces:create',
@@ -352,6 +354,11 @@ export interface ManagerApi {
     continueWith(id: string, accountId: string): Promise<TerminalInfo | null>
     /** Starts the session again in its place, going on with its conversation (new launch options apply). */
     restartSession(id: string): Promise<TerminalInfo | null>
+    /**
+     * Moves the tab's session to the folder `to` by starting it again there, with its conversation; what
+     * its input held is lost. Not while Claude works. Null when the folder isn't trusted: the tab stays.
+     */
+    moveSession(id: string, to: string): Promise<TerminalInfo | null>
     /** A muted tab sends no notifications and doesn't flash the taskbar. */
     setMuted(id: string, muted: boolean): Promise<void>
     /**
@@ -451,6 +458,11 @@ export interface ManagerApi {
      * empty name lets it show Claude Code's title again.
      */
     rename(sessionId: string, name: string): Promise<void>
+    /**
+     * The session goes on in the folder `to`, as after `/cd` in Claude Code: its transcript moves into
+     * that folder's project folder. Fails while a Claude Code has it open; there `/cd` does it.
+     */
+    move(accountId: string, sessionId: string, to: string): Promise<void>
     onChanged(cb: (accountId: string) => void): Unsubscribe
   }
   /** Folders whose projects (subfolders) share a system prompt, `cm_prompts.md` in the folder. */

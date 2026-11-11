@@ -74,6 +74,7 @@ const api: ManagerApi = {
     attach: (id) => invoke(IpcInvoke.terminalsAttach, id),
     continueWith: (id, accountId) => invoke(IpcInvoke.terminalsContinueWith, id, accountId),
     restartSession: (id) => invoke(IpcInvoke.terminalsRestartSession, id),
+    moveSession: (id, to) => invoke(IpcInvoke.terminalsMoveSession, id, to),
     setMuted: (id, muted) => invoke(IpcInvoke.terminalsSetMuted, id, muted),
     pastedImageIds: (id) => invoke(IpcInvoke.terminalsPastedImageIds, id),
     pastedImage: (id, n) => invoke(IpcInvoke.terminalsPastedImage, id, n),
@@ -125,6 +126,7 @@ const api: ManagerApi = {
       invoke(IpcInvoke.sessionsContinueWith, accountId, sessionId, targetAccountId),
     remove: (sessions) => invoke(IpcInvoke.sessionsRemove, sessions),
     rename: (sessionId, name) => invoke(IpcInvoke.sessionsRename, sessionId, name),
+    move: (accountId, sessionId, to) => invoke(IpcInvoke.sessionsMove, accountId, sessionId, to),
     onChanged: (cb) => subscribe(IpcEvent.sessionsChanged, cb),
   },
   workspaces: {

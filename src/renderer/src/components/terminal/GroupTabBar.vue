@@ -187,7 +187,7 @@ const iconButton =
     @pointerdown.capture="!focused && terminals.focusGroup(group.id)"
   >
     <div v-if="treeSide === 'left' && treeButton" class="flex shrink-0 items-center border-b pl-1.5">
-      <FileTreeButton :target="treeTarget" variant="group" />
+      <FileTreeButton :target="treeTarget" :group="group" variant="group" />
     </div>
     <div class="w-1.5 shrink-0 border-b" />
     <!-- A small gap between the tabs. Each tab draws its piece of the bar's bottom line, so it carries
@@ -281,7 +281,7 @@ const iconButton =
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <FileTreeButton v-if="treeSide === 'right' && treeButton" :target="treeTarget" variant="group" />
+      <FileTreeButton v-if="treeSide === 'right' && treeButton" :target="treeTarget" :group="group" variant="group" />
     </div>
   </div>
 </template>

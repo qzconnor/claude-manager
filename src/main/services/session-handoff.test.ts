@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Account, AccountKind, SessionGroup, TerminalCreateOptions, TerminalInfo } from '@shared/types'
 import { claudePaths } from '../lib/claude-paths'
 import { projectKey } from '../lib/session-files'
+import { moveSession } from '../lib/session-move'
 import type { AccountService } from './account-service'
 import { SessionHandoff } from './session-handoff'
 import type { SessionService } from './session-service'
@@ -34,7 +35,16 @@ const accounts = {
   paths,
 } as unknown as AccountService
 
-const sessions = { list: async () => groups } as unknown as SessionService
+const sessionFns = {
+  list: async () => groups,
+  move: vi.fn(async (accountId: string, sessionId: string, to: string) => {
+    steps.push('move')
+    if (!(await moveSession(paths(accountId).projectsDir, { id: sessionId, cwd, filePath: transcriptOf(accountId) }, to))) {
+      throw new Error('Kopie')
+    }
+  }),
+}
+const sessions = sessionFns as unknown as SessionService
 
 const settings = { get: () => ({ claude: { continuePrompt } }) } as unknown as SettingsService
 
@@ -323,6 +333,69 @@ describe('SessionHandoff.restartTerminal', () => {
     tabs.set('old', tab({ mode: 'shell' }))
     await expect(handoff().restartTerminal('old')).rejects.toThrow()
     expect(terminalFns.stop).not.toHaveBeenCalled()
+  })
+})
+
+describe('SessionHandoff.moveTerminal', () => {
+  const target = () => join(dir, 'work', 'other')
+
+  it('ends the session, moves it and goes on with it in the new folder', async () => {
+    await writeTranscript()
+    const service = handoff()
+    service.on('replaced', (oldId, info) => steps.push(`replaced ${oldId} by ${info.id}`))
+    expect((await service.moveTerminal('old', target()))?.id).toBe('new')
+    expect(terminalFns.trustedCwd).toHaveBeenCalledWith('own', target())
+    expect(sessionFns.move).toHaveBeenCalledWith('own', S, target())
+    expect(createdOptions()).toEqual({ accountId: 'own', cwd: target(), resumeSessionId: S, title: null, muted: false, replaces: 'old' })
+    expect(steps).toEqual(['stop old', 'move', 'create', 'replaced old by new', 'close old'])
+    expect(existsSync(join(paths('own').projectsDir, projectKey(target()), `${S}.jsonl`))).toBe(true)
+  })
+
+  it('keeps a lent login', async () => {
+    tabs.set('old', tab({ authAccountId: 'token' }))
+    await writeTranscript()
+    await handoff().moveTerminal('old', target())
+    expect(createdOptions()).toEqual({ accountId: 'own', authAccountId: 'token', cwd: target(), resumeSessionId: S, title: null, muted: false, replaces: 'old' })
+  })
+
+  it('starts the session anew in the new folder when nothing was written yet', async () => {
+    await handoff().moveTerminal('old', target())
+    expect(sessionFns.move).not.toHaveBeenCalled()
+    expect(createdOptions()).toEqual({ accountId: 'own', cwd: target(), title: null, muted: false, replaces: 'old' })
+  })
+
+  it.each([
+    ['works on a turn', { busy: true }],
+    ['compacts', { compacting: true }],
+    ['has subagents running', { subagents: 1 }],
+  ])('leaves the session alone while Claude %s', async (_name, overrides) => {
+    tabs.set('old', tab(overrides))
+    await writeTranscript()
+    await expect(handoff().moveTerminal('old', target())).rejects.toThrow('Claude arbeitet gerade')
+    expect(steps).toEqual([])
+  })
+
+  it('refuses the folder the session is in', async () => {
+    await writeTranscript()
+    await expect(handoff().moveTerminal('old', cwd)).rejects.toThrow('schon in diesem Ordner')
+    expect(steps).toEqual([])
+  })
+
+  it('keeps the tab running when the new folder is not trusted', async () => {
+    await writeTranscript()
+    terminalFns.trustedCwd.mockResolvedValueOnce(null)
+    expect(await handoff().moveTerminal('old', target())).toBeNull()
+    expect(steps).toEqual([])
+  })
+
+  it('goes on where it was when the session cannot move, and says why', async () => {
+    await writeTranscript()
+    const copy = join(paths('own').projectsDir, projectKey(target()), `${S}.jsonl`)
+    await mkdir(join(copy, '..'), { recursive: true })
+    await writeFile(copy, 'copy\n')
+    await expect(handoff().moveTerminal('old', target())).rejects.toThrow('Kopie')
+    expect(createdOptions()).toMatchObject({ accountId: 'own', cwd, resumeSessionId: S })
+    expect(steps).toEqual(['stop old', 'move', 'create', 'close old'])
   })
 })
 

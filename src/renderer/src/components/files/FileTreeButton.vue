@@ -8,30 +8,31 @@ import { useFileTreeToggle } from '@/composables/useFileTreeToggle'
 import { TOUCH_RANK } from '@/lib/file-tree'
 import { cn } from '@/lib/utils'
 import { useFileTreeStore, type TreeTarget } from '@/stores/file-tree'
+import type { GroupView } from '@/stores/terminals'
 
 /**
- * Opens and closes a file tree: in a group's tab bar that of the tab the group shows (`group`), in the
- * title bar that of the terminal the window works in (`titlebar`). It sits on the side the tree opens on.
+ * Opens and closes a file tree: in a group's tab bar (`group`) the one beside the tab the group shows,
+ * in the title bar that of the terminal the window works in (`titlebar`). It sits on the side the tree opens on.
  * While Claude works in the session's files and the tree is closed, a light runs across its icon in the
  * colour of what it does, like across the names in the tree.
  */
-const props = defineProps<{ target: TreeTarget | null; variant: 'group' | 'titlebar' }>()
+const props = defineProps<{ target: TreeTarget | null; variant: 'group' | 'titlebar'; group?: GroupView }>()
 
 const { shown, toggle } = useFileTreeToggle()
 const fileTree = useFileTreeStore()
 
 /** In the title bar the tree belongs to the terminals page: on another page the button is not pressed. */
-const pressed = computed(() => shown(props.target))
+const pressed = computed(() => shown(props.target, props.group ?? null))
 
 const label = computed(() => (pressed.value ? 'Dateibaum schließen' : 'Dateibaum öffnen'))
 const tooltip = computed(() => (props.target ? `${label.value} (Strg+Umschalt+E)` : 'Dateibaum: Dieser Tab arbeitet in keinem Ordner'))
 
 /**
  * The strongest of what Claude does in the session's files right now, as in the tree; only while the
- * tree is closed, an open one shows it itself.
+ * tree is closed, an open one shows it itself (also one open beside the session in another group).
  */
 const activity = computed<FileTouchKind | null>(() => {
-  if (pressed.value) return null
+  if (pressed.value || (props.group && fileTree.isOpen(props.target?.id))) return null
   let strongest: FileTouchKind | null = null
   for (const touch of fileTree.touchesOf(props.target?.session.id)?.values() ?? []) {
     if (!strongest || TOUCH_RANK[touch.kind] > TOUCH_RANK[strongest]) strongest = touch.kind
@@ -61,7 +62,7 @@ const still = useMediaQuery('(prefers-reduced-motion: reduce)')
             activity && 'text-(--touch) hover:text-(--touch)',
           )
         "
-        @click="toggle(target)"
+        @click="toggle(target, group ?? null)"
       >
         <!-- In the icon's own units (24 wide): a bright band runs from left to right. -->
         <svg v-if="activity && !still" aria-hidden="true" class="absolute size-0">
