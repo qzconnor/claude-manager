@@ -45,6 +45,7 @@ import {
   worktreeAt,
 } from '../lib/session-files'
 import { awaitEnd, forceKill } from '../lib/process-end'
+import { TrimmedModes } from '../lib/terminal-modes'
 import { claudeActivity, TitleReader } from '../lib/terminal-title'
 import { TypedEmitter } from '../lib/typed-emitter'
 import type { AccountService } from './account-service'
@@ -135,6 +136,8 @@ interface TerminalRecord {
   transcript: TrackedTranscript | null
   chunks: string[]
   size: number
+  /** The terminal modes in output dropped from `chunks`. */
+  trimmed: TrimmedModes
   /** Total number of characters emitted so far (never decreases, also counts trimmed output). */
   emitted: number
   pending: string
@@ -646,7 +649,9 @@ export class TerminalService extends TypedEmitter<Events> {
     const record = this.require(id)
     const answered = record.viewed
     record.viewed = true
-    return { ...this.buffer(id), answered }
+    const { data, end } = this.buffer(id)
+    // The modes set in output that is no longer kept, such as bracketed paste or the mouse.
+    return { data: record.trimmed.prefix() + data, end, answered }
   }
 
   /** The numbers of the images pasted into the tab's sessions (`[Image #N]`): sent ones and those kept when pasted. */
@@ -1164,7 +1169,9 @@ export class TerminalService extends TypedEmitter<Events> {
     record.chunks.push(data)
     record.size += data.length
     while (record.size > MAX_BUFFER_CHARS && record.chunks.length > 1) {
-      record.size -= record.chunks.shift()!.length
+      const dropped = record.chunks.shift()!
+      record.size -= dropped.length
+      record.trimmed.trim(dropped)
     }
     this.emit('data', record.info.id, data, offset)
   }
@@ -1300,6 +1307,7 @@ function newRecord(info: TerminalInfo, defaultTitle: string, process: Pty.IPty |
     transcript: null,
     chunks: [],
     size: 0,
+    trimmed: new TrimmedModes(),
     emitted: 0,
     pending: '',
     flushTimer: null,
