@@ -5,7 +5,7 @@ import { effectivePermissions } from '../page-emulation'
 import { formatConsoleEntry } from '../page-errors'
 import { cut, optionalBoolean, optionalNumber, stringList, ToolError } from '../tool-args'
 import { describeEmulation, mergePermissions, parseEmulation, PERMISSIONS } from './emulation-args'
-import { bodyText, formatBytes, headerLines, MAX_BODY_CHARS, responseBody } from './network-format'
+import { formatBytes, headerLines, MAX_BODY_CHARS, requestBodyText, responseBody } from './network-format'
 import { measurePerformance } from './performance'
 import { str } from './test-code'
 import { NAVIGATION_WAIT_MS, pageState, shortAddress, tool, type ToolDefinition } from './tool'
@@ -158,7 +158,7 @@ export const debuggingTools: ToolDefinition<never>[] = [
           .then((r) => r.postData)
           .catch(() => null)
       }
-      if (sent !== null) lines.push('', 'Request body:', bodyText(sent, entry.requestHeaders['content-type'] ?? entry.requestHeaders['Content-Type'] ?? null))
+      if (sent !== null) lines.push('', 'Request body:', requestBodyText(sent, entry.requestHeaders['content-type'] ?? entry.requestHeaders['Content-Type'] ?? null))
       if (entry.responseHeaders) lines.push('', 'Response headers:', ...headerLines(entry.responseHeaders))
       if (entry.messages) {
         lines.push('', ...socketMessages(entry, p.messages))

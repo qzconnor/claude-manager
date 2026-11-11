@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { NO_EMULATION } from '@shared/browser'
 import { describeEmulation, mergePermissions, parseEmulation } from './browser-tools/emulation-args'
-import { bodyText, formatBytes, headerLines } from './browser-tools/network-format'
+import { bodyText, formatBytes, headerLines, requestBodyText } from './browser-tools/network-format'
 import { formatMs, formatPerformance, type PerformanceReport } from './browser-tools/performance'
 
 describe('parseEmulation', () => {
@@ -110,6 +110,35 @@ describe('bodyText', () => {
 
   it('leaves text that only looks like JSON as it is', () => {
     expect(bodyText('{ not json', 'text/plain')).toBe('{ not json')
+  })
+})
+
+describe('requestBodyText', () => {
+  it('hides passwords in a form, keeps the other fields', () => {
+    expect(requestBodyText('user=ann&password=hunter2&remember=1', 'application/x-www-form-urlencoded')).toBe(
+      'user=ann&password=•••• (hidden)&remember=1',
+    )
+  })
+
+  it('hides password-like fields in JSON, also nested', () => {
+    const text = requestBodyText('{"email":"a@b.c","auth":{"passphrase":"x","newPassword":"y"},"pin":1234}', 'application/json')
+    expect(text).not.toContain('"x"')
+    expect(text).not.toContain('"y"')
+    expect(text).not.toContain('1234')
+    expect(text).toContain('a@b.c')
+    expect(text).toContain('"newPassword": "•••• (hidden)"')
+  })
+
+  it('hides password fields of a multipart form', () => {
+    const body = '--b\r\nContent-Disposition: form-data; name="user"\r\n\r\nann\r\n--b\r\nContent-Disposition: form-data; name="password"\r\n\r\nhunter2\r\n--b--'
+    const text = requestBodyText(body, 'multipart/form-data; boundary=b')
+    expect(text).toContain('ann')
+    expect(text).not.toContain('hunter2')
+  })
+
+  it('leaves bodies without such fields as bodyText shows them', () => {
+    expect(requestBodyText('{"a":1}', 'application/json')).toBe(bodyText('{"a":1}', 'application/json'))
+    expect(requestBodyText('q=pass', 'application/x-www-form-urlencoded')).toBe('q=pass')
   })
 })
 

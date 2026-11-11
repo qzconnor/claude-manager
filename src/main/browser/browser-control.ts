@@ -42,6 +42,14 @@ const CONSOLE_LIMIT = 300
 const PAGE_EVENT_LIMIT = 50
 /** Steps of a session's recording (browser_generate_test); older ones go. */
 const RECORDING_LIMIT = 500
+/** Network events with what the page sends or gets anew; left out while the user has the page. */
+const PRIVATE_NETWORK_EVENTS = new Set([
+  'Network.requestWillBeSent',
+  'Network.webSocketCreated',
+  'Network.webSocketFrameSent',
+  'Network.webSocketFrameReceived',
+  'Network.eventSourceMessageReceived',
+])
 
 interface Control {
   sessionId: string
@@ -707,6 +715,9 @@ export class BrowserControl extends TypedEmitter<Events> {
     }
     if (browser.contents !== contents) return
     if (method.startsWith('Network.')) {
+      // While the user has the page, nothing new goes into the log Claude reads: what they type and
+      // send (a login) stays theirs. Requests from before end as usual.
+      if (browser.control?.takenOver && PRIVATE_NETWORK_EVENTS.has(method)) return
       const warning = networkEvent(browser, method, params, session)
       if (warning) this.pageWarning(browser, 'network', warning)
       return
