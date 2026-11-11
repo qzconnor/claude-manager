@@ -591,10 +591,17 @@ export const useTerminalsStore = defineStore('terminals', () => {
     if (!ws || !Array.isArray(saved?.order)) return null
     const ids = new Set(list.map((t) => t.id))
     const savedTerminals = allTabs(ws).filter((tab) => !isViewTab(tab))
-    let map = new Map<string, string>()
-    if (savedTerminals.every((id) => ids.has(id))) {
-      map = new Map(savedTerminals.map((id) => [id, id]))
-    } else {
+    // After the window loaded again the terminals are the same; after a start main names the id each
+    // one had in the last run. One that didn't come back leaves its group, the others keep theirs.
+    const restoredFrom = new Map(list.flatMap((t) => (t.restoredFrom ? [[t.restoredFrom, t.id] as const] : [])))
+    let map = new Map(
+      savedTerminals.flatMap((id) => {
+        const now = ids.has(id) ? id : restoredFrom.get(id)
+        return now ? [[id, now] as const] : []
+      }),
+    )
+    if (map.size === 0 && restoredFrom.size === 0) {
+      // Main of an older version restored them: only their order tells which is which.
       // Logins aren't restored. Terminals that can't be matched lose their tabs, the pages stay.
       const order = saved.order.filter((entry) => entry.mode !== 'login')
       const current = list.filter((t) => t.mode !== 'login')

@@ -158,11 +158,11 @@ describe('TerminalRestore on start', () => {
     )
     await start().init()
     expect(create.mock.calls.map(([options]) => options)).toEqual([
-      { accountId: 'acc-a', authAccountId: 'acc-a', cwd: project, mode: 'session', resumeSessionId: S1, title: null, muted: false },
-      { accountId: 'acc-b', authAccountId: 'acc-b', cwd: other, mode: 'session', resumeSessionId: null, title: 'Custom', muted: true },
-      { accountId: 'acc-a', authAccountId: 'acc-b', cwd: project, mode: 'session', resumeSessionId: null, title: null, muted: false },
-      { accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', resumeSessionId: null, title: 'Build', muted: false },
-      { accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', resumeSessionId: null, title: null, muted: false },
+      { accountId: 'acc-a', authAccountId: 'acc-a', cwd: project, mode: 'session', resumeSessionId: S1, title: null, muted: false, restoredFrom: null },
+      { accountId: 'acc-b', authAccountId: 'acc-b', cwd: other, mode: 'session', resumeSessionId: null, title: 'Custom', muted: true, restoredFrom: null },
+      { accountId: 'acc-a', authAccountId: 'acc-b', cwd: project, mode: 'session', resumeSessionId: null, title: null, muted: false, restoredFrom: null },
+      { accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', resumeSessionId: null, title: 'Build', muted: false, restoredFrom: null },
+      { accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', resumeSessionId: null, title: null, muted: false, restoredFrom: null },
     ])
   })
 
@@ -251,8 +251,26 @@ describe('TerminalRestore on start', () => {
       ]),
     )
     await start().init()
-    expect(openBrowser.mock.calls).toEqual([[{ url: 'http://localhost:5173/', title: null }], [{ url: 'https://example.com/', title: 'Docs' }]])
+    expect(openBrowser.mock.calls).toEqual([
+      [{ url: 'http://localhost:5173/', title: null, restoredFrom: null }],
+      [{ url: 'https://example.com/', title: 'Docs', restoredFrom: null }],
+    ])
     expect(arrange.mock.calls).toEqual([[{ direction: 'row', ratio: 0.4, first: 'new-1', second: 'browser-1' }]])
+  })
+
+  it('tells each tab the id it had, so the window finds its group again', async () => {
+    const tab = { accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'shell', sessionId: null, title: 's', fixedTitle: false }
+    await writeFile(
+      file,
+      JSON.stringify([
+        { ...tab, id: 'old-1' },
+        { id: 'old-2', mode: 'browser', url: 'https://example.com/', title: 'Docs', fixedTitle: false },
+        { ...tab, id: '../not an id' },
+      ]),
+    )
+    await start().init()
+    expect(create.mock.calls.map(([options]) => options.restoredFrom)).toEqual(['old-1', null])
+    expect(openBrowser.mock.calls[0]![0].restoredFrom).toBe('old-2')
   })
 
   it('opens nothing for a file that is no list', async () => {
@@ -281,6 +299,7 @@ describe('TerminalRestore while running', () => {
     terminalEvents.fire('changed', terminalList)
     expect(await readSaved()).toEqual([
       {
+        id: 'a',
         accountId: 'acc-a',
         authAccountId: 'acc-a',
         cwd: join(dir, 'project'),
@@ -291,6 +310,7 @@ describe('TerminalRestore while running', () => {
         muted: true,
       },
       {
+        id: 'b',
         accountId: 'acc-b',
         authAccountId: 'acc-a',
         cwd: join(dir, 'project'),
@@ -324,7 +344,7 @@ describe('TerminalRestore while running', () => {
     layoutList = [{ direction: 'column', ratio: 0.5, first: 'a', second: 'web' }]
     terminalEvents.fire('changed', terminalList)
     const saved = (await readSaved()) as Record<string, unknown>[]
-    expect(saved[1]).toEqual({ mode: 'browser', url: 'https://example.com/a', title: 'Example', fixedTitle: false })
+    expect(saved[1]).toEqual({ id: 'web', mode: 'browser', url: 'https://example.com/a', title: 'Example', fixedTitle: false })
     expect(saved[0].layout).toEqual({ direction: 'column', ratio: 0.5, first: '0', second: '1' })
   })
 

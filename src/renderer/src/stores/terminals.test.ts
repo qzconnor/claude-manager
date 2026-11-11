@@ -314,4 +314,24 @@ describe('the groups of the last run', () => {
     const terminals = await load([terminal('s1'), terminal('s2')], [], { workspace: saved, order })
     expect(tabsOf(terminals)).toEqual([['s1'], ['s2']])
   })
+
+  it('keep their tabs when another tab of the last run did not come back', async () => {
+    const saved: Workspace = {
+      layout: beside('g1', 'g2'),
+      groups: [
+        { id: 'g1', tabs: ['s1'], active: 's1' },
+        { id: 'g2', tabs: ['s2', 's3'], active: 's3' },
+      ],
+      activeGroup: 'g2',
+    }
+    const order = ['s1', 's2', 's3'].map((id) => ({ id, mode: 'session' as const }))
+    // Main opened them again with new ids; s2 could not start.
+    const list = [
+      { ...terminal('n1'), restoredFrom: 's1' },
+      { ...terminal('n3'), restoredFrom: 's3' },
+    ]
+    const terminals = await load(list, [], { workspace: saved, order })
+    expect(tabsOf(terminals)).toEqual([['n1'], ['n3']])
+    expect(terminals.restoredIds).toEqual(new Map([['s1', 'n1'], ['s3', 'n3']]))
+  })
 })

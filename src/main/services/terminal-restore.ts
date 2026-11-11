@@ -10,6 +10,8 @@ import { defaultTerminalTitle, legacyTerminalTitle, type TerminalService } from 
 
 /** What is remembered of a terminal. Login tabs are not. */
 interface SavedTerminal {
+  /** Its id in that run, so the window can put it back into its group. Missing in files of older versions. */
+  id?: string
   accountId: string
   authAccountId: string
   cwd: string
@@ -30,6 +32,7 @@ interface SavedTerminal {
 
 /** What is remembered of a browser: its page. Older versions skip it, the others take its space. */
 interface SavedBrowser {
+  id?: string
   mode: 'browser'
   url: string
   title: string
@@ -88,7 +91,7 @@ export class TerminalRestore {
     const opened = new Map<string, string>()
     for (const [index, tab] of saved.entries()) {
       if (isSavedBrowser(tab)) {
-        const info = this.terminals.openBrowser({ url: tab.url, title: tab.fixedTitle ? tab.title : null })
+        const info = this.terminals.openBrowser({ url: tab.url, title: tab.fixedTitle ? tab.title : null, restoredFrom: savedId(tab) })
         opened.set(String(index), info.id)
         continue
       }
@@ -109,6 +112,7 @@ export class TerminalRestore {
           resumeSessionId: located ? tab.sessionId : null,
           title: fixedTitle ? tab.title : null,
           muted: tab.muted === true,
+          restoredFrom: savedId(tab),
         })
         opened.set(String(index), info.id)
       } catch {
@@ -159,9 +163,10 @@ export class TerminalRestore {
     return terminals.map((t): SavedTab => {
       const layout = layouts.has(t.id) ? { layout: layouts.get(t.id) } : {}
       if (t.mode === 'browser') {
-        return { mode: 'browser', url: t.url ?? '', title: t.title, fixedTitle: t.fixedTitle, ...layout }
+        return { id: t.id, mode: 'browser', url: t.url ?? '', title: t.title, fixedTitle: t.fixedTitle, ...layout }
       }
       return {
+        id: t.id,
         accountId: t.accountId,
         authAccountId: t.authAccountId,
         cwd: t.cwd,
@@ -174,6 +179,10 @@ export class TerminalRestore {
       }
     })
   }
+}
+
+function savedId(tab: SavedTab): string | null {
+  return typeof tab.id === 'string' && /^[\w-]{1,64}$/.test(tab.id) ? tab.id : null
 }
 
 function isSavedTerminal(value: unknown): value is SavedTerminal {

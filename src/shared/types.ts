@@ -188,6 +188,8 @@ export interface TerminalCreateOptions {
   split?: { terminalId: string; direction: SplitDirection } | null
   /** Takes the place of this terminal, in the tab order and in its tab; the old one stays open until it is closed. */
   replaces?: string | null
+  /** See `TerminalInfo.restoredFrom`. */
+  restoredFrom?: string | null
   cols?: number
   rows?: number
 }
@@ -236,6 +238,8 @@ export interface BrowserOpenOptions {
   title?: string | null
   /** Opens in the tab of `terminalId`, next to it: to the right (`row`) or below (`column`). */
   split?: { terminalId: string; direction: SplitDirection } | null
+  /** See `TerminalInfo.restoredFrom`. */
+  restoredFrom?: string | null
 }
 
 /** What a browser shows, as its page reports it. */
@@ -444,6 +448,8 @@ export interface TerminalInfo {
   /** The page a browser shows; null for terminals. */
   url: string | null
   resumeSessionId: string | null
+  /** Opened again at the start: the id it had in the last run, so the window finds its place in the groups. */
+  restoredFrom?: string | null
   status: TerminalStatus
   exitCode: number | null
   pid: number

@@ -243,6 +243,7 @@ export const schemas: Record<string, Schema> = {
     mode: { type: 'string', enum: ['session', 'login', 'shell', 'browser'], description: 'browser = Webseite im Browser der App, ohne Prozess' },
     url: { ...nullable(str), description: 'Seite, die ein Browser-Tab zeigt; null bei Terminals' },
     resumeSessionId: nullable(str),
+    restoredFrom: { ...nullable(str), description: 'Beim Start wieder geöffnet: die ID, die der Tab im letzten Lauf hatte' },
     status: { type: 'string', enum: ['running', 'exited'] },
     exitCode: nullable(int),
     pid: int,
