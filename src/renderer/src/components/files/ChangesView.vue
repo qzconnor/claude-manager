@@ -111,8 +111,18 @@ watch(
   },
   { immediate: true },
 )
-/** The changed files in the order of the tree. */
-const paths = computed(() => treeOrder(changedFiles(git.value, model.value.search?.paths)))
+/**
+ * The most files the review shows. Each one costs a call of git and a card; far more new files are
+ * mostly a folder that belongs in .gitignore (node_modules, a build), not changes to review.
+ */
+const MAX_FILES = 500
+/** All changed files in the order of the tree. */
+const allPaths = computed(() => treeOrder(changedFiles(git.value, model.value.search?.paths)))
+/** Those the review shows. */
+const paths = computed(() => (allPaths.value.length > MAX_FILES ? allPaths.value.slice(0, MAX_FILES) : allPaths.value))
+const notShown = computed(() => allPaths.value.length - paths.value.length)
+/** Folders git sees as new as a whole: with too many files, likely the cause. */
+const newFolders = computed(() => untrackedFolders(git.value).slice(0, 3).join(', '))
 
 // ── Their diffs, a few at a time, and again when they change ──
 
@@ -583,7 +593,7 @@ const iconButton =
       <span class="shrink-0 font-medium">Alle Änderungen</span>
       <span class="min-w-0 truncate text-muted-foreground" v-tooltip="root">{{ rootName }}</span>
       <span v-if="paths.length" class="shrink-0 text-muted-foreground tabular-nums">
-        · {{ seenCount }} von {{ paths.length }} gesehen<template v-if="git?.truncated"> · nicht alle</template>
+        · {{ seenCount }} von {{ paths.length }} gesehen<template v-if="git?.truncated || notShown"> · nicht alle</template>
       </span>
       <span class="flex-1" />
       <span v-if="totals.added || totals.removed" class="shrink-0 font-mono text-[11px] tabular-nums">
@@ -633,6 +643,11 @@ const iconButton =
       </Tooltip>
     </header>
 
+    <!-- Too many files: only the first ones, and what is probably the reason. -->
+    <div v-if="notShown > 0" role="status" class="shrink-0 border-b px-3 py-1.5 text-xs text-muted-foreground">
+      Nur die ersten {{ MAX_FILES }} von {{ allPaths.length.toLocaleString('de-DE') }} geänderten Dateien.
+      <template v-if="newFolders">Ganze Ordner sind neu ({{ newFolders }}): Gehören sie in die <code>.gitignore</code>?</template>
+    </div>
     <div v-if="!git && !checked" class="flex flex-1 justify-center pt-8">
       <Spinner class="size-[16px] text-muted-foreground" />
     </div>
