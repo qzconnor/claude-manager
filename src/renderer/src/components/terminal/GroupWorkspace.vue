@@ -7,6 +7,7 @@ import DiffView from '@/components/files/DiffView.vue'
 import FileTreePanel from '@/components/files/FileTreePanel.vue'
 import { PAGE_INFO } from '@/lib/pages'
 import { dockRect } from '@/lib/tab-drag'
+import { inOpeningOrder } from '@/lib/tabs'
 import { cn } from '@/lib/utils'
 import { baseName } from '@/lib/file-tree'
 import { BROWSER_BAR_HEIGHT, BROWSER_TAB, diffOfTab, PAGES, pageTab, TAB_BAR_HEIGHT, type DiffFile, type PageName } from '@/lib/workspace'
@@ -164,7 +165,8 @@ const driven = (id: string) => browsers.controls.get(id)?.active === true
 const inBackground = (id: string) => !onScreen(id) && driven(id)
 
 /** Browsers of the last run load once they are shown or Claude drives them (see `terminals.sleeping`). */
-const mounted = computed(() => terminals.terminals.filter((t) => !terminals.sleeping.has(t.id)))
+// Not in the order of the tabs: reordering them would move the elements, and a browser would load again.
+const mounted = computed(() => inOpeningOrder(terminals.terminals.filter((t) => !terminals.sleeping.has(t.id))))
 const waking = computed(() => [...terminals.sleeping].filter((id) => onScreen(id) || browsers.controls.get(id)?.busy === true || driven(id)))
 watch(waking, (ids) => ids.forEach((id) => terminals.wake(id)), { immediate: true })
 

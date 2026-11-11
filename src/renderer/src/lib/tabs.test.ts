@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import type { PaneNode, PaneSplit, TerminalInfo } from '@shared/types'
-import { groupTabs } from './tabs'
+import { groupTabs, inOpeningOrder } from './tabs'
 
 const terminal = (id: string) => ({ id }) as TerminalInfo
 const row = (first: PaneNode, second: PaneNode): PaneSplit => ({ direction: 'row', ratio: 0.5, first, second })
 const ids = (tabs: ReturnType<typeof groupTabs>) => tabs.map((tab) => [tab.id, tab.panes.map((p) => p.id)])
+
+describe('inOpeningOrder', () => {
+  it('keeps the order in which the terminals were opened, whatever the order of the tabs', () => {
+    const a = { id: 'a', createdAt: '2026-11-11T10:00:00.000Z' }
+    const b = { id: 'b', createdAt: '2026-11-11T10:05:00.000Z' }
+    const c = { id: 'c', createdAt: '2026-11-11T10:05:00.000Z' }
+    expect(inOpeningOrder([c, b, a])).toEqual([a, b, c])
+    expect(inOpeningOrder([b, a, c])).toEqual([a, b, c])
+  })
+})
 
 describe('groupTabs', () => {
   it('gives every terminal a tab of its own without layouts', () => {

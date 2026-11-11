@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { layoutPanes, type PaneDivider, type PaneRect } from '@shared/panes'
 import { dockRect } from '@/lib/tab-drag'
+import { inOpeningOrder } from '@/lib/tabs'
 import { cn } from '@/lib/utils'
 import { useBrowsersStore } from '@/stores/browsers'
 import { useTerminalsStore } from '@/stores/terminals'
@@ -108,6 +109,8 @@ const inActiveTab = (id: string) => terminals.activeTab?.panes.some((p) => p.id 
  * and neither its screenshots nor the clicks on it would work.
  */
 const driven = (id: string) => browsers.controls.get(id)?.active === true
+/** Not in the order of the tabs: reordering them would move the elements, and a browser would load again. */
+const panes = computed(() => inOpeningOrder(terminals.terminals))
 const inBackground = (id: string) => !inActiveTab(id) && driven(id)
 </script>
 
@@ -127,7 +130,7 @@ const inBackground = (id: string) => !inActiveTab(id) && driven(id)
     <!-- A browser tab shows its page instead of a terminal. -->
     <component
       :is="terminal.mode === 'browser' ? BrowserPane : TerminalPane"
-      v-for="terminal in terminals.terminals"
+      v-for="terminal in panes"
       v-show="inActiveTab(terminal.id) || inBackground(terminal.id)"
       :key="terminal.id"
       :class="cn('absolute', inBackground(terminal.id) && 'pointer-events-none -z-10 opacity-0')"
