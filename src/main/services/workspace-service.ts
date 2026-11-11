@@ -54,6 +54,18 @@ const CHANGE_DELAY_MS = 300
  * each with its prompt in `cm_prompts.md` in the folder. Only listed folders count, so a
  * `cm_prompts.md` that comes with a cloned repository never gets into a session's system prompt.
  */
+/**
+ * What tells a folder apart from all others, also after it was moved: its number on the drive with the
+ * time it was made. Linux gives the number of a deleted folder to the next new one at once; only the
+ * time it was made tells them apart. Where the file system doesn't keep that time, no move is taken
+ * (empty): a folder taken for another one would get its sessions and the trust given to it.
+ */
+export function folderIdentity(info: { dev: bigint; ino: bigint; birthtimeNs: bigint }, platform: NodeJS.Platform = process.platform): string {
+  if (info.ino <= 0n) return ''
+  if (info.birthtimeNs <= 0n && platform !== 'win32') return ''
+  return `${info.dev}:${info.ino}:${info.birthtimeNs}`
+}
+
 export class WorkspaceService extends TypedEmitter<Events> {
   private readonly file: string
   private folders: string[] = []
@@ -338,7 +350,7 @@ export class WorkspaceService extends TypedEmitter<Events> {
     const add = async (path: string) => {
       const info = await stat(path, { bigint: true }).catch(() => null)
       if (!info?.isDirectory()) return
-      found.set(folderKey(path), { path, id: info.ino > 0n ? `${info.dev}:${info.ino}` : '' })
+      found.set(folderKey(path), { path, id: folderIdentity(info) })
     }
     await Promise.all(
       this.folders.map(async (folder) => {

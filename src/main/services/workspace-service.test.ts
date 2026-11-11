@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, w
 import { tmpdir } from 'node:os'
 import { basename, join, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { WorkspaceService } from './workspace-service'
+import { folderIdentity, WorkspaceService } from './workspace-service'
 
 describe('WorkspaceService', () => {
   let root: string
@@ -161,6 +161,21 @@ describe('WorkspaceService', () => {
     expect(existsSync(join(root, 'cm_prompts.md'))).toBe(false)
     // Read also before a folder becomes one, to show what is there.
     expect(await service.readPrompt(root)).toBe('')
+  })
+
+  describe('folderIdentity', () => {
+    it('tells a new folder from a deleted one with the same number', () => {
+      const old = folderIdentity({ dev: 1n, ino: 42n, birthtimeNs: 1000n }, 'linux')
+      const reused = folderIdentity({ dev: 1n, ino: 42n, birthtimeNs: 2000n }, 'linux')
+      expect(old).not.toBe(reused)
+      expect(folderIdentity({ dev: 1n, ino: 42n, birthtimeNs: 1000n }, 'linux')).toBe(old)
+    })
+
+    it('takes no identity without the time a folder was made, outside Windows', () => {
+      expect(folderIdentity({ dev: 1n, ino: 42n, birthtimeNs: 0n }, 'linux')).toBe('')
+      expect(folderIdentity({ dev: 1n, ino: 0n, birthtimeNs: 1000n }, 'win32')).toBe('')
+      expect(folderIdentity({ dev: 1n, ino: 42n, birthtimeNs: 0n }, 'win32')).not.toBe('')
+    })
   })
 
   describe('moving folders', () => {
