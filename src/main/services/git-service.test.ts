@@ -196,6 +196,29 @@ describe('worktreeCheck', () => {
   })
 })
 
+describe('GitService.mainWorktree', () => {
+  it('names the main checkout of a linked worktree, also from a subfolder', async () => {
+    const main = await repo('main')
+    git(main, 'commit', '-q', '--allow-empty', '-m', 'init')
+    git(main, 'worktree', 'add', '-q', '-b', 'side', join(dir, 'side'))
+    await mkdir(join(dir, 'side', 'src'))
+    // Git names the real path (see worktreeCheck).
+    const same = (p: string | null) => p && realpathSync.native(p).replaceAll('\\', '/').toLowerCase()
+    expect(same(await service.mainWorktree(join(dir, 'side')))).toBe(same(main))
+    expect(same(await service.mainWorktree(join(dir, 'side', 'src')))).toBe(same(main))
+  })
+
+  it('is null in the main checkout, outside a repository and for a separate git directory', async () => {
+    const main = await repo('main')
+    expect(await service.mainWorktree(main)).toBeNull()
+    expect(await service.mainWorktree(dir)).toBeNull()
+    const separate = join(dir, 'separate')
+    await mkdir(separate)
+    git(separate, 'init', '-q', '--separate-git-dir', join(dir, 'store.git'))
+    expect(await service.mainWorktree(separate)).toBeNull()
+  })
+})
+
 describe('GitService.webUrl', () => {
   it('opens the page of origin', async () => {
     const path = await repo()

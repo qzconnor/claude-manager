@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { GitBranchIcon, GitCommitHorizontalIcon } from '@lucide/vue'
+import { FolderGit2Icon, GitBranchIcon, GitCommitHorizontalIcon } from '@lucide/vue'
 import { computed, type HTMLAttributes } from 'vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useGitBranch } from '@/composables/useGitBranch'
@@ -7,8 +7,9 @@ import { attempt } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 
 /**
- * Git branch of the folder `cwd` as a chip; a click opens the repository's web page in the default
- * browser. Hidden without a folder, without git and outside a repository.
+ * Git branch of the folder `cwd` as a chip, with the worktree icon when the folder is a linked worktree;
+ * a click opens the repository's web page in the default browser. Hidden without a folder, without git
+ * and outside a repository.
  */
 const props = defineProps<{
   cwd: string | null
@@ -21,11 +22,15 @@ const branch = computed(() => repo.value?.branch ?? null)
 /** Page of the repository on GitHub, GitLab …; null without a remote that has one. */
 const webUrl = computed(() => repo.value?.webUrl ?? null)
 
-const label = computed(() =>
-  branch.value?.detached
+/** Main checkout when the folder is a linked worktree of its repository; null otherwise. */
+const mainWorktree = computed(() => repo.value?.mainWorktree ?? null)
+
+const label = computed(() => {
+  const head = branch.value?.detached
     ? `Kein Branch ausgecheckt (Commit ${branch.value.name}) · ${props.cwd}`
-    : `Git-Branch ${branch.value?.name} · ${props.cwd}`,
-)
+    : `Git-Branch ${branch.value?.name} · ${props.cwd}`
+  return mainWorktree.value ? `${head}\nWorktree von ${mainWorktree.value}` : head
+})
 const tooltip = computed(() =>
   webUrl.value ? `${label.value}\nKlicken öffnet ${webUrl.value.replace(/^https?:\/\//, '')}` : label.value,
 )
@@ -61,7 +66,9 @@ function openRepository() {
             "
             @click="openRepository"
           >
-            <GitCommitHorizontalIcon v-if="branch.detached" class="size-3.5 shrink-0" />
+            <!-- In a worktree its icon wins: a detached HEAD still shows by the hash in mono. -->
+            <FolderGit2Icon v-if="mainWorktree" class="size-3.5 shrink-0" />
+            <GitCommitHorizontalIcon v-else-if="branch.detached" class="size-3.5 shrink-0" />
             <GitBranchIcon v-else class="size-3.5 shrink-0" />
             <span :class="cn('truncate font-medium text-foreground', branch.detached && 'font-mono')">
               {{ branch.name }}

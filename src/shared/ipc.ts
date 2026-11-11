@@ -155,6 +155,7 @@ export const IpcInvoke = {
   gitWatch: 'git:watch',
   gitWorktreeCheck: 'git:worktree-check',
   gitWebUrl: 'git:web-url',
+  gitMainWorktree: 'git:main-worktree',
 
   filesList: 'files:list',
   filesStatus: 'files:status',
@@ -522,6 +523,8 @@ export interface ManagerApi {
     worktreeCheck(cwd: string): Promise<WorktreeCheck>
     /** Web page of the repository `cwd` lies in, from its remote (GitHub, GitLab …); null without one. */
     webUrl(cwd: string): Promise<string | null>
+    /** Folder of the main checkout when `cwd` lies in a linked worktree; null otherwise. */
+    mainWorktree(cwd: string): Promise<string | null>
   }
   /** The file tree of a tab. Paths in a tree are relative to its folder and `/`-separated. */
   files: {

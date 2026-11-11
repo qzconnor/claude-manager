@@ -8,6 +8,8 @@ export interface GitRepo {
   branch: GitBranch | null
   /** Page of the repository on GitHub, GitLab …; null without a remote that has one. */
   webUrl: string | null
+  /** Folder of the main checkout when the folder lies in a linked worktree; null otherwise. */
+  mainWorktree: string | null
 }
 
 /**
@@ -29,13 +31,14 @@ export const useGitStore = defineStore('git', () => {
   async function load(dir: string): Promise<void> {
     const id = ++loads
     pending.set(dir, id)
-    const [branch, webUrl] = await Promise.all([
+    const [branch, webUrl, mainWorktree] = await Promise.all([
       window.api.git.branch(dir).catch(() => null),
       window.api.git.webUrl(dir).catch(() => null),
+      window.api.git.mainWorktree(dir).catch(() => null),
     ])
     if (pending.get(dir) !== id) return
     pending.delete(dir)
-    if (holders.has(dir)) repos.set(dir, { branch, webUrl })
+    if (holders.has(dir)) repos.set(dir, { branch, webUrl, mainWorktree })
   }
 
   /**
