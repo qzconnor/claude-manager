@@ -25,6 +25,7 @@ import {
   SearchIcon,
   SquareTerminalIcon,
   TextCursorInputIcon,
+  TextSearchIcon,
   Trash2Icon,
   XIcon,
 } from '@lucide/vue'
@@ -48,6 +49,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { MIN_CONTENT_QUERY, useContentSearch } from '@/composables/useContentSearch'
 import { useFileTreeModel } from '@/composables/useFileTreeModel'
 import { useLauncher } from '@/composables/useLauncher'
 import { useOpenFile } from '@/composables/useOpenFile'
@@ -86,6 +88,7 @@ import { cn } from '@/lib/utils'
 import { DEFAULT_TREE_WIDTH, SEPARATOR, useFileTreeStore, type TreeTarget } from '@/stores/file-tree'
 import { useSettingsStore } from '@/stores/settings'
 import { useUiStore } from '@/stores/ui'
+import FileContentResults from './FileContentResults.vue'
 import FileNameDialog from './FileNameDialog.vue'
 import FileTreeFilters from './FileTreeFilters.vue'
 
@@ -239,7 +242,47 @@ const query = computed({
   get: () => model.value.query,
   set: (value: string) => (model.value.query = value),
 })
-const searching = computed(() => query.value.trim().length > 0)
+/** The tree is searched by name; a search of the files' content shows its hits instead of the tree. */
+const searching = computed(() => query.value.trim().length > 0 && !model.value.searchContent)
+
+// ── Searching the files' content ──
+
+const content = useContentSearch(() => model.value)
+/** Something is typed while the search looks into the files: its hits show, not the tree. */
+const contentShown = computed(() => model.value.searchContent && query.value.trim().length > 0)
+const contentResults = ref<InstanceType<typeof FileContentResults> | null>(null)
+const searchPlaceholder = computed(() =>
+  model.value.searchContent ? 'Im Inhalt suchen' : filtered.value ? 'Gefilterte Dateien suchen' : 'Dateien suchen',
+)
+const contentStatus = computed(() => {
+  if (content.error.value) return content.error.value
+  if (query.value.trim().length < MIN_CONTENT_QUERY) return 'Mindestens zwei Zeichen'
+  const result = content.result.value
+  if (!result) return null
+  if (result.matches === 0) return 'Keine Treffer.'
+  const files = result.files.length
+  return `${result.matches} Treffer in ${files} ${files === 1 ? 'Datei' : 'Dateien'}${result.truncated ? ', nur die ersten' : ''}`
+})
+
+function toggleContent() {
+  model.value.searchContent = !model.value.searchContent
+  searchInput.value?.focus()
+}
+
+function openHit(path: string, line: number, keep: boolean) {
+  fileTree.showDiff(props.target, path, { groupId: props.groupId, keep, line })
+}
+
+/** A letter typed in the hits goes on in the search. */
+function typeInSearch(key: string) {
+  query.value += key
+  searchInput.value?.focus()
+}
+
+function refresh() {
+  fileTree.refresh(model.value)
+  content.refresh()
+}
 const searchInput = ref<HTMLInputElement | null>(null)
 
 /** The list of all files is needed to search them, and for the files in new folders when the changes show. */
@@ -575,6 +618,9 @@ function onSearchKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape' && query.value) {
     query.value = ''
     event.preventDefault()
+  } else if ((event.key === 'ArrowDown' || event.key === 'Enter') && contentShown.value) {
+    event.preventDefault()
+    contentResults.value?.focusFirst()
   } else if ((event.key === 'ArrowDown' || event.key === 'Enter') && entries.value.length) {
     event.preventDefault()
     // The first file that matched, else the first row.
@@ -756,7 +802,7 @@ const iconButton =
       </span>
       <Tooltip>
         <TooltipTrigger as-child>
-          <button type="button" aria-label="Aktualisieren" :class="iconButton" @click="fileTree.refresh(model)">
+          <button type="button" aria-label="Aktualisieren" :class="iconButton" @click="refresh">
             <RefreshCwIcon class="size-[16px]" />
           </button>
         </TooltipTrigger>
@@ -883,12 +929,15 @@ const iconButton =
           type="text"
           spellcheck="false"
           autocomplete="off"
-          :aria-label="filtered ? 'Gefilterte Dateien suchen' : 'Dateien suchen'"
-          :placeholder="filtered ? 'Gefilterte Dateien suchen' : 'Dateien suchen'"
+          :aria-label="searchPlaceholder"
+          :placeholder="searchPlaceholder"
           class="h-full min-w-0 flex-1 bg-transparent px-2 outline-none placeholder:text-muted-foreground"
           @keydown="onSearchKeydown"
         />
-        <Spinner v-if="searching && model.searchLoading" class="mr-1.5 size-[14px] text-muted-foreground" />
+        <Spinner
+          v-if="(searching && model.searchLoading) || (contentShown && content.loading.value)"
+          class="mr-1.5 size-[14px] text-muted-foreground"
+        />
         <button
           v-if="query"
           type="button"
@@ -898,8 +947,25 @@ const iconButton =
         >
           <XIcon class="size-[12px]" />
         </button>
+        <!-- Name or content, like the switches in VS Code's search. -->
+        <button
+          type="button"
+          aria-label="Im Inhalt der Dateien suchen"
+          :aria-pressed="model.searchContent"
+          class="mr-1 flex size-[20px] shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground aria-pressed:bg-primary/20 aria-pressed:text-foreground"
+          v-tooltip="model.searchContent ? 'Sucht im Inhalt der Dateien, ein Klick sucht nach Namen' : 'Im Inhalt der Dateien suchen'"
+          @click="toggleContent"
+        >
+          <TextSearchIcon class="size-[13px]" />
+        </button>
       </label>
-      <p v-if="searching && searchResult" class="px-2.5 pt-1.5 text-[11px] text-muted-foreground">
+      <p
+        v-if="contentShown && contentStatus"
+        :class="cn('px-2.5 pt-1.5 text-[11px]', content.error.value ? 'text-destructive' : 'text-muted-foreground')"
+      >
+        {{ contentStatus }}
+      </p>
+      <p v-else-if="searching && searchResult" class="px-2.5 pt-1.5 text-[11px] text-muted-foreground">
         {{
           searchResult.matches === 0
             ? 'Keine Datei passt.'
@@ -909,7 +975,7 @@ const iconButton =
         }}
         <template v-if="model.search?.truncated && !filtered"> · nicht alle Dateien durchsucht</template>
       </p>
-      <p v-else-if="filtered && filteredPaths.length" class="flex items-center gap-1 px-2.5 pt-1.5 text-[11px] text-muted-foreground">
+      <p v-else-if="filtered && filteredPaths.length && !contentShown" class="flex items-center gap-1 px-2.5 pt-1.5 text-[11px] text-muted-foreground">
         <span class="min-w-0 truncate">
           {{ filterLabel }}: {{ filteredPaths.length }} {{ filteredPaths.length === 1 ? 'Datei' : 'Dateien' }}
           <template v-if="filters.changes && git && (git.truncated || (untrackedDirs.length && model.search?.truncated))"> · nicht alle</template>
@@ -932,6 +998,17 @@ const iconButton =
     <div v-else-if="rootLoading" class="flex flex-1 justify-center pt-6">
       <Spinner class="size-[16px] text-muted-foreground" />
     </div>
+    <template v-else-if="contentShown">
+      <FileContentResults
+        v-if="content.result.value?.files.length"
+        ref="contentResults"
+        :result="content.result.value"
+        @open="openHit"
+        @type="typeInSearch"
+        @leave="searchInput?.focus()"
+      />
+      <div v-else class="flex-1" />
+    </template>
     <ContextMenu v-else>
       <ContextMenuTrigger as-child>
         <div

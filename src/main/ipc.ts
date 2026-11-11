@@ -100,6 +100,8 @@ const MAX_WORKSPACES = 10_000
 const MAX_CHECKED_FOLDERS = 20_000
 /** Longer paths exist on no file system the app runs on. */
 const MAX_PATH_LENGTH = 32_767
+/** The longest text the content search of a tree takes. */
+const MAX_GREP_QUERY = 200
 
 /** An absolute path from the window. */
 function requirePath(value: unknown, name: string): string {
@@ -596,6 +598,12 @@ export function registerIpc(ctx: AppContext): void {
     ctx.files.rename(requirePath(root, 'root'), requireTreeEntry(from, 'from'), requireTreeEntry(to, 'to')),
   )
   handle(IpcInvoke.filesTrash, (_e, root: unknown, path: unknown) => ctx.files.trash(requirePath(root, 'root'), requireTreeEntry(path, 'path')))
+  handle(IpcInvoke.filesGrep, (_e, root: unknown, query: unknown) => {
+    if (typeof query !== 'string' || query.trim() === '' || query.length > MAX_GREP_QUERY || /[\0\r\n]/.test(query)) {
+      throw new Error('Ungültiger Parameter: query')
+    }
+    return ctx.files.grep(requirePath(root, 'root'), query)
+  })
   ctx.files.on('changed', (root, dirs, git, repo) => broadcast(IpcEvent.filesChanged, root, dirs, git, repo))
   ctx.files.on('touched', (terminalId, touches) => broadcast(IpcEvent.filesTouched, terminalId, touches))
 

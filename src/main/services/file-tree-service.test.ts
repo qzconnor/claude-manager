@@ -3,7 +3,7 @@ import { chmod, mkdtemp, mkdir, readdir, readFile, rm, stat, symlink, unlink, ut
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { FileTreeService, filterGuard, gitStateChange, isTreePath, parseGitStatus } from './file-tree-service'
+import { FileTreeService, filterGuard, gitStateChange, isTreePath, MAX_GREP_MATCHES, parseGitStatus, parseGrep } from './file-tree-service'
 
 describe('isTreePath', () => {
   it('takes paths inside the root, joined with /', () => {
@@ -657,5 +657,99 @@ describe('FileTreeService file operations', () => {
     await expect(service.trash(dir, '.git')).rejects.toThrow('„.git“ gehört Git.')
     await expect(service.create(dir, 'a//b', false)).rejects.toThrow('Ungültiger Pfad.')
     expect(trashed).toEqual([])
+  })
+})
+
+describe('parseGrep', () => {
+  it('reads the lines by file, without their indent and line ending, with where the hits are', () => {
+    const files = parseGrep('src/a.ts\x002\x00  const Total = total\r\nsrc/a.ts\x009\x00total()\nb.md\x001\x00# Total\n', 'total')
+    expect(files).toEqual([
+      {
+        path: 'src/a.ts',
+        matches: [
+          { line: 2, text: 'const Total = total', ranges: [[6, 11], [14, 19]] },
+          { line: 9, text: 'total()', ranges: [[0, 5]] },
+        ],
+      },
+      { path: 'b.md', matches: [{ line: 1, text: '# Total', ranges: [[2, 7]] }] },
+    ])
+  })
+
+  it('keeps a colon in a path and in the text, and skips what is not a line', () => {
+    expect(parseGrep('a:b.txt\x003\x00x: y\ngarbage\n\n', 'y')).toEqual([{ path: 'a:b.txt', matches: [{ line: 3, text: 'x: y', ranges: [[3, 4]] }] }])
+  })
+
+  it('shows of a long line the part around its first hit', () => {
+    const line = `${'a'.repeat(500)}needle${'b'.repeat(500)}`
+    const [match] = parseGrep(`min.js\x001\x00${line}\n`, 'NEEDLE')[0]!.matches
+    expect(match!.text.startsWith('…a')).toBe(true)
+    expect(match!.text.endsWith('b…')).toBe(true)
+    expect(match!.text.length).toBeLessThanOrEqual(242)
+    const [start, end] = match!.ranges[0]!
+    expect(match!.text.slice(start, end)).toBe('needle')
+  })
+})
+
+describe('FileTreeService.grep', () => {
+  let dir: string
+  let service: FileTreeService
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'file-tree-grep-'))
+    vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
+    vi.stubEnv('GIT_CONFIG_GLOBAL', join(dir, 'no-gitconfig'))
+    vi.stubEnv('GIT_CEILING_DIRECTORIES', tmpdir())
+    vi.stubEnv('GIT_DIR', undefined)
+    vi.stubEnv('GIT_WORK_TREE', undefined)
+    service = new FileTreeService()
+  })
+  afterEach(async () => {
+    vi.unstubAllEnvs()
+    service.dispose()
+    await rm(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  })
+
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'init.defaultBranch=main', ...args], {
+      cwd: dir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+
+  it('finds the text in known and new files, not in ignored or binary ones', async () => {
+    git('init', '-q')
+    await mkdir(join(dir, 'src'))
+    await writeFile(join(dir, 'src', 'known.ts'), 'const total = 1\nconst other = 2\n')
+    await writeFile(join(dir, '.gitignore'), 'build/\n')
+    git('add', '.')
+    git('commit', '-qm', 'init')
+    await writeFile(join(dir, 'new.md'), '# Total\n')
+    await mkdir(join(dir, 'build'))
+    await writeFile(join(dir, 'build', 'out.js'), 'total\n')
+    await writeFile(join(dir, 'data.bin'), Buffer.from([0, 1, 2, ...Buffer.from('total')]))
+    service.watch([{ root: dir, dirs: [''] }])
+    const result = await service.grep(dir, 'TOTAL')
+    expect(result.files.map((f) => f.path).sort()).toEqual(['new.md', 'src/known.ts'])
+    expect(result).toMatchObject({ matches: 2, truncated: false })
+  })
+
+  it('finds it outside a repository too', async () => {
+    await writeFile(join(dir, 'notes.txt'), 'one\ntotal two\n')
+    service.watch([{ root: dir, dirs: [''] }])
+    expect(await service.grep(dir, 'total')).toEqual({
+      files: [{ path: 'notes.txt', matches: [{ line: 2, text: 'total two', ranges: [[0, 5]] }] }],
+      matches: 1,
+      truncated: false,
+    })
+  })
+
+  it('stops at the most lines it reads', async () => {
+    await writeFile(join(dir, 'many.txt'), 'hit\n'.repeat(MAX_GREP_MATCHES + 50))
+    service.watch([{ root: dir, dirs: [''] }])
+    expect(await service.grep(dir, 'hit')).toMatchObject({ matches: MAX_GREP_MATCHES, truncated: true })
+  })
+
+  it('searches only open trees', async () => {
+    await expect(service.grep(dir, 'x')).rejects.toThrow('in keinem offenen Dateibaum')
   })
 })

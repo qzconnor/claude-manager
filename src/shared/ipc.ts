@@ -7,6 +7,7 @@ import type {
   BrowserDownloadAction,
   BrowserLoginRequest,
   ClaudeInChromeStatus,
+  ContentSearchResult,
   BrowserHighlight,
   BrowserOpenOptions,
   BrowserPage,
@@ -169,6 +170,7 @@ export const IpcInvoke = {
   filesCreate: 'files:create',
   filesRename: 'files:rename',
   filesTrash: 'files:trash',
+  filesGrep: 'files:grep',
 
   commandStatus: 'command:status',
   commandSetRegistered: 'command:set-registered',
@@ -576,6 +578,11 @@ export interface ManagerApi {
     rename(root: string, from: string, to: string): Promise<void>
     /** Moves an entry of an open tree to the recycle bin. */
     trash(root: string, path: string): Promise<void>
+    /**
+     * The lines of the files of an open tree that hold `query` (as it is, any case), without those git
+     * ignores; a newer search of the tree ends this one.
+     */
+    grep(root: string, query: string): Promise<ContentSearchResult>
     /** Files a session's Claude (or one of its subagents) reads, writes or commits, as it happens. */
     onTouched(cb: (terminalId: string, touches: FileTouch[]) => void): Unsubscribe
   }

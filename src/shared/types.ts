@@ -1116,6 +1116,31 @@ export interface FileSearchList {
   truncated: boolean
 }
 
+/** A line of a file that holds what the tree's content search looks for. */
+export interface ContentMatch {
+  /** Its number in the file, from 1. */
+  line: number
+  /** The line without its indent; of a long one the part around its first hit, `…` where cut. */
+  text: string
+  /** Where the hits are in `text` (characters, the end excluded). */
+  ranges: [number, number][]
+}
+
+/** The lines of a file the content search found, by their number. */
+export interface ContentFile {
+  /** Relative to the tree's folder, `/`-separated. */
+  path: string
+  matches: ContentMatch[]
+}
+
+export interface ContentSearchResult {
+  files: ContentFile[]
+  /** Lines found, in all files. */
+  matches: number
+  /** More lines than were read hold it, or the search took too long. */
+  truncated: boolean
+}
+
 /** How git sees a file of the tree. */
 export type GitFileStatus = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflict'
 

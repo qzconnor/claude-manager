@@ -28,6 +28,8 @@ const props = defineProps<{
   wrap?: boolean
   rows?: number
   clipTop?: number
+  /** Marked for a moment: the line a search hit leads to. */
+  marked?: boolean
 }>()
 
 const max = computed(() => (props.wrap ? MAX_WRAPPED_COLUMNS : MAX_DIFF_COLUMNS))
@@ -108,6 +110,7 @@ const style = computed(() => {
         <span v-if="withSign" class="w-[1ch]">{{ SIGN[line.kind] }}</span>
       </template>
     </span>
+    <span v-if="marked" aria-hidden="true" class="pointer-events-none absolute inset-0 z-[11] bg-primary/15 ring-1 ring-primary/50 ring-inset" />
     <span :class="cn(codeClass, parts && 'relative')"><span v-if="parts" aria-hidden="true" :class="marksClass"><template v-for="(part, i) in parts" :key="i"><span v-if="part.changed" :class="cn('rounded-[2px]', MARK_CLASS[line.kind as 'add' | 'del'])">{{ part.text }}</span><template v-else>{{ part.text }}</template></template></span><span v-if="html !== null" class="relative" v-html="html" /><span v-else class="relative">{{ text }}</span><span v-if="line.eol" class="relative text-(--diff-number) select-none">{{ EOL[line.eol] }}</span></span>
   </div>
 </template>

@@ -72,6 +72,11 @@ const whole = shallowRef<readonly DiffLine[] | null>(null)
 let request = 0
 /** A file's first answer scrolls to its first change. */
 let fresh = true
+/** A line asked for (a hit of the content search), to scroll to once the whole file is there. */
+let wanted: { root: string; path: string; line: number } | null = null
+/** The index of the line marked for a moment. */
+const markedIndex = ref<number | null>(null)
+let markTimer: ReturnType<typeof setTimeout> | undefined
 /** Which file (and whether whole) `diff` is of. */
 let shown = ''
 
@@ -125,6 +130,41 @@ watch(full, () => {
   fresh = true
   void load()
 })
+
+// ── A line asked for: a hit of the content search ──
+
+// After the watches above: a new file's request isn't dropped by the one of the file, and the whole
+// file asked for at once is loaded by the one of `full`.
+watch(
+  () => [fileTree.lineRequest, props.root, props.path] as const,
+  ([request, root, path]) => {
+    if (!request || request.root !== root || request.path !== path) return
+    fileTree.lineRequest = null
+    wanted = request
+    // The whole file loads, and the line comes into view with it; already there, it scrolls at once.
+    if (!full.value) full.value = true
+    else if (diff.value && shown === `${root}\0${path}\0true`) void nextTick(() => scrollToLine(lines.value))
+  },
+  { immediate: true },
+)
+
+/** Scrolls to the line asked for, when it is one of this file; false when none is. */
+function scrollToLine(list: readonly DiffLine[]): boolean {
+  const target = wanted
+  if (!target || target.root !== props.root || target.path !== props.path) return false
+  wanted = null
+  const el = scroller.value
+  const index = list.findIndex((l) => (l.kind === 'context' || l.kind === 'add') && l.new === target.line)
+  if (!el || index < 0) return true
+  el.scrollTop = Math.max(0, index * rowHeight.value - el.clientHeight / 3)
+  el.scrollLeft = 0
+  onScroll()
+  markedIndex.value = index
+  clearTimeout(markTimer)
+  markTimer = setTimeout(() => (markedIndex.value = null), 2000)
+  return true
+}
+onBeforeUnmount(() => clearTimeout(markTimer))
 
 // Its folder is watched (on Linux only open folders are): a change there, or of the repository (a commit), asks again.
 let unpin = fileTree.pinDir(props.root, dir.value)
@@ -240,11 +280,13 @@ const visibleLines = computed<LineView[]>(() => {
 
 // A new file, or the whole file asked for: its first change comes into view, a third down.
 watch(lines, (list) => {
-  if (!fresh || !diff.value) return
+  // Lines of the file before (counted again as the new path's git state comes) don't count.
+  if (!fresh || !diff.value || shown !== `${props.root}\0${props.path}\0${full.value}`) return
   fresh = false
   void nextTick(() => {
     const el = scroller.value
     if (!el) return
+    if (scrollToLine(list)) return
     const index = list.findIndex((line) => line.kind === 'add' || line.kind === 'del')
     const top = index <= 0 || !full.value ? 0 : Math.max(0, index * rowHeight.value - el.clientHeight / 3)
     el.scrollTop = top
@@ -359,6 +401,7 @@ const iconButton =
             :gutter-width="gutterWidth"
             :number-width="numberWidth"
             :with-sign="withSign"
+            :marked="view.index === markedIndex"
           />
         </div>
         <p v-if="lines.length === 0" class="px-4 pt-3 text-center text-xs text-muted-foreground">Die Datei ist leer.</p>

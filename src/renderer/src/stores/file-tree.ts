@@ -100,6 +100,8 @@ export interface TreeModel {
   searchStale: boolean
   /** What is typed into the tree's search. */
   query: string
+  /** The search looks into the files, not at their names. */
+  searchContent: boolean
   /** Folders closed while the tree is filtered (open is the default there). */
   collapsedFiltered: Set<string>
   /** The selected entry, also the one the keyboard moves from. */
@@ -340,14 +342,25 @@ export const useFileTreeStore = defineStore('file-tree', () => {
    * Shows the changes of a file of a tab's tree: with the tabs in groups as a tab of the group
    * (`groupId`; `keep`: one that stays, else one that previews), otherwise beside the tab's terminal.
    */
-  function showDiff(target: TreeTarget, path: string, options: { groupId?: string | null; keep?: boolean } = {}): void {
+  function showDiff(
+    target: TreeTarget,
+    path: string,
+    options: { groupId?: string | null; keep?: boolean; line?: number } = {},
+  ): void {
     const file = { root: target.root, path }
+    lineRequest.value = options.line ? { root: target.root, path, line: options.line } : null
     if (terminals.grouped) {
       if (options.groupId) terminals.openDiff(file, options.groupId, options.keep ?? false)
     } else if (!sameData(splitDiffs.get(target.id), file)) {
       splitDiffs.set(target.id, file)
     }
   }
+
+  /**
+   * A line to show of the file whose changes `showDiff` shows (a hit of the content search): the view
+   * of that file takes it, shows the whole file there and marks the line.
+   */
+  const lineRequest = shallowRef<{ root: string; path: string; line: number } | null>(null)
 
   const splitDiffOf = (id: string | null | undefined) => (id ? (splitDiffs.get(id) ?? null) : null)
 
@@ -398,6 +411,7 @@ export const useFileTreeStore = defineStore('file-tree', () => {
       searchLoading: false,
       searchStale: false,
       query: '',
+      searchContent: false,
       collapsedFiltered: reactive(new Set()),
       selected: null,
       scrollTop: 0,
@@ -819,6 +833,7 @@ export const useFileTreeStore = defineStore('file-tree', () => {
     setWidth,
     setDiffShare,
     showDiff,
+    lineRequest,
     splitDiffOf,
     closeSplitDiff,
     showAllChanges,

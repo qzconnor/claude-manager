@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { readdirSync, watch, type FSWatcher } from 'node:fs'
 import { lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -6,6 +6,9 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathProblem } from '@shared/file-names'
 import { folderKey } from '@shared/folders'
 import type {
+  ContentFile,
+  ContentMatch,
+  ContentSearchResult,
   FileDiff,
   FileEntry,
   FileListing,
@@ -104,6 +107,14 @@ const IGNORE_CHECK_CHUNK = 100
 const SHELL_SKIPPED = new Set(['node_modules', '.git'])
 /** Windows and macOS watch a folder with everything below it at the cost of one handle; Linux needs one per folder. */
 const RECURSIVE = process.platform === 'win32' || process.platform === 'darwin'
+/** The most lines a content search reads; it stops there. */
+export const MAX_GREP_MATCHES = 1000
+/** A content search gives up after this long (ms), with what it found so far. */
+const GREP_MS = 15_000
+/** Of a longer line, the part around its first hit is shown (characters). */
+const MAX_MATCH_TEXT = 240
+/** Before the first hit in such a part (characters). */
+const MATCH_LEAD = 60
 /** Names that differ only in case name the same entry (NTFS, APFS as they come). */
 const CASE_BLIND = process.platform === 'win32' || process.platform === 'darwin'
 
@@ -184,6 +195,8 @@ export class FileTreeService extends TypedEmitter<Events> {
   private readonly ignored = new Map<string, Set<string>>()
   /** Files the tools of a session are about to write (PreToolUse), by `pathKey`: no command of another session writes them. */
   private readonly toolWrites = new Map<string, { terminalId: string; at: number }>()
+  /** The content search of each tree (by `folderKey`) that runs; a newer one ends it. */
+  private readonly greps = new Map<string, ChildProcess>()
 
   /** `trash`: Electron's `shell.trashItem`; without it nothing is deleted. */
   constructor(private readonly trashItem: Trash = () => Promise.reject(new Error('Kein Papierkorb'))) {
@@ -250,6 +263,68 @@ export class FileTreeService extends TypedEmitter<Events> {
       if ((error as NodeJS.ErrnoException).code) throw new Error(fileError(error, path))
       throw new Error(`„${path.split('/').pop()}“ ließ sich nicht in den Papierkorb verschieben (${error instanceof Error ? error.message : String(error)}).`)
     }
+  }
+
+  /**
+   * The lines of the files of the open tree of `root` that hold `query` (as it is, any case), by `git
+   * grep`: binary files and what git ignores are left out, files git doesn't know yet are in. Outside a
+   * repository the same with `--no-index` (and the `.gitignore` files there). Ends at `MAX_GREP_MATCHES`
+   * lines or after `GREP_MS`; a newer search of the tree ends this one.
+   */
+  async grep(root: string, query: string): Promise<ContentSearchResult> {
+    const key = folderKey(root)
+    if (!this.watched.has(key)) throw new Error('Der Ordner ist in keinem offenen Dateibaum.')
+    this.greps.get(key)?.kill()
+    const repo = (await this.prefix(root)) !== null
+    // Config that would change the output (`grep.column`, `grep.fullName`) is set back.
+    const args = [
+      ...GUARD,
+      ...['-c', 'grep.column=false', '-c', 'grep.fullName=false', '-c', 'grep.lineNumber=true'],
+      'grep',
+      ...(repo ? ['--untracked'] : ['--no-index', '--exclude-standard']),
+      ...['-n', '-I', '-z', '-F', '-i', '--no-color', '-e', query],
+    ]
+    const env = repo ? await this.guard(root) : {}
+    return new Promise((resolve, reject) => {
+      const child = spawn('git', args, { cwd: root, windowsHide: true, env: { ...process.env, ...env } })
+      this.greps.set(key, child)
+      const chunks: Buffer[] = []
+      let lines = 0
+      let truncated = false
+      const stop = () => {
+        truncated = true
+        child.kill()
+      }
+      const timer = setTimeout(stop, GREP_MS)
+      child.stdout.on('data', (chunk: Buffer) => {
+        if (truncated) return
+        let end = chunk.length
+        for (let i = 0; i < chunk.length; i++) {
+          if (chunk[i] !== 0x0a) continue
+          if (++lines === MAX_GREP_MATCHES) {
+            end = i + 1
+            stop()
+            break
+          }
+        }
+        chunks.push(end === chunk.length ? chunk : chunk.subarray(0, end))
+      })
+      child.stderr.resume()
+      child.on('error', (error) => {
+        clearTimeout(timer)
+        if (this.greps.get(key) === child) this.greps.delete(key)
+        const missing = (error as NodeJS.ErrnoException).code === 'ENOENT'
+        reject(new Error(missing ? 'Für die Suche im Inhalt braucht die App Git.' : error.message))
+      })
+      child.on('close', (code) => {
+        clearTimeout(timer)
+        if (this.greps.get(key) === child) this.greps.delete(key)
+        // 1: nothing found; ended by a newer search or the limit: what was found.
+        if (code !== 0 && code !== 1 && !truncated && !child.killed) return reject(new Error('Die Suche im Inhalt ist fehlgeschlagen.'))
+        const files = parseGrep(Buffer.concat(chunks).toString('utf8'), query)
+        resolve({ files, matches: files.reduce((sum, file) => sum + file.matches.length, 0), truncated })
+      })
+    })
   }
 
   /**
@@ -685,6 +760,8 @@ export class FileTreeService extends TypedEmitter<Events> {
   }
 
   dispose(): void {
+    for (const child of this.greps.values()) child.kill()
+    this.greps.clear()
     for (const key of [...this.watched.keys()]) this.unwatch(key)
     for (const shell of this.shells.values()) {
       clearTimeout(shell.expiry)
@@ -951,6 +1028,49 @@ interface Closable {
 }
 
 /** The names in a folder; none when it is missing. */
+/**
+ * The lines `git grep -n -z` gave (`path\0line\0text`), by file in its order, each with where `query`
+ * is in it (any case).
+ */
+export function parseGrep(out: string, query: string): ContentFile[] {
+  const files: ContentFile[] = []
+  for (const record of out.split('\n')) {
+    const first = record.indexOf('\0')
+    const second = first > 0 ? record.indexOf('\0', first + 1) : -1
+    if (second < 0) continue
+    const path = record.slice(0, first)
+    const line = Number(record.slice(first + 1, second))
+    if (!Number.isInteger(line) || line < 1) continue
+    let file = files.at(-1)
+    if (!file || file.path !== path) {
+      file = { path, matches: [] }
+      files.push(file)
+    }
+    file.matches.push(matchOf(record.slice(second + 1).replace(/\r$/, ''), line, query))
+  }
+  return files
+}
+
+/** A line found, without its indent; of a long one the part around its first hit. */
+function matchOf(full: string, line: number, query: string): ContentMatch {
+  const text = full.trimStart()
+  const needle = query.toLowerCase()
+  let shown = text
+  if (text.length > MAX_MATCH_TEXT) {
+    const first = text.toLowerCase().indexOf(needle)
+    const start = Math.max(0, Math.min(first - MATCH_LEAD, text.length - MAX_MATCH_TEXT))
+    const end = start + MAX_MATCH_TEXT
+    shown = `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`
+  }
+  const ranges: [number, number][] = []
+  const lower = shown.toLowerCase()
+  // Lowercase of some letters is longer (İ): the hits wouldn't lie where they are.
+  if (lower.length === shown.length && needle.length > 0) {
+    for (let at = lower.indexOf(needle); at !== -1; at = lower.indexOf(needle, at + needle.length)) ranges.push([at, at + needle.length])
+  }
+  return { line, text: shown, ranges }
+}
+
 /** Why a file operation on `path` failed, in words for the user. */
 function fileError(error: unknown, path: string): string {
   const name = `„${path.split('/').pop()}“`
