@@ -6,6 +6,7 @@ import {
   GlobeIcon,
   HistoryIcon,
   KeyRoundIcon,
+  RotateCcwIcon,
   SquareTerminalIcon,
 } from '@lucide/vue'
 import { injectDropdownMenuRootContext } from 'reka-ui'
@@ -25,7 +26,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useLauncher } from '@/composables/useLauncher'
 import { useRecentFolders } from '@/composables/useRecentFolders'
-import { shortenPath } from '@/lib/format'
+import { formatRelative, shortenPath } from '@/lib/format'
 import { shellLabel } from '@/lib/platform'
 import { useAccountsStore } from '@/stores/accounts'
 import { useAppStore } from '@/stores/app'
@@ -178,6 +179,20 @@ function onFolderKey(event: KeyboardEvent, path: string) {
         <HistoryIcon />
         Session fortsetzen…
       </DropdownMenuItem>
+      <DropdownMenuSub v-if="terminals.recentlyClosed.length">
+        <DropdownMenuSubTrigger>
+          <RotateCcwIcon />
+          Zuletzt geschlossen
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent class="w-72">
+          <DropdownMenuItem v-for="entry in terminals.recentlyClosed" :key="entry.id" @select="launcher.reopen(entry)">
+            <SquareTerminalIcon v-if="entry.mode === 'shell'" />
+            <AccountDot v-else :color="accounts.get(entry.authAccountId)?.color ?? accounts.get(entry.accountId)?.color" />
+            <span class="min-w-0 flex-1 truncate">{{ entry.title }}</span>
+            <DropdownMenuShortcut class="tracking-normal">{{ formatRelative(new Date(entry.closedAt).toISOString()) }}</DropdownMenuShortcut>
+          </DropdownMenuItem>
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
     </DropdownMenuGroup>
   </DropdownMenuContent>
 </template>

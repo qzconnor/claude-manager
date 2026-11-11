@@ -1,6 +1,8 @@
+import { toast } from 'vue-sonner'
 import { useRouter } from 'vue-router'
 import { SYSTEM_ACCOUNT_ID } from '@shared/defaults'
 import type { SessionSummary, SplitDirection, TerminalCreateOptions, TerminalInfo } from '@shared/types'
+import { reopenOptions, type ClosedTab } from '@/lib/closed-tabs'
 import { toastError } from '@/lib/errors'
 import { sessionFolder } from '@/lib/session-tree'
 import { useAccountsStore } from '@/stores/accounts'
@@ -66,11 +68,29 @@ export function useLauncher() {
     }
   }
 
+  /**
+   * Opens a closed tab again (by default the one closed last): a session goes on with its
+   * conversation. The entry stays in the list until its tab is open again.
+   */
+  async function reopen(entry: ClosedTab | undefined = terminals.recentlyClosed[0]) {
+    if (!entry) return undefined
+    const options = reopenOptions(entry, new Set(accounts.accounts.map((a) => a.id)))
+    if (!options) {
+      terminals.forgetClosed(entry.id)
+      toast.error(`„${entry.title}“ lässt sich nicht wieder öffnen`, { description: 'Sein Account ist nicht mehr da.' })
+      return undefined
+    }
+    const info = await launch(options)
+    if (info) terminals.forgetClosed(entry.id)
+    return info
+  }
+
   return {
     defaultAccountId,
     launch,
     split,
     browser,
+    reopen,
     /**
      * With the tabs in groups, the browser tab with the pages of the session of `terminal` (for a page,
      * the session it belongs to); without pages it asks for an address. Nothing without a session: with

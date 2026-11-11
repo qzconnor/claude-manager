@@ -10,6 +10,9 @@ import {
   FolderIcon,
   FolderOpenIcon,
   GlobeIcon,
+  HistoryIcon,
+  Maximize2Icon,
+  Minimize2Icon,
   PanelRightIcon,
   PencilIcon,
   PlusIcon,
@@ -168,6 +171,16 @@ const closesBrowser = computed(
           Neue Session
           <CommandShortcut>Strg+Umschalt+T</CommandShortcut>
         </CommandItem>
+        <CommandItem
+          v-if="terminals.recentlyClosed.length"
+          value="reopen-closed"
+          filter-text="Geschlossenen Tab wieder öffnen rückgängig zuletzt geschlossen"
+          @select="run(() => launcher.reopen())"
+        >
+          <HistoryIcon />
+          Geschlossenen Tab wieder öffnen
+          <CommandShortcut class="max-w-[40%] truncate tracking-normal">{{ terminals.recentlyClosed[0].title }}</CommandShortcut>
+        </CommandItem>
         <CommandItem value="new-session-folder" @select="run(() => launcher.newSessionInFolder())">
           <FolderOpenIcon />
           Neue Session in Ordner…
@@ -274,6 +287,16 @@ const closesBrowser = computed(
           <CommandItem value="tab-rename" filter-text="Tab umbenennen Name Titel" @select="run(() => renameTab(tab!.id), true)">
             <PencilIcon />
             Tab umbenennen
+          </CommandItem>
+          <CommandItem
+            v-if="!terminals.grouped && (terminals.activeTab?.panes.length ?? 0) > 1"
+            value="tab-zoom"
+            filter-text="Teil maximieren Vollbild Zoom alle Teile zeigen geteilt"
+            @select="run(() => terminals.toggleZoom(tab!.id))"
+          >
+            <Minimize2Icon v-if="terminals.zoomed === tab.id" />
+            <Maximize2Icon v-else />
+            {{ terminals.zoomed === tab.id ? 'Alle Teile zeigen' : 'Teil maximieren' }}
           </CommandItem>
           <template v-if="tab.mode !== 'browser'">
             <CommandItem value="tab-restart" filter-text="Tab neu starten Session Neustart" @select="run(() => restartTerminal(tab!.id))">
@@ -411,6 +434,24 @@ const closesBrowser = computed(
             <BrowserFavicon v-if="terminal.mode === 'browser'" :terminal-id="terminal.id" class="size-4" />
             <AccountDot v-else :color="accounts.get(terminal.authAccountId)?.color" />
             <span class="truncate">{{ terminal.title }}</span>
+          </CommandItem>
+        </CommandGroup>
+      </template>
+
+      <template v-if="terminals.recentlyClosed.length">
+        <CommandSeparator />
+        <CommandGroup heading="Zuletzt geschlossen" search-only>
+          <CommandItem
+            v-for="entry in terminals.recentlyClosed"
+            :key="entry.id"
+            :value="`closed-${entry.id}`"
+            :filter-text="`Wieder öffnen geschlossen ${entry.title}`"
+            @select="run(() => launcher.reopen(entry))"
+          >
+            <SquareTerminalIcon v-if="entry.mode === 'shell'" />
+            <AccountDot v-else :color="accounts.get(entry.authAccountId)?.color ?? accounts.get(entry.accountId)?.color" />
+            <span class="truncate">{{ entry.title }}</span>
+            <CommandShortcut>{{ formatRelative(new Date(entry.closedAt).toISOString()) }}</CommandShortcut>
           </CommandItem>
         </CommandGroup>
       </template>

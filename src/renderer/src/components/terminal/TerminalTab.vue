@@ -10,6 +10,8 @@ import {
   GlobeIcon,
   KeyRoundIcon,
   LoaderCircleIcon,
+  Maximize2Icon,
+  Minimize2Icon,
   PencilIcon,
   RotateCwIcon,
   Rows2Icon,
@@ -443,6 +445,11 @@ function openFolder() {
           <ContextMenuItem @select="launcher.browser(null, { terminalId: terminal.id, direction: 'row' })">
             <GlobeIcon />
             Browser daneben öffnen
+          </ContextMenuItem>
+          <ContextMenuItem v-if="split" @select="terminals.toggleZoom(terminal.id)">
+            <Minimize2Icon v-if="terminals.zoomed === terminal.id" />
+            <Maximize2Icon v-else />
+            {{ terminals.zoomed === terminal.id ? 'Alle Teile zeigen' : 'Maximieren' }}
           </ContextMenuItem>
           <ContextMenuItem v-if="split" @select="terminals.detach(terminal.id)">
             <SquareArrowOutUpRightIcon />

@@ -30,6 +30,11 @@ const layout = computed(() => {
   return tab ? layoutPanes(tab.layout) : null
 })
 const split = computed(() => (terminals.activeTab?.panes.length ?? 0) > 1)
+/** The part of the tab shown alone over the whole tab, if any (see `terminals.toggleZoom`). */
+const zoomed = computed(() => {
+  const id = terminals.zoomed
+  return id && inActiveTab(id) ? id : null
+})
 
 const percent = (value: number) => `${value * 100}%`
 const FULL: PaneRect = { left: 0, top: 0, width: 1, height: 1 }
@@ -39,6 +44,7 @@ function rectStyle(rect: PaneRect) {
 }
 
 function paneStyle(id: string) {
+  if (zoomed.value === id) return rectStyle(FULL)
   return rectStyle(layout.value?.panes.get(id) ?? FULL)
 }
 
@@ -111,7 +117,9 @@ const inActiveTab = (id: string) => terminals.activeTab?.panes.some((p) => p.id 
 const driven = (id: string) => browsers.controls.get(id)?.active === true
 /** Not in the order of the tabs: reordering them would move the elements, and a browser would load again. */
 const panes = computed(() => inOpeningOrder(terminals.terminals))
-const inBackground = (id: string) => !inActiveTab(id) && driven(id)
+/** In the tab in front, unless another part of it is maximized. */
+const onScreen = (id: string) => inActiveTab(id) && (!zoomed.value || zoomed.value === id)
+const inBackground = (id: string) => !onScreen(id) && driven(id)
 </script>
 
 <template>
@@ -131,18 +139,18 @@ const inBackground = (id: string) => !inActiveTab(id) && driven(id)
     <component
       :is="terminal.mode === 'browser' ? BrowserPane : TerminalPane"
       v-for="terminal in panes"
-      v-show="inActiveTab(terminal.id) || inBackground(terminal.id)"
+      v-show="onScreen(terminal.id) || inBackground(terminal.id)"
       :key="terminal.id"
       :class="cn('absolute', inBackground(terminal.id) && 'pointer-events-none -z-10 opacity-0')"
       :inert="!props.visible && !driven(terminal.id)"
       :aria-hidden="inBackground(terminal.id) || undefined"
-      :style="inActiveTab(terminal.id) ? paneStyle(terminal.id) : inBackground(terminal.id) ? backgroundStyle(terminal.id) : undefined"
+      :style="onScreen(terminal.id) ? paneStyle(terminal.id) : inBackground(terminal.id) ? backgroundStyle(terminal.id) : undefined"
       :terminal="terminal"
       :active="props.visible && terminal.id === terminals.activeId"
-      :dimmed="split && terminal.id !== terminals.activeId"
+      :dimmed="split && !zoomed && terminal.id !== terminals.activeId"
       @focus="terminals.activate(terminal.id)"
     />
-    <template v-if="split && layout">
+    <template v-if="split && layout && !zoomed">
       <div
         v-for="divider in layout.dividers"
         :key="divider.path.join('-') || 'root'"

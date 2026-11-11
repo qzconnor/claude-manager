@@ -1,5 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import type { BrowserOpenOptions, PaneSplit, TerminalInfo, TerminalMode } from '@shared/types'
 import { BROWSER_TAB, createWorkspace, diffTab, type Workspace } from '@/lib/workspace'
 
@@ -381,5 +382,80 @@ describe('the groups of the last run', () => {
     const terminals = await load(list, [], { workspace: saved, order })
     expect(tabsOf(terminals)).toEqual([['n1'], ['n3']])
     expect(terminals.restoredIds).toEqual(new Map([['s1', 'n1'], ['s3', 'n3']]))
+  })
+})
+
+describe('closed tabs', () => {
+  const talked = (t: TerminalInfo): TerminalInfo => ({ ...t, sessionId: `s-${t.id}`, context: { tokens: 1 } as unknown as TerminalInfo['context'] })
+
+  it('are remembered newest first, a session with its conversation, a browser not at all', async () => {
+    const terminals = await load([talked(terminal('s1')), terminal('sh', 'shell'), terminal('b1', 'browser')], [], undefined, 'top')
+    await terminals.close('s1')
+    await terminals.close('b1')
+    await terminals.close('sh')
+    expect(terminals.recentlyClosed.map((e) => [e.id, e.sessionId])).toEqual([
+      ['sh', null],
+      ['s1', 's-s1'],
+    ])
+  })
+
+  it('are remembered with every terminal of a closed split tab', async () => {
+    const terminals = await load([terminal('s1'), terminal('s2'), terminal('s3')], [beside('s1', 's2')], undefined, 'top')
+    await terminals.closeTab(terminals.tabOf('s1')!.id)
+    expect(terminals.recentlyClosed.map((e) => e.id).sort()).toEqual(['s1', 's2'])
+  })
+
+  it('are forgotten once opened again, and with their account', async () => {
+    const terminals = await load([terminal('s1'), { ...terminal('s2'), accountId: 'b' }], [], undefined, 'top')
+    await terminals.close('s1')
+    await terminals.close('s2')
+    terminals.forgetClosedOf('b')
+    expect(terminals.recentlyClosed.map((e) => e.id)).toEqual(['s1'])
+    terminals.forgetClosed('s1')
+    expect(terminals.recentlyClosed).toEqual([])
+  })
+})
+
+describe('a maximized part of a split tab', () => {
+  it('gets the keyboard, and gives way to all parts again', async () => {
+    const terminals = await load([terminal('s1'), terminal('s2'), terminal('s3')], [beside('s1', 's2')], undefined, 'top')
+    terminals.toggleZoom('s2')
+    expect(terminals.zoomed).toBe('s2')
+    expect(terminals.activeId).toBe('s2')
+    terminals.toggleZoom('s2')
+    expect(terminals.zoomed).toBeNull()
+  })
+
+  it('stays while another tab is in front, not once another part gets the keyboard', async () => {
+    const terminals = await load([terminal('s1'), terminal('s2'), terminal('s3')], [beside('s1', 's2')], undefined, 'top')
+    terminals.toggleZoom('s2')
+    terminals.activate('s3')
+    await nextTick()
+    terminals.activate('s2')
+    await nextTick()
+    expect(terminals.zoomed).toBe('s2')
+    terminals.activate('s1')
+    await nextTick()
+    expect(terminals.zoomed).toBeNull()
+  })
+
+  it('ends when its tab gets another part', async () => {
+    const terminals = await load([terminal('s1'), terminal('s2'), terminal('s3')], [beside('s1', 's2')], undefined, 'top')
+    terminals.toggleZoom('s2')
+    await nextTick()
+    changed(main.list, [beside('s1', beside('s2', 's3', 'column'))])
+    await nextTick()
+    expect(terminals.tabOf('s2')!.panes).toHaveLength(3)
+    expect(terminals.zoomed).toBeNull()
+  })
+
+  it('is no thing in groups, nor for a part alone in its tab', async () => {
+    const grouped = await load([terminal('s1'), terminal('s2')], [beside('s1', 's2')])
+    grouped.toggleZoom('s2')
+    expect(grouped.zoomed).toBeNull()
+    setActivePinia(createPinia())
+    const single = await load([terminal('s1'), terminal('s2')], [], undefined, 'top')
+    single.toggleZoom('s1')
+    expect(single.zoomed).toBeNull()
   })
 })

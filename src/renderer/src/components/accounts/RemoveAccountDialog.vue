@@ -64,6 +64,7 @@ async function remove() {
     for (const tab of tabs.value) await terminals.close(tab.id)
     // The main process only ever deletes app-managed profile folders.
     await accounts.remove(id, deleteConfigDir.value && !props.account.customConfigDir)
+    terminals.forgetClosedOf(id)
     toast.success(`Account „${name}“ entfernt`)
     open.value = false
   } catch (error) {

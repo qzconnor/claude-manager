@@ -19,6 +19,7 @@ import {
 } from '@shared/panes'
 import type { BrowserOpenOptions, PaneNode, PaneSplit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
 import { sameData } from '@shared/utils'
+import { closedTabOf, rememberClosed, type ClosedTab } from '@/lib/closed-tabs'
 import { groupTabs, type TerminalTabGroup } from '@/lib/tabs'
 import { terminalBus } from '@/lib/terminal-bus'
 import {
@@ -212,6 +213,57 @@ export const useTerminalsStore = defineStore('terminals', () => {
     ),
   )
   const activeTab = computed(() => tabOf(activeId.value))
+
+  /** Sessions and shells the user closed, newest first, for „Geschlossenen Tab wieder öffnen“. */
+  const recentlyClosed = ref<ClosedTab[]>([])
+
+  function rememberClosing(ids: readonly string[]): void {
+    for (const id of ids) {
+      const terminal = byId.value.get(id)
+      const entry = terminal && closedTabOf(terminal)
+      if (entry) recentlyClosed.value = rememberClosed(recentlyClosed.value, entry)
+    }
+  }
+
+  function forgetClosed(id: string): void {
+    recentlyClosed.value = recentlyClosed.value.filter((entry) => entry.id !== id)
+  }
+
+  /** A removed account takes its closed tabs along: they can't open again. */
+  function forgetClosedOf(accountId: string): void {
+    recentlyClosed.value = recentlyClosed.value.filter((entry) => entry.accountId !== accountId)
+  }
+
+  /**
+   * In one tab bar: the part of a split tab that is shown alone over the whole tab, until it is
+   * restored. It ends once another part of the tab gets the keyboard or the tab gains or loses a part.
+   */
+  const zoomedId = ref<string | null>(null)
+  const zoomed = computed(() => {
+    const id = zoomedId.value
+    if (!id || grouped.value) return null
+    return (tabOf(id)?.panes.length ?? 0) > 1 ? id : null
+  })
+
+  function toggleZoom(id: string): void {
+    if (zoomed.value === id) {
+      zoomedId.value = null
+      return
+    }
+    zoomedId.value = id
+    activate(id)
+  }
+
+  watch(activeId, (id) => {
+    const zoom = zoomedId.value
+    if (zoom && id && id !== zoom && tabOf(id) === tabOf(zoom)) zoomedId.value = null
+  })
+  watch(
+    () => ({ id: zoomedId.value, parts: zoomedId.value ? (tabOf(zoomedId.value)?.panes.length ?? 0) : 0 }),
+    (now, before) => {
+      if (now.id && now.id === before.id && now.parts !== before.parts) zoomedId.value = null
+    },
+  )
 
   function tabOf(id: string | null): TerminalTab | null {
     return id ? (tabs.value.find((tab) => tab.panes.some((p) => p.id === id)) ?? null) : null
@@ -839,6 +891,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
    * end; in groups, the group shows the neighbour tab once main reports the terminal gone.
    */
   async function close(id: string): Promise<void> {
+    rememberClosing([id])
     if (!grouped.value && activeId.value === id) {
       const tab = tabOf(id)
       const others = tab?.panes.filter((p) => p.id !== id) ?? []
@@ -853,6 +906,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     const index = tabs.value.findIndex((tab) => tab.id === tabId)
     if (index === -1) return
     const tab = tabs.value[index]
+    rememberClosing(tab.panes.map((p) => p.id))
     if (tab.panes.some((p) => p.id === activeId.value)) focus(neighbourTab(index)?.focused.id ?? null)
     await Promise.all(tab.panes.map((p) => window.api.terminals.close(p.id)))
   }
@@ -1144,6 +1198,11 @@ export const useTerminalsStore = defineStore('terminals', () => {
     activeId,
     active,
     activeTab,
+    recentlyClosed,
+    forgetClosed,
+    forgetClosedOf,
+    zoomed,
+    toggleZoom,
     visibleIds,
     restoredIds,
     onReplaced,
