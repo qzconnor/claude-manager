@@ -48,6 +48,7 @@ import { useClock } from '@/composables/useClock'
 import { useSectionDrag } from '@/composables/useSectionDrag'
 import { useSessionDetail, type SessionRef } from '@/composables/useSessionDetail'
 import { provideSessionPages } from '@/composables/useSessionPages'
+import { usePauseWhileHidden } from '@/composables/usePauseWhileHidden'
 import { useSessionRemoval } from '@/composables/useSessionRemoval'
 import { sessionKey, useSessionSearch } from '@/composables/useSessionSearch'
 import { attempt } from '@/lib/errors'
@@ -84,6 +85,9 @@ const TOOL_BUTTON = 'size-[32px] rounded-lg border-0 bg-transparent p-0 ring-1 r
 const TOOL_BUTTON_PRESSED =
   'bg-primary/10 ring-primary/40 hover:bg-primary/15 dark:bg-primary/10 dark:ring-primary/30 dark:hover:bg-primary/15'
 
+// Hidden behind the terminals, the list doesn't follow each change of a running session (every few
+// seconds), nor does the selected history load again: both catch up once the page is back.
+const pageShown = usePauseWhileHidden()
 const sessions = useSessionsStore()
 const workspaces = useWorkspacesStore()
 const accounts = useAccountsStore()
@@ -583,7 +587,9 @@ watch(() => shownFolders.value.join('\n'), () => void checkFolders(), { immediat
 // A project gone from its workspace stays in the list while sessions name it: check it then too.
 watch(() => workspaces.workspaces, () => void checkFolders())
 // Moved or deleted in Explorer meanwhile: shown as gone once the window is back.
-useEventListener(window, 'focus', () => void checkFolders())
+useEventListener(window, 'focus', () => {
+  if (pageShown.value) void checkFolders()
+})
 
 const load = () => attempt(() => Promise.all([sessions.load(), workspaces.load()]), 'Sessions konnten nicht geladen werden')
 /**

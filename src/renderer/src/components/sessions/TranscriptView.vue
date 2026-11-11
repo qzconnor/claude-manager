@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/message-scroller'
 import { Spinner } from '@/components/ui/spinner'
 import { useClock } from '@/composables/useClock'
+import { usePauseWhileHidden } from '@/composables/usePauseWhileHidden'
 import { formatNumber } from '@/lib/format'
 import { transcriptRows } from '@/lib/transcript-days'
 import TranscriptMessage from './TranscriptMessage.vue'
@@ -29,7 +30,8 @@ const props = defineProps<{
 }>()
 defineEmits<{ loadOlder: [] }>()
 
-// „Heute“ becomes „Gestern“ after midnight.
+// „Heute“ becomes „Gestern“ after midnight, but not while the page is hidden.
+usePauseWhileHidden()
 const now = useClock(60_000)
 const rows = computed(() => transcriptRows(props.messages, now.value))
 const older = computed(() => Math.max(0, props.total - props.messages.length))
