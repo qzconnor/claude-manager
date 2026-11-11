@@ -759,6 +759,7 @@ const iconButton =
       :kinds="kindCounts"
       :git="!!git"
       :session="isSession"
+      :terminal-id="target.session.id"
     />
 
     <!-- Search by name across every folder, the open ones or not. -->
