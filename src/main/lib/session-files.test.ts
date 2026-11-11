@@ -134,6 +134,19 @@ describe('findTranscript', () => {
     expect(await findTranscript(dir, SESSION, null)).toBe(file)
   })
 
+  it('looks only where the name begins like the folder when not to search everywhere', async () => {
+    // No project folder yet: `claude --worktree` wrote only the worktree's.
+    const worktree = await transcript(projectKey(`${cwd}/.claude/worktrees/login-fix`))
+    expect(await findTranscript(dir, SESSION, cwd, false)).toBe(worktree)
+    await rm(worktree)
+    await transcript('-very-long-path-shortened-1a2b3c')
+    expect(await findTranscript(dir, SESSION, cwd, false)).toBeNull()
+    // A name Claude Code shortened keeps its start.
+    const long = `/home/dev/${'a'.repeat(120)}`
+    const shortened = await transcript(`${projectKey(long).slice(0, 110)}-1a2b3c`)
+    expect(await findTranscript(dir, SESSION, long, false)).toBe(shortened)
+  })
+
   it('is null when nothing has been written yet', async () => {
     await transcript('other', OTHER_SESSION)
     await writeFile(join(dir, `${SESSION}.jsonl`), '')

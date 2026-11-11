@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -182,5 +182,41 @@ describe('splitting a part as often as a tab can be', () => {
     // Beside the part it was opened from.
     const order = service.list().map((t) => t.id)
     expect(order.indexOf(extra)).toBe(order.indexOf(last) + 1)
+  })
+})
+
+// Until the first prompt a session has no transcript; the tab looks for it every round.
+describe('looking for a tab’s transcript', () => {
+  type Finder = { findTabTranscript(projectsDir: string, record: object, sessionId: string): Promise<string | null> }
+  const SESSION = '3f2b8c1e-9a4d-4e7b-8c2a-1d5e6f7a8b9c'
+  let projects: string
+
+  beforeEach(async () => {
+    projects = await mkdtemp(join(tmpdir(), 'cm-projects-'))
+  })
+  afterEach(async () => {
+    vi.useRealTimers()
+    await rm(projects, { recursive: true, force: true })
+  })
+
+  it('looks in all projects only now and then, in its own folders every time', async () => {
+    vi.useFakeTimers({ now: 1_000_000, toFake: ['Date'] })
+    const finder = service as unknown as Finder
+    const record = { liveCwd: null, folders: ['/home/dev/app'], searchedEverywhereAt: 0 }
+    const elsewhere = join(projects, 'renamed')
+    await mkdir(elsewhere)
+    // Not there yet: one search everywhere.
+    expect(await finder.findTabTranscript(projects, record, SESSION)).toBeNull()
+    await writeFile(join(elsewhere, `${SESSION}.jsonl`), '')
+    vi.setSystemTime(1_000_000 + 2000)
+    expect(await finder.findTabTranscript(projects, record, SESSION)).toBeNull()
+    vi.setSystemTime(1_000_000 + 30_000)
+    expect(await finder.findTabTranscript(projects, record, SESSION)).toBe(join(elsewhere, `${SESSION}.jsonl`))
+    // In its own folder it is found at once.
+    const own = join(projects, '-home-dev-app')
+    await mkdir(own)
+    await writeFile(join(own, `${SESSION}.jsonl`), '')
+    vi.setSystemTime(1_000_000 + 32_000)
+    expect(await finder.findTabTranscript(projects, record, SESSION)).toBe(join(own, `${SESSION}.jsonl`))
   })
 })

@@ -22,6 +22,8 @@ export function projectKey(cwd: string): string {
 
 /** What follows a folder's project key in the key of its worktrees: `\.claude\worktrees\`. */
 const WORKTREE_KEY = projectKey('/.claude/worktrees/')
+/** Claude Code shortens the names of project folders of long paths (with a hash at the end); their start stays. */
+const SHORTENED_KEY_START = 100
 
 async function isFile(path: string): Promise<boolean> {
   return stat(path).then(
@@ -40,31 +42,43 @@ async function isDirectory(path: string): Promise<boolean> {
 /**
  * The session's transcript, or null when nothing has been written yet. A session started with
  * `claude --worktree` writes it to the project folder of its worktree (`<cwd>\.claude\worktrees\<name>`).
+ * Without the folder of `cwd` it looks in the folders whose names begin like it (worktrees, a name
+ * Claude Code shortened), and unless `everywhere` is false in all projects: the name may be another.
  */
-export async function findTranscript(projectsDir: string, sessionId: string, cwd?: string | null): Promise<string | null> {
+export async function findTranscript(
+  projectsDir: string,
+  sessionId: string,
+  cwd?: string | null,
+  everywhere = true,
+): Promise<string | null> {
   const name = `${sessionId}.jsonl`
+  const inFolder = async (folder: string) => ((await isFile(join(projectsDir, folder, name))) ? join(projectsDir, folder, name) : null)
+  const folders = async () =>
+    (await readdir(projectsDir, { withFileTypes: true }).catch(() => [])).filter((entry) => entry.isDirectory()).map((entry) => entry.name)
   if (cwd) {
     const key = projectKey(cwd)
-    const folder = join(projectsDir, key)
-    if (await isDirectory(folder)) {
-      if (await isFile(join(folder, name))) return join(folder, name)
-      const worktrees = (await readdir(projectsDir, { withFileTypes: true }).catch(() => [])).filter(
-        (entry) => entry.isDirectory() && entry.name.startsWith(`${key}${WORKTREE_KEY}`),
-      )
-      for (const worktree of worktrees) {
-        if (await isFile(join(projectsDir, worktree.name, name))) return join(projectsDir, worktree.name, name)
-      }
-      return null
+    const exists = await isDirectory(join(projectsDir, key))
+    const file = exists ? await inFolder(key) : null
+    if (file) return file
+    const all = await folders()
+    const start = exists ? `${key}${WORKTREE_KEY}` : key.slice(0, SHORTENED_KEY_START).toLowerCase()
+    for (const folder of all) {
+      const candidate = exists ? folder.startsWith(start) : folder.toLowerCase().startsWith(start)
+      const found = candidate ? await inFolder(folder) : null
+      if (found) return found
     }
+    if (exists || !everywhere) return null
+    return searchAll(all)
   }
-  // Very long paths get a shortened folder name: search all projects.
-  const folders = await readdir(projectsDir, { withFileTypes: true }).catch(() => [])
-  for (const folder of folders) {
-    if (folder.isDirectory() && (await isFile(join(projectsDir, folder.name, name)))) {
-      return join(projectsDir, folder.name, name)
+  return searchAll(await folders())
+
+  async function searchAll(all: string[]): Promise<string | null> {
+    for (const folder of all) {
+      const found = await inFolder(folder)
+      if (found) return found
     }
+    return null
   }
-  return null
 }
 
 const RELOCATED_MARKER = '"type":"relocated"'

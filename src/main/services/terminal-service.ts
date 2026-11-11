@@ -71,6 +71,8 @@ const MAX_BUFFER_CHARS = 2_000_000
 const FLUSH_INTERVAL_MS = 6
 /** How often running sessions are checked for their current session id and a usage limit. */
 const TRACK_INTERVAL_MS = 2000
+/** A tab whose transcript isn't where its folders say looks for it in all projects at most this often. */
+const SEARCH_EVERYWHERE_MS = 30_000
 /**
  * After Claude Code's title says the turn ended, the transcript tells why. Claude Code buffers its
  * own entries (answer, tool calls) for about 3 s, so it is read again until the end is clear.
@@ -178,7 +180,8 @@ interface TerminalRecord {
   folders: string[]
   /** The transcripts of these sessions with their pasted images read so far, by session. */
   pastedImages: Map<string, PastedImageTranscript>
-  /** Images the user pasted that weren't sent yet, by number: copies of the clipboard (data URLs). */
+  /** When (ms) a transcript of the tab was last looked for in all projects (see `findTabTranscript`). */
+  searchedEverywhereAt: number
 }
 
 interface PastedImageTranscript {
@@ -901,17 +904,21 @@ export class TerminalService extends TypedEmitter<Events> {
   /**
    * The transcript of a session of the tab's process. It lies in the project folder of the folder
    * Claude Code works in (a worktree, or where `/cd` moved it); a session from before a `/clear` may
-   * still lie in a folder the tab worked in before.
+   * still lie in a folder the tab worked in before. Until the first prompt there is none: it is looked
+   * for every round, in all projects only every `SEARCH_EVERYWHERE_MS`.
    */
   private async findTabTranscript(projectsDir: string, record: TerminalRecord, sessionId: string): Promise<string | null> {
     const seen = new Set<string>()
     for (const folder of [record.liveCwd, ...record.folders]) {
       if (!folder || seen.has(folderKey(folder))) continue
       seen.add(folderKey(folder))
-      const file = await findTranscript(projectsDir, sessionId, folder)
+      const file = await findTranscript(projectsDir, sessionId, folder, false)
       if (file) return file
     }
-    return null
+    const now = Date.now()
+    if (now - record.searchedEverywhereAt < SEARCH_EVERYWHERE_MS) return null
+    record.searchedEverywhereAt = now
+    return findTranscript(projectsDir, sessionId)
   }
 
   /**
@@ -1401,6 +1408,7 @@ function newRecord(info: TerminalInfo, defaultTitle: string, process: Pty.IPty |
     liveCwd: null,
     folders: info.cwd ? [info.cwd] : [],
     pastedImages: new Map(),
+    searchedEverywhereAt: 0,
   }
 }
 
