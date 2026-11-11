@@ -35,8 +35,13 @@ const TRASH_CONCURRENCY = 6
  */
 const localPath = process.platform === 'win32' ? windowsPath : (path: string) => path
 
+/** A projects folder that couldn't be watched (made, or its watcher failed) is tried again after this long. */
+const WATCH_RETRY_MS = 30_000
+
 export class SessionService extends TypedEmitter<Events> {
   private readonly watchers = new Map<string, { dir: string; watcher: FSWatcher }>()
+  private retryTimer: NodeJS.Timeout | null = null
+  private disposed = false
   private readonly debounce = new Map<string, NodeJS.Timeout>()
   private readonly filePaths = new Map<string, string>()
 
@@ -64,6 +69,8 @@ export class SessionService extends TypedEmitter<Events> {
   }
 
   dispose(): void {
+    this.disposed = true
+    if (this.retryTimer) clearTimeout(this.retryTimer)
     for (const { watcher } of this.watchers.values()) watcher.close()
     this.watchers.clear()
     for (const timer of this.debounce.values()) clearTimeout(timer)
@@ -272,6 +279,7 @@ export class SessionService extends TypedEmitter<Events> {
 
   /** Watches every account's projects folder and reports changes (debounced). */
   private syncWatchers(): void {
+    if (this.disposed) return
     const wanted = new Map(this.accounts.list().map((a) => [a.id, this.accounts.paths(a.id).projectsDir]))
     for (const [id, entry] of this.watchers) {
       if (wanted.get(id) !== entry.dir) {
@@ -290,12 +298,22 @@ export class SessionService extends TypedEmitter<Events> {
           })
           watcher.on('error', () => {
             watcher.close()
-            this.watchers.delete(id)
+            if (this.watchers.get(id)?.watcher === watcher) this.watchers.delete(id)
+            // Deleted with the folder, or the drive was gone for a moment: the lists keep up again later.
+            this.retryWatchers()
           })
           this.watchers.set(id, { dir, watcher })
         })
-        .catch(() => undefined)
+        .catch(() => this.retryWatchers())
     }
+  }
+
+  private retryWatchers(): void {
+    if (this.disposed || this.retryTimer) return
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null
+      this.syncWatchers()
+    }, WATCH_RETRY_MS)
   }
 
   private schedule(accountId: string): void {

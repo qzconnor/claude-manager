@@ -157,6 +157,20 @@ describe('GitService.branch', () => {
     expect(changes.map(([cwd]) => cwd)).not.toContain(dropped)
   })
 
+  it('picks up a folder that becomes a repository (git init)', async () => {
+    const path = join(dir, 'later')
+    await mkdir(path)
+    const changes: [string, GitBranch | null][] = []
+    service.on('changed', (cwd, branch) => changes.push([cwd, branch]))
+    await service.watch([path])
+    git(path, 'init', '-q')
+    await expect.poll(() => changes[0], { timeout: 5000 }).toEqual([path, { name: 'main', detached: false }])
+    // From now on its checkouts are reported too, once it is watched.
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    await writeFile(join(path, '.git', 'HEAD'), 'ref: refs/heads/next\n')
+    await expect.poll(() => changes.at(-1), { timeout: 3000 }).toEqual([path, { name: 'next', detached: false }])
+  }, 10_000)
+
   it('stops reporting after dispose', async () => {
     const path = await repo()
     const changes: unknown[] = []

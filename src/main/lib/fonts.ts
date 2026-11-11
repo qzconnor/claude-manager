@@ -2,10 +2,19 @@ import { execFile } from 'node:child_process'
 
 let cached: Promise<string[]> | null = null
 
-/** Installed font family names (Windows: via .NET, Linux: via fontconfig), cached for the app lifetime. */
+/**
+ * Installed font family names (Windows: via .NET, Linux: via fontconfig), cached for the app lifetime.
+ * A list that couldn't be read (PowerShell busy, timed out) is read again the next time.
+ */
 export function listFontFamilies(): Promise<string[]> {
-  cached ??= load().catch(() => [])
-  return cached
+  if (!cached) {
+    const loading = load()
+    cached = loading
+    loading.catch(() => {
+      if (cached === loading) cached = null
+    })
+  }
+  return cached.catch(() => [])
 }
 
 function load(): Promise<string[]> {

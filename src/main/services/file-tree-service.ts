@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { watch, type FSWatcher } from 'node:fs'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
+import { folderKey } from '@shared/folders'
 import type {
   FileDiff,
   FileEntry,
@@ -42,6 +43,8 @@ const WALK_MAX_DEPTH = 16
 const WALK_SKIPPED = new Set([...HIDDEN, 'node_modules'])
 /** Changes are reported together after this long (ms). */
 const BATCH_MS = 200
+/** A watcher that failed is set up again after this long. */
+const WATCH_RETRY_MS = 30_000
 /** The most trees and folders watched at once. */
 const MAX_WATCHED_ROOTS = 64
 const MAX_WATCHED_DIRS = 2000
@@ -77,6 +80,10 @@ export function compareEntries(a: FileEntry, b: FileEntry): number {
 }
 
 interface WatchedRoot {
+  /** The folder as the first tree named it; watched by that path. */
+  path: string
+  /** How the trees spell the folder: each gets the changes. */
+  roots: Set<string>
   /** The whole folder (Windows, macOS). */
   recursive: FSWatcher | null
   /** Linux: one watcher per open folder, by its path relative to the root ('' is the root). */
@@ -88,6 +95,8 @@ interface WatchedRoot {
   pending: Set<string>
   gitChanged: boolean
   timer: NodeJS.Timeout | null
+  /** Watches again what failed (see `retryWatch`). */
+  retry: NodeJS.Timeout | null
 }
 
 /** A shell command of Claude's while it runs: the files that change in its folder are what it writes. */
@@ -115,6 +124,7 @@ type Events = {
  * the search. Watches the trees on screen and reports changes, so the tree follows Claude's edits.
  */
 export class FileTreeService extends TypedEmitter<Events> {
+  /** By `folderKey` of the trees' folder. */
   private readonly watched = new Map<string, WatchedRoot>()
   /** Shell commands of Claude's that run, by session terminal and tool call. */
   private readonly shells = new Map<string, RunningShell>()
@@ -314,36 +324,47 @@ export class FileTreeService extends TypedEmitter<Events> {
     return walk(root)
   }
 
-  /** Watches these trees, replacing the ones of the previous call; changes come as `changed`. */
+  /**
+   * Watches these trees, replacing the ones of the previous call; changes come as `changed`, for each
+   * spelling of the folder a tree was given with (`F:\Proj` and `f:\proj\` share one watcher).
+   */
   watch(trees: readonly FileTreeWatch[]): void {
-    const wanted = new Map<string, Set<string>>()
+    const wanted = new Map<string, { roots: Set<string>; dirs: Set<string> }>()
     for (const tree of trees.slice(0, MAX_WATCHED_ROOTS)) {
-      const dirs = wanted.get(tree.root) ?? new Set([''])
-      for (const dir of tree.dirs.slice(0, MAX_WATCHED_DIRS)) dirs.add(dir)
-      wanted.set(tree.root, dirs)
+      const key = folderKey(tree.root)
+      const entry = wanted.get(key) ?? { roots: new Set<string>(), dirs: new Set(['']) }
+      entry.roots.add(tree.root)
+      for (const dir of tree.dirs.slice(0, MAX_WATCHED_DIRS)) entry.dirs.add(dir)
+      wanted.set(key, entry)
     }
-    for (const root of [...this.watched.keys()]) if (!wanted.has(root)) this.unwatch(root)
-    for (const [root, dirs] of wanted) {
-      let watched = this.watched.get(root)
+    for (const key of [...this.watched.keys()]) if (!wanted.has(key)) this.unwatch(key)
+    for (const [key, { roots, dirs }] of wanted) {
+      let watched = this.watched.get(key)
       if (!watched) {
-        const fresh: WatchedRoot = { recursive: null, dirs: new Map(), gitDir: null, git: null, pending: new Set(), gitChanged: false, timer: null }
+        const fresh: WatchedRoot = {
+          path: [...roots][0]!,
+          roots,
+          recursive: null,
+          dirs: new Map(),
+          gitDir: null,
+          git: null,
+          pending: new Set(),
+          gitChanged: false,
+          timer: null,
+          retry: null,
+        }
         watched = fresh
-        this.watched.set(root, fresh)
-        if (RECURSIVE) fresh.recursive = this.watchRecursive(root)
-        void this.gitDir(root).then((gitDir) => {
-          // Not if the tree was let go meanwhile.
-          if (this.watched.get(root) === fresh && gitDir && !fresh.git) {
-            fresh.gitDir = gitDir
-            fresh.git = this.watchGitDir(root, gitDir)
-          }
-        })
+        this.watched.set(key, fresh)
+        if (RECURSIVE) fresh.recursive = this.watchRecursive(key, fresh)
+        this.findGitDir(key, fresh)
       }
-      if (!RECURSIVE) this.watchDirs(root, watched, dirs)
+      watched.roots = roots
+      if (!RECURSIVE) this.watchDirs(key, watched, dirs)
     }
   }
 
   dispose(): void {
-    for (const root of [...this.watched.keys()]) this.unwatch(root)
+    for (const key of [...this.watched.keys()]) this.unwatch(key)
     for (const shell of this.shells.values()) {
       clearTimeout(shell.expiry)
       if (shell.timer) clearTimeout(shell.timer)
@@ -351,24 +372,36 @@ export class FileTreeService extends TypedEmitter<Events> {
     this.shells.clear()
   }
 
-  private watchRecursive(root: string): FSWatcher | null {
+  private watchRecursive(key: string, watched: WatchedRoot): FSWatcher | null {
+    const root = watched.path
     try {
       const watcher = watch(root, { recursive: true }, (_event, file) => {
-        if (!file) return this.note(root, '', true)
+        if (!file) return this.note(key, '', true)
         const parts = file.toString().split(/[\\/]/)
-        // The git folder inside the tree: its state, no entries the tree shows.
-        if (parts.includes('.git')) return this.note(root, null, true)
-        this.note(root, parts.slice(0, -1).join('/'), false)
+        // The git folder inside the tree: its state, no entries the tree shows. `git init` makes it.
+        if (parts.includes('.git')) {
+          if (parts[0] === '.git' && !watched.git) this.findGitDir(key, watched)
+          return this.note(key, null, true)
+        }
+        this.note(key, parts.slice(0, -1).join('/'), false)
         if (this.shells.size > 0) this.noteShellWrite(join(root, ...parts))
       })
-      watcher.on('error', () => this.unwatch(root))
+      // Gone for a moment (a network drive, a folder replaced by a checkout): watched again later.
+      watcher.on('error', () => {
+        watcher.close()
+        if (watched.recursive !== watcher) return
+        watched.recursive = null
+        this.retryWatch(key, watched)
+      })
       return watcher
     } catch {
+      this.retryWatch(key, watched)
       return null
     }
   }
 
-  private watchDirs(root: string, watched: WatchedRoot, dirs: Set<string>): void {
+  private watchDirs(key: string, watched: WatchedRoot, dirs: Set<string>): void {
+    const root = watched.path
     for (const [dir, watcher] of watched.dirs) {
       if (dirs.has(dir)) continue
       watcher.close()
@@ -379,38 +412,74 @@ export class FileTreeService extends TypedEmitter<Events> {
       try {
         const path = dir ? join(root, ...dir.split('/')) : root
         const watcher = watch(path, (_event, file) => {
-          this.note(root, dir, false)
-          if (file && this.shells.size > 0) this.noteShellWrite(join(path, file.toString()))
+          const name = file?.toString()
+          // `git init` in the tree: from now on its repository is watched too.
+          const gitInit = !dir && name === '.git'
+          if (gitInit && !watched.git) this.findGitDir(key, watched)
+          this.note(key, dir, gitInit)
+          if (name && this.shells.size > 0) this.noteShellWrite(join(path, name))
         })
-        // Deleted or no longer readable: the tree lets go of it when it disappears there.
+        // Deleted or no longer readable: the tree lets go of it when it disappears there. Its own
+        // folder is watched again later, while the tree is open.
         watcher.on('error', () => {
           watcher.close()
           if (watched.dirs.get(dir) === watcher) watched.dirs.delete(dir)
+          if (!dir) this.retryWatch(key, watched)
         })
         watched.dirs.set(dir, watcher)
       } catch {
         // Gone already.
+        if (!dir) this.retryWatch(key, watched)
       }
     }
   }
 
-  private watchGitDir(root: string, gitDir: string): FSWatcher | null {
+  /** Watches the tree's repository once there is one, also when `git init` makes it later. */
+  private findGitDir(key: string, watched: WatchedRoot): void {
+    void this.gitDir(watched.path).then((gitDir) => {
+      // Not if the tree was let go meanwhile.
+      if (this.watched.get(key) !== watched || !gitDir || watched.git) return
+      watched.gitDir = gitDir
+      watched.git = this.watchGitDir(key, watched, gitDir)
+    })
+  }
+
+  private watchGitDir(key: string, watched: WatchedRoot, gitDir: string): FSWatcher | null {
     try {
       // git writes the index and HEAD through a lock file it renames, so the folder is watched.
       const watcher = watch(gitDir, (_event, file) => {
         const name = file?.toString()
-        if (name === 'index' || name === 'HEAD') this.note(root, null, true)
+        if (name === 'index' || name === 'HEAD') this.note(key, null, true)
       })
-      watcher.on('error', () => watcher.close())
+      watcher.on('error', () => {
+        watcher.close()
+        if (watched.git !== watcher) return
+        watched.git = null
+        this.retryWatch(key, watched)
+      })
       return watcher
     } catch {
       return null
     }
   }
 
+  /** Watches what of the tree failed again after a while, while the tree is still open. */
+  private retryWatch(key: string, watched: WatchedRoot): void {
+    if (watched.retry) return
+    watched.retry = setTimeout(() => {
+      watched.retry = null
+      if (this.watched.get(key) !== watched) return
+      if (RECURSIVE && !watched.recursive) watched.recursive = this.watchRecursive(key, watched)
+      if (!RECURSIVE && !watched.dirs.has('')) this.watchDirs(key, watched, new Set(['', ...watched.dirs.keys()]))
+      if (!watched.git) this.findGitDir(key, watched)
+      // What changed meanwhile isn't known: the tree reads its folder and state again.
+      this.note(key, '', true)
+    }, WATCH_RETRY_MS)
+  }
+
   /** `dir`: a folder whose entries changed (null: none); `git`: the repository's state changed. */
-  private note(root: string, dir: string | null, git: boolean): void {
-    const watched = this.watched.get(root)
+  private note(key: string, dir: string | null, git: boolean): void {
+    const watched = this.watched.get(key)
     if (!watched) return
     if (dir !== null) watched.pending.add(dir)
     if (git) watched.gitChanged = true
@@ -420,18 +489,20 @@ export class FileTreeService extends TypedEmitter<Events> {
       const gitChanged = watched.gitChanged
       watched.pending.clear()
       watched.gitChanged = false
-      if (this.watched.get(root) === watched) this.emit('changed', root, dirs, gitChanged)
+      if (this.watched.get(key) !== watched) return
+      for (const root of watched.roots) this.emit('changed', root, dirs, gitChanged)
     }, BATCH_MS)
   }
 
-  private unwatch(root: string): void {
-    const watched = this.watched.get(root)
+  private unwatch(key: string): void {
+    const watched = this.watched.get(key)
     if (!watched) return
     if (watched.timer) clearTimeout(watched.timer)
+    if (watched.retry) clearTimeout(watched.retry)
     watched.recursive?.close()
     watched.git?.close()
     for (const watcher of watched.dirs.values()) watcher.close()
-    this.watched.delete(root)
+    this.watched.delete(key)
   }
 
   private async prefix(root: string): Promise<string | null> {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { CircleCheckIcon, CircleXIcon, RefreshCwIcon } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import type { CloseOnExit } from '@shared/types'
 import AccountSelect from '@/components/common/AccountSelect.vue'
 import DirectoryInput from '@/components/common/DirectoryInput.vue'
@@ -22,6 +22,8 @@ import SettingsCommand from './SettingsCommand.vue'
 import SettingsSection from './SettingsSection.vue'
 
 const app = useAppStore()
+// Claude Code may have been installed or updated since the info was read.
+onMounted(() => void app.refreshInfo(true))
 
 const executablePath = useSetting(
   (s) => s.claude.executablePath,

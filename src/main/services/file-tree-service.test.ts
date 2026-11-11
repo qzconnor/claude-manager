@@ -118,3 +118,31 @@ describe('FileTreeService.list', () => {
     expect(entries.find((e) => e.name === 'dangling')).toEqual({ name: 'dangling', dir: false, link: true, broken: true })
   })
 })
+
+describe('FileTreeService.watch', () => {
+  let dir: string
+  let service: FileTreeService
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'file-tree-watch-'))
+    service = new FileTreeService()
+  })
+  afterEach(async () => {
+    service.dispose()
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it.skipIf(process.platform !== 'win32')('watches a folder spelled two ways once and tells both', async () => {
+    const other = `${dir.toUpperCase()}\\`
+    const told: string[] = []
+    service.on('changed', (root) => told.push(root))
+    service.watch([
+      { root: dir, dirs: [] },
+      { root: other, dirs: [] },
+    ])
+    await writeFile(join(dir, 'neu.txt'), 'x')
+    await expect.poll(() => told.length, { timeout: 3000 }).toBeGreaterThanOrEqual(2)
+    expect(new Set(told)).toEqual(new Set([dir, other]))
+    expect(told).toHaveLength(2)
+  })
+})

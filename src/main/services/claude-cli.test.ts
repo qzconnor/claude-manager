@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { ClaudeCli, escapeCmdArg, npmShimTarget } from './claude-cli'
+import { ClaudeCli, escapeCmdArg, fileStamp, npmShimTarget } from './claude-cli'
 
 /** The shim npm 7+ writes for a global package (cmd-shim). */
 const NPM_SHIM = [
@@ -98,5 +98,34 @@ describe.skipIf(process.platform !== 'win32')('ClaudeCli.command with a batch fi
     expect(display.startsWith(shim)).toBe(true)
     const out = execFileSync(file, args as string[], { encoding: 'utf8' })
     expect(JSON.parse(out)).toEqual(TRICKY)
+  })
+})
+
+describe('ClaudeCli.version', () => {
+  async function writeClaude(file: string, version: string): Promise<void> {
+    if (process.platform === 'win32') await writeFile(file, `@echo ${version} (Claude Code)\r\n`)
+    else await writeFile(file, `#!/bin/sh\necho "${version} (Claude Code)"\n`, { mode: 0o755 })
+  }
+
+  it('asks the new version after an update', async () => {
+    const exe = join(dir, process.platform === 'win32' ? 'claude.cmd' : 'claude')
+    await writeClaude(exe, '2.1.0')
+    const cli = new ClaudeCli(() => exe)
+    expect(await cli.version()).toBe('2.1.0')
+    expect(cli.knownVersion()).toBe('2.1.0')
+    await writeClaude(exe, '2.1.10')
+    expect(cli.knownVersion()).toBeNull()
+    expect(await cli.version()).toBe('2.1.10')
+  })
+})
+
+describe('fileStamp', () => {
+  it('changes with the file, and is empty without one', async () => {
+    const file = join(dir, 'claude.exe')
+    await writeFile(file, 'a')
+    const before = fileStamp(file)
+    await writeFile(file, 'ab')
+    expect(fileStamp(file)).not.toBe(before)
+    expect(fileStamp(join(dir, 'missing.exe'))).toBe('')
   })
 })

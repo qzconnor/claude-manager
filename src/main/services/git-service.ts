@@ -17,6 +17,11 @@ interface Watched {
  * repository (worktrees and submodules included), so nothing shows without git. The branch comes
  * from the HEAD file, which is watched, so a checkout in the terminal shows up right away.
  */
+/** A repository that couldn't be watched is tried again after this long. */
+const WATCH_RETRY_MS = 30_000
+/** A new `.git` is looked at once nothing changed in it for this long (`git init` writes many files). */
+const REPO_SETTLE_MS = 300
+
 export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: GitBranch | null] }> {
   /** Only hits are kept: a folder can still become a repository later. */
   private readonly gitDirs = new Map<string, string>()
@@ -24,6 +29,12 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
   private readonly watched = new Map<string, Watched>()
   /** Counts the calls of `watch`; an older one that finishes late changes nothing. */
   private generation = 0
+  /** The folders of the last `watch`. */
+  private cwds: readonly string[] = []
+  /** Folders that are no repository yet: `git init` there makes one (see `watchForRepo`). */
+  private readonly waiting = new Map<string, { watcher: FSWatcher; timer: NodeJS.Timeout | null }>()
+  private retryTimer: NodeJS.Timeout | null = null
+  private disposed = false
 
   /** Null without git, outside a repository or with an unreadable HEAD. */
   async branch(cwd: string): Promise<GitBranch | null> {
@@ -45,6 +56,8 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
    * Replaces the folders of the previous call; a folder that is no repository yet is picked up by a later one.
    */
   async watch(cwds: readonly string[]): Promise<void> {
+    if (this.disposed) return
+    this.cwds = cwds
     const generation = ++this.generation
     const found = await Promise.all([...new Set(cwds)].map(async (cwd) => [cwd, await this.gitDir(cwd)] as const))
     if (generation !== this.generation) return
@@ -52,6 +65,9 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
     for (const [cwd, gitDir] of found) {
       if (gitDir) wanted.set(gitDir, (wanted.get(gitDir) ?? new Set()).add(cwd))
     }
+    const noRepo = new Set(found.filter(([, gitDir]) => !gitDir).map(([cwd]) => cwd))
+    for (const cwd of [...this.waiting.keys()]) if (!noRepo.has(cwd)) this.stopWaiting(cwd)
+    for (const cwd of noRepo) if (!this.waiting.has(cwd)) this.watchForRepo(cwd)
     for (const gitDir of [...this.watched.keys()]) {
       if (!wanted.has(gitDir)) this.unwatch(gitDir)
     }
@@ -63,8 +79,11 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
   }
 
   dispose(): void {
+    this.disposed = true
     this.generation++
+    if (this.retryTimer) clearTimeout(this.retryTimer)
     for (const gitDir of [...this.watched.keys()]) this.unwatch(gitDir)
+    for (const cwd of [...this.waiting.keys()]) this.stopWaiting(cwd)
   }
 
   /**
@@ -117,11 +136,64 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
       const watcher = watch(gitDir, (_event, file) => {
         if (file === 'HEAD') this.scheduleRead(gitDir)
       })
-      watcher.on('error', () => this.unwatch(gitDir))
+      watcher.on('error', () => {
+        this.unwatch(gitDir)
+        this.retry()
+      })
       this.watched.set(gitDir, { cwds, watcher, timer: null })
     } catch {
-      // Not watchable: the window still asks again when it gets the focus.
+      // Not watchable now: tried again later; the window also asks again when it gets the focus.
+      this.retry()
     }
+  }
+
+  /**
+   * Waits in a folder that is no repository for its `.git` (`git init`, `git clone .`): then the
+   * folders are watched anew, and the new branch is reported.
+   */
+  private watchForRepo(cwd: string): void {
+    try {
+      const watcher = watch(cwd, (_event, file) => {
+        if (file !== '.git') return
+        const waiting = this.waiting.get(cwd)
+        if (waiting?.watcher !== watcher) return
+        // `git init` writes many files: looked at once it is done.
+        if (waiting.timer) clearTimeout(waiting.timer)
+        waiting.timer = setTimeout(() => {
+          waiting.timer = null
+          void this.gitDir(cwd).then(async (gitDir) => {
+            if (!gitDir || this.waiting.get(cwd) !== waiting) return
+            this.stopWaiting(cwd)
+            this.emit('changed', cwd, await readBranch(gitDir))
+            void this.watch(this.cwds)
+          })
+        }, REPO_SETTLE_MS)
+      })
+      watcher.on('error', () => {
+        if (this.waiting.get(cwd)?.watcher === watcher) this.stopWaiting(cwd)
+        else watcher.close()
+      })
+      this.waiting.set(cwd, { watcher, timer: null })
+    } catch {
+      // The folder is gone: nothing to wait for.
+    }
+  }
+
+  private stopWaiting(cwd: string): void {
+    const waiting = this.waiting.get(cwd)
+    if (!waiting) return
+    if (waiting.timer) clearTimeout(waiting.timer)
+    waiting.watcher.close()
+    this.waiting.delete(cwd)
+  }
+
+  /** Watches the folders of the last call again, after a watcher failed. */
+  private retry(): void {
+    if (this.disposed || this.retryTimer) return
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null
+      void this.watch(this.cwds)
+    }, WATCH_RETRY_MS)
   }
 
   private scheduleRead(gitDir: string): void {

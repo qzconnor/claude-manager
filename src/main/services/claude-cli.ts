@@ -49,6 +49,22 @@ function isFile(path: string): boolean {
   }
 }
 
+/** Claude Code wasn't found, or didn't answer: looked for (asked) again after this long. */
+export const RETRY_MS = 15_000
+
+/**
+ * The executable as it is now: an update replaces the file (or the link points to another version),
+ * so what was read from the old one no longer holds. Empty when it can't be read.
+ */
+export function fileStamp(path: string): string {
+  try {
+    const { mtimeMs, size } = statSync(path)
+    return `${path}|${mtimeMs}|${size}`
+  } catch {
+    return ''
+  }
+}
+
 /** Quotes one argument for a POSIX shell, for showing a command line. */
 export function quotePosixArg(arg: string): string {
   return arg.length > 0 && /^[\w@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", `'\\''`)}'`
@@ -134,11 +150,16 @@ function readText(file: string): string {
 }
 
 export class ClaudeCli {
-  private cachedPath: string | null | undefined
-  private cachedVersion: { path: string; version: string | null } | null = null
-  private cachedLoginEmail: { path: string; supported: boolean } | null = null
+  /** Where `claude` was found, and when it was looked for: not found, it is looked for again later. */
+  private cachedPath: { path: string | null; at: number } | undefined
+  /** Keyed by `fileStamp`: after an update the new version is asked. A failed answer is asked again later. */
+  private cachedVersion: { stamp: string; version: string | null; at: number } | null = null
+  private cachedLoginEmail: { stamp: string; supported: boolean } | null = null
 
-  constructor(private readonly getConfiguredPath: () => string) {}
+  constructor(
+    private readonly getConfiguredPath: () => string,
+    private readonly now: () => number = Date.now,
+  ) {}
 
   /** Clears the cached lookup (e.g. after the user changed the executable path). */
   invalidate(): void {
@@ -150,11 +171,12 @@ export class ClaudeCli {
   resolve(): string | null {
     const configured = this.getConfiguredPath().trim()
     if (configured) return isFile(configured) ? configured : null
-    if (this.cachedPath !== undefined && (this.cachedPath === null || existsSync(this.cachedPath))) {
-      return this.cachedPath
-    }
-    this.cachedPath = this.searchPath()
-    return this.cachedPath
+    const cached = this.cachedPath
+    if (cached && (cached.path === null ? this.now() - cached.at < RETRY_MS : existsSync(cached.path))) return cached.path
+    // Installed meanwhile, or moved: looked for anew.
+    const path = this.searchPath()
+    this.cachedPath = { path, at: this.now() }
+    return path
   }
 
   private searchPath(): string | null {
@@ -181,36 +203,39 @@ export class ClaudeCli {
   async version(): Promise<string | null> {
     const exe = this.resolve()
     if (!exe) return null
-    if (this.cachedVersion?.path === exe) return this.cachedVersion.version
+    const stamp = fileStamp(exe)
+    const cached = this.cachedVersion
+    if (cached?.stamp === stamp && (cached.version !== null || this.now() - cached.at < RETRY_MS)) return cached.version
     const stdout = await this.run(['--version'])
     const match = stdout === null ? null : /(\d+\.\d+\.\d+[^\s]*)/.exec(stdout)
     const version = match ? match[1] : stdout?.trim() || null
-    this.cachedVersion = { path: exe, version }
+    this.cachedVersion = { stamp, version, at: this.now() }
     return version
   }
 
   /** Result of {@link version} for the current executable; `null` while it is unknown. */
   knownVersion(): string | null {
     const exe = this.resolve()
-    return exe && this.cachedVersion?.path === exe ? this.cachedVersion.version : null
+    return exe && this.cachedVersion?.stamp === fileStamp(exe) ? this.cachedVersion.version : null
   }
 
   /** Checks once per executable whether `claude auth login` can pre-fill the email (`--email`). */
   async checkLoginEmail(): Promise<boolean> {
     const exe = this.resolve()
     if (!exe) return false
-    if (this.cachedLoginEmail?.path === exe) return this.cachedLoginEmail.supported
+    const stamp = fileStamp(exe)
+    if (this.cachedLoginEmail?.stamp === stamp) return this.cachedLoginEmail.supported
     const help = await this.run(['auth', 'login', '--help'])
     if (help === null) return false
     const supported = /--email\b/.test(help)
-    this.cachedLoginEmail = { path: exe, supported }
+    this.cachedLoginEmail = { stamp, supported }
     return supported
   }
 
   /** Result of {@link checkLoginEmail} for the current executable; `false` while it is unknown. */
   loginTakesEmail(): boolean {
     const exe = this.resolve()
-    return !!exe && this.cachedLoginEmail?.path === exe && this.cachedLoginEmail.supported
+    return !!exe && this.cachedLoginEmail?.stamp === fileStamp(exe) && this.cachedLoginEmail.supported
   }
 
   /** Runs `claude` with the arguments and returns its output, `null` when it fails. */
