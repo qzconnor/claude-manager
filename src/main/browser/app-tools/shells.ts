@@ -12,6 +12,11 @@ const MAX_OUTPUT_CHARS = 20_000
 /** Raw output looked at for one result: plenty for MAX_OUTPUT_CHARS of text. */
 const MAX_RAW_CHARS = 400_000
 const MAX_WAIT_SECONDS = 60
+/**
+ * While output streams in, waitFor is looked for at most this often (ms): reading the output as text
+ * after each chunk kept the main process busy with a chatty dev server.
+ */
+const CHECK_MS = 200
 /** Without waitFor, input counts as answered once the shell has been quiet this long. */
 const QUIET_MS = 1500
 const DEFAULT_QUIET_WAIT_SECONDS = 10
@@ -272,18 +277,30 @@ export class Shells {
       let end = buffer.end
       let settled = false
       let quietTimer: NodeJS.Timeout | undefined
+      let checkTimer: NodeJS.Timeout | undefined
+      let checkedAt = -Infinity
       const finish = (found: boolean, exited = false) => {
         if (settled) return
         settled = true
         clearTimeout(quietTimer)
+        clearTimeout(checkTimer)
         clearTimeout(deadline)
         offData()
         offExit()
         resolve({ raw, found, exited })
       }
+      const appeared = () => terminalText((options.unread ?? '') + raw.slice(-MAX_RAW_CHARS)).includes(options.waitFor!)
       const check = () => {
         if (options.waitFor !== undefined) {
-          if (terminalText((options.unread ?? '') + raw.slice(-MAX_RAW_CHARS)).includes(options.waitFor)) finish(true)
+          if (checkTimer) return
+          checkTimer = setTimeout(
+            () => {
+              checkTimer = undefined
+              checkedAt = Date.now()
+              if (appeared()) finish(true)
+            },
+            Math.max(0, checkedAt + CHECK_MS - Date.now()),
+          )
         } else if (options.quietMs !== undefined && raw !== '') {
           // Quiet counts from the first output on: a shell may take a moment to answer at all.
           clearTimeout(quietTimer)
@@ -294,13 +311,15 @@ export class Shells {
         if (id !== terminalId) return
         if (offset + data.length <= end) return
         raw += data.slice(Math.max(0, end - offset))
+        // Only the end counts; a dev server may print megabytes while Claude waits.
+        if (raw.length > 2 * MAX_RAW_CHARS) raw = raw.slice(-MAX_RAW_CHARS)
         end = offset + data.length
         check()
       })
       const offExit = terminals.on('exit', (id) => {
         if (id === terminalId) setTimeout(() => finish(false, true), 100)
       })
-      const deadline = setTimeout(() => finish(false), options.timeoutMs)
+      const deadline = setTimeout(() => finish(options.waitFor !== undefined && appeared()), options.timeoutMs)
       check()
     })
   }

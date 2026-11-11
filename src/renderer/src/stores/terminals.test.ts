@@ -84,12 +84,17 @@ const api = {
   },
 }
 
-async function load(list: TerminalInfo[], splits: PaneSplit[], saved?: { workspace: Workspace; order: { id: string; mode: TerminalMode }[] }) {
+async function load(
+  list: TerminalInfo[],
+  splits: PaneSplit[],
+  saved?: { workspace: Workspace; order: { id: string; mode: TerminalMode }[]; active?: string },
+  tabPosition: 'groups' | 'top' = 'groups',
+) {
   main = { list, splits }
   if (saved) storage.set('claude-manager.workspace', JSON.stringify(saved))
   const { useTerminalsStore } = await import('./terminals')
   const { useSettingsStore } = await import('./settings')
-  useSettingsStore().settings.appearance.tabPosition = 'groups'
+  useSettingsStore().settings.appearance.tabPosition = tabPosition
   const terminals = useTerminalsStore()
   await terminals.load()
   return terminals
@@ -319,6 +324,17 @@ describe('dragging a divider', () => {
     // From now on main's list counts again.
     changed(main.list, [{ ...beside('s1', 's2'), ratio: 0.6 }])
     expect(share()).toBe(0.6)
+  })
+})
+
+describe('one tab bar after the window loaded again', () => {
+  it('gives the keyboard back to the terminal that had it, not to the last tab', async () => {
+    const order = ['s1', 's2', 's3'].map((id) => ({ id, mode: 'session' as const }))
+    const saved = { workspace: { layout: 'g1', groups: [{ id: 'g1', tabs: ['s1', 's2', 's3'], active: 's1' }], activeGroup: 'g1' }, order, active: 's2' }
+    const terminals = await load([terminal('s1'), terminal('s2'), terminal('s3')], [], saved, 'top')
+    expect(terminals.activeId).toBe('s2')
+    // And keeps it for the next time.
+    expect(JSON.parse(storage.get('claude-manager.workspace')!).active).toBe('s2')
   })
 })
 

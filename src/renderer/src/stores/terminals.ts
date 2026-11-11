@@ -88,6 +88,8 @@ interface SavedWorkspace {
   workspace: Workspace
   /** The terminals in the order main restores them, with their mode: after a restart they have new ids. */
   order: { id: string; mode: TerminalInfo['mode'] }[]
+  /** The terminal with the keyboard: in one tab bar the groups don't tell it. */
+  active?: string | null
 }
 
 /** A copy without Vue's proxies, which IPC can't send. */
@@ -596,7 +598,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
    * The groups of the last run, their terminals found again by their order if they have new ids; with
    * the old ids mapped to the new ones.
    */
-  function restore(list: TerminalInfo[]): { workspace: Workspace; ids: Map<string, string> } | null {
+  function restore(list: TerminalInfo[]): { workspace: Workspace; ids: Map<string, string>; active: string | null } | null {
     let saved: SavedWorkspace | null = null
     try {
       saved = JSON.parse(savedAtStart ?? 'null') as SavedWorkspace | null
@@ -630,7 +632,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
     const modes = new Map(list.map((t) => [t.id, t.mode]))
     const sessionBack = [...map.values()].some((id) => modes.get(id) !== 'browser')
     const kept = (tab: string) => (tab === BROWSER_TAB ? sessionBack : isViewTab(tab))
-    return { workspace: mapTabs(ws, (tab) => (kept(tab) ? tab : (map.get(tab) ?? null))), ids: map }
+    const active = typeof saved.active === 'string' ? (map.get(saved.active) ?? null) : null
+    return { workspace: mapTabs(ws, (tab) => (kept(tab) ? tab : (map.get(tab) ?? null))), ids: map, active }
   }
 
   /** Set once the terminals are loaded; the setting loads before them. */
@@ -652,6 +655,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
       if (restored) knownPages.add(terminal.id)
     }
     sync(list, layouts)
+    // In one tab bar the terminal that had the keyboard gets it back, not the last tab; groups know theirs.
+    if (!grouped.value && restored?.active && byId.value.has(restored.active)) focus(restored.active)
     loaded = true
     restoredIds.value = restored?.ids ?? new Map()
   }
@@ -661,11 +666,11 @@ export const useTerminalsStore = defineStore('terminals', () => {
   window.api.app.onQuitting(() => (quitting = true))
 
   // The groups are kept for the next start, in both ways of showing tabs, so they can come back.
-  watch([workspace, mainOrder], ([ws, order]) => {
+  watch([workspace, mainOrder, activeId], ([ws, order, active]) => {
     // Before the terminals are loaded the layout is still empty: the one of the last run must stay.
     if (quitting || !loaded) return
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ workspace: ws, order } satisfies SavedWorkspace))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ workspace: ws, order, active } satisfies SavedWorkspace))
     } catch {
       // Storage full or blocked: the layout is just not kept.
     }

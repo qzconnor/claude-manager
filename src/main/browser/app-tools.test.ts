@@ -9,6 +9,19 @@ import { shellName } from './app-tools/shells'
 import { terminalText } from './app-tools/terminal-text'
 import { type AppToolsDeps, localTime, relative } from './app-tools/tool'
 
+/** How often the output was read as text: waiting for a text must not do it for every chunk. */
+const textReads = vi.hoisted(() => ({ count: 0 }))
+vi.mock('./app-tools/terminal-text', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./app-tools/terminal-text')>()
+  return {
+    ...actual,
+    terminalText: (raw: string) => {
+      textReads.count++
+      return actual.terminalText(raw)
+    },
+  }
+})
+
 describe('terminalText', () => {
   it('drops colors, titles and modes', () => {
     expect(terminalText('\x1b]0;pwsh\x07\x1b[?25l\x1b[32mgreen\x1b[0m text\x1b[?25h')).toBe('green text')
@@ -290,6 +303,17 @@ describe('AppTools', () => {
     terminals.print('shell-1', 'later line\r\n')
     expect(await text(tools.call('session-1', 'shell_output', { id: 1 }))).toContain('later line')
     await expect(tools.call('session-2', 'shell_input', { id: 1, text: 'x' })).rejects.toThrow('You have no shell tabs open.')
+  })
+
+  it('looks for waitFor only now and then while a chatty shell streams', async () => {
+    await text(tools.call('session-1', 'shell_open', {}))
+    const waiting = tools.call('session-1', 'shell_output', { id: 1, waitFor: 'READY', timeout: 10 })
+    await vi.advanceTimersByTimeAsync(0)
+    textReads.count = 0
+    for (let i = 0; i < 1000; i++) terminals.print('shell-1', `compiled module ${i}\r\n`)
+    terminals.print('shell-1', 'READY in 300 ms\r\n')
+    expect(await text(waiting)).toContain('"READY" appeared.')
+    expect(textReads.count).toBeLessThan(10)
   })
 
   it('opens the next shell below the last one and forgets closed ones', async () => {
