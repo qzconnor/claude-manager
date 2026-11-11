@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createDefaultSettings } from '@shared/defaults'
 import type { ClaudeSettings } from '@shared/types'
-import { allowedToolNames, mcpConfig, mcpLaunchArgs } from './mcp-server'
+import { allowedToolNames, askedAgain, mcpConfig, mcpLaunchArgs } from './mcp-server'
 import { pageCall } from './page-scripts'
 
 describe('mcpLaunchArgs', () => {
@@ -52,6 +52,16 @@ describe('allowedToolNames', () => {
   it('leaves out switched off tools of the app, and all of them before the app has them', () => {
     expect(allowedToolNames(claude({ limitsTool: false, sessionsTool: false, themesTool: false }), [], true)).toEqual([])
     expect(allowedToolNames(claude(), browser, false)).toEqual(browser)
+  })
+})
+
+describe('askedAgain', () => {
+  it('asks for a tool allowed at the start of the session that the settings no longer allow', () => {
+    const atStart = new Set(['browser_click', 'limits'])
+    expect(askedAgain('browser_click', atStart, ['limits'])).toBe(true)
+    expect(askedAgain('browser_click', atStart, ['browser_click', 'limits'])).toBe(false)
+    // Claude Code asks for it itself.
+    expect(askedAgain('shell_input', atStart, [])).toBe(false)
   })
 })
 

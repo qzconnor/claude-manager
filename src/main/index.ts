@@ -120,6 +120,8 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   const usage = new UsageService(accounts, settings, indexer, userDataDir, userAgent)
   await usage.init()
   // The server's tools for the app itself (limits, earlier sessions, themes, shells), before the tabs are restored.
+  // A session started with tools allowed without asking: once that is switched off, the app asks.
+  browserMcp.setAsk((options) => trust.ask(options))
   browserMcp.setAppTools(new AppTools({ terminals, usage, sessions, accounts, settings, themes }))
   const autoSwitch = new AutoSwitch(accounts, terminals, usage, settings, handoff)
   autoSwitch.init()
