@@ -463,16 +463,18 @@ describe('TerminalRestore while running', () => {
     }
   })
 
-  it('does not start following when disposed while restoring', async () => {
-    await writeFile(file, JSON.stringify([{ accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'session', sessionId: S1, title: 'T' }]))
+  it('starts nothing more and does not start following when disposed while restoring', async () => {
+    const tab = { accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'session', sessionId: S1, title: 'T' }
+    await writeFile(file, JSON.stringify([tab, { ...tab, sessionId: S2 }, { mode: 'browser', url: 'https://example.com/', title: 'B', fixedTitle: false }]))
     const service = start()
     const init = service.init()
     service.dispose()
     await init
-    expect(create).toHaveBeenCalledOnce()
+    expect(create).not.toHaveBeenCalled()
+    expect(openBrowser).not.toHaveBeenCalled()
     terminalList = []
     terminalEvents.fire('changed', terminalList)
     // The tabs of the last run are still there for the next start.
-    expect(await readSaved()).toHaveLength(1)
+    expect(await readSaved()).toHaveLength(3)
   })
 })

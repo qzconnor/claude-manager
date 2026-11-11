@@ -123,6 +123,7 @@ export class TerminalRestore {
     this.pending = []
     const failed: RestoreFailure[] = []
     for (const { tab } of pending) {
+      if (this.disposed) break
       const result = await this.openTerminal(tab)
       if (typeof result === 'string') {
         this.pending.push({ tab, reason: result })
@@ -139,6 +140,8 @@ export class TerminalRestore {
     /** Index in the file → id of the terminal opened for it. */
     const opened = new Map<string, string>()
     for (const [index, tab] of saved.entries()) {
+      // The app quits: nothing more starts, the file keeps the tabs for the next start.
+      if (this.disposed) return
       if (isSavedBrowser(tab)) {
         const info = this.terminals.openBrowser({ url: tab.url, title: tab.fixedTitle ? tab.title : null, restoredFrom: savedId(tab) })
         opened.set(String(index), info.id)
@@ -184,6 +187,8 @@ export class TerminalRestore {
     const cwd = located?.cwd ?? tab.cwd
     // Checked without blocking first: starting the terminal looks at the folder synchronously.
     const folder = cwd ? await folderState(cwd) : 'ok'
+    // The app began to quit while this tab waited for its folder.
+    if (this.disposed) return null
     if (folder === 'missing') return `Den Ordner „${cwd}“ gibt es nicht.`
     if (folder === 'unreachable') return `Der Ordner „${cwd}“ war nicht erreichbar.`
     try {
