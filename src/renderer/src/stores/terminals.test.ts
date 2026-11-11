@@ -290,3 +290,28 @@ describe('changes beside a session', () => {
     expect(terminals.groups[0].active).toBe('s1')
   })
 })
+
+describe('the groups of the last run', () => {
+  it('come back although main reports its terminals before the window loaded them', async () => {
+    const saved: Workspace = {
+      layout: beside('g1', 'g2'),
+      groups: [
+        { id: 'g1', tabs: ['s1'], active: 's1' },
+        { id: 'g2', tabs: ['s2'], active: 's2' },
+      ],
+      activeGroup: 'g2',
+    }
+    const order = [
+      { id: 's1', mode: 'session' as const },
+      { id: 's2', mode: 'session' as const },
+    ]
+    // A terminal starts working while the window still loads: main reports all of them.
+    api.terminals.list.mockImplementationOnce(async () => {
+      changed(main.list, main.splits)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      return main.list
+    })
+    const terminals = await load([terminal('s1'), terminal('s2')], [], { workspace: saved, order })
+    expect(tabsOf(terminals)).toEqual([['s1'], ['s2']])
+  })
+})

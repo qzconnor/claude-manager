@@ -74,6 +74,14 @@ type Placement = { beside: string; side: PaneDirection } | { before: string } | 
 
 const STORAGE_KEY = 'claude-manager.workspace'
 
+function readSaved(): string | null {
+  try {
+    return localStorage.getItem(STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
 interface SavedWorkspace {
   workspace: Workspace
   /** The terminals in the order main restores them, with their mode: after a restart they have new ids. */
@@ -575,7 +583,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
   function restore(list: TerminalInfo[]): { workspace: Workspace; ids: Map<string, string> } | null {
     let saved: SavedWorkspace | null = null
     try {
-      saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null') as SavedWorkspace | null
+      saved = JSON.parse(savedAtStart ?? 'null') as SavedWorkspace | null
     } catch {
       return null
     }
@@ -604,6 +612,11 @@ export const useTerminalsStore = defineStore('terminals', () => {
 
   /** Set once the terminals are loaded; the setting loads before them. */
   let loaded = false
+  /**
+   * The groups of the last run as the window found them: read before anything can change them, since
+   * main may report its terminals before they are loaded.
+   */
+  const savedAtStart = readSaved()
 
   async function load(): Promise<void> {
     const [list, layouts] = await Promise.all([window.api.terminals.list(), window.api.terminals.layouts()])
@@ -626,7 +639,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
 
   // The groups are kept for the next start, in both ways of showing tabs, so they can come back.
   watch([workspace, mainOrder], ([ws, order]) => {
-    if (quitting) return
+    // Before the terminals are loaded the layout is still empty: the one of the last run must stay.
+    if (quitting || !loaded) return
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ workspace: ws, order } satisfies SavedWorkspace))
     } catch {
@@ -1094,7 +1108,10 @@ export const useTerminalsStore = defineStore('terminals', () => {
     if (byId.value.has(oldId) || groupOfTab(workspace.value, oldId)) replace(oldId, info, activeId.value === oldId)
   })
 
-  window.api.terminals.onChanged((next, layouts) => sync(next, layouts))
+  // Before `load` the list is not taken in: `load` gets the current one and restores the groups with it.
+  window.api.terminals.onChanged((next, layouts) => {
+    if (loaded) sync(next, layouts)
+  })
 
   function onReplaced(listener: (oldId: string, newId: string) => void): () => void {
     replacedListeners.add(listener)
