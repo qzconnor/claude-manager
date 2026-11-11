@@ -23,6 +23,8 @@ const api: ManagerApi = {
     missingFolders: (paths) => invoke(IpcInvoke.appMissingFolders, paths),
     listFonts: () => invoke(IpcInvoke.appListFonts),
     clipboardHasImage: () => invoke(IpcInvoke.appClipboardHasImage),
+    screenReader: () => invoke(IpcInvoke.appScreenReader),
+    onScreenReader: (cb) => subscribe(IpcEvent.appScreenReader, cb),
     pathForFile: (file) => webUtils.getPathForFile(file),
   },
   window: {

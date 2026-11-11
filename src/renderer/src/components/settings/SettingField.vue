@@ -17,7 +17,8 @@ const filter = useSettingsFilter()
   <Field v-if="filter.shows(anchor)" orientation="horizontal" class="gap-6" :data-setting="anchor">
     <FieldContent>
       <!-- One span: the label is a flex box and would put gaps between the marked parts. -->
-      <FieldLabel :for="$props.for"><span><HighlightText :text="label" :terms="filter.terms.value" /></span></FieldLabel>
+      <!-- Its id names controls a label can't name with `for`, such as a slider (see SliderControl). -->
+      <FieldLabel :id="$props.for ? `${$props.for}-label` : undefined" :for="$props.for"><span><HighlightText :text="label" :terms="filter.terms.value" /></span></FieldLabel>
       <FieldDescription v-if="description"><HighlightText :text="description" :terms="filter.terms.value" /></FieldDescription>
     </FieldContent>
     <div class="flex shrink-0 items-center justify-end gap-2" data-setting-control>

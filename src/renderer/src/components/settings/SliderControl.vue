@@ -2,7 +2,10 @@
 import { computed } from 'vue'
 import { Slider } from '@/components/ui/slider'
 
-/** Slider bound to a single number, with the formatted value next to it. */
+/**
+ * Slider bound to a single number, with the formatted value next to it. In a SettingField with the same
+ * `for` as its `id`, the field's label names it for screen readers.
+ */
 const props = defineProps<{
   id?: string
   min: number
@@ -23,7 +26,15 @@ const label = computed(() => (props.format ? props.format(model.value) : String(
 
 <template>
   <div class="flex w-64 items-center gap-3">
-    <Slider :id="id" v-model="sliderValue" :min="min" :max="max" :step="step ?? 1" class="flex-1" />
+    <Slider
+      :id="id"
+      v-model="sliderValue"
+      :min="min"
+      :max="max"
+      :step="step ?? 1"
+      :thumb-attrs="{ 'aria-labelledby': id && `${id}-label`, 'aria-valuetext': label }"
+      class="flex-1"
+    />
     <span class="w-12 text-right text-xs text-muted-foreground tabular-nums">{{ label }}</span>
   </div>
 </template>

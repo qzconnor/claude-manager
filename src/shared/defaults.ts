@@ -90,6 +90,7 @@ export function createDefaultSettings(platform = 'win32'): AppSettings {
       backgroundOpacity: 0,
       renderer: 'webgl',
       unicode: 'graphemes',
+      screenReader: 'auto',
       copyOnSelect: false,
       rightClickPaste: true,
       multiLinePasteWarning: true,

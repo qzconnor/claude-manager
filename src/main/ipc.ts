@@ -222,6 +222,9 @@ export function registerIpc(ctx: AppContext): void {
   handle(IpcInvoke.appClipboardHasImage, async () =>
     (await clipboard.read()).some((item) => item.types.some((type) => type.startsWith('image/'))),
   )
+  // Chromium turns its accessibility support on when a screen reader asks for it (and Electron when told to).
+  handle(IpcInvoke.appScreenReader, () => app.isAccessibilitySupportEnabled())
+  app.on('accessibility-support-changed', (_event, enabled) => broadcast(IpcEvent.appScreenReader, enabled))
 
   // --- window --------------------------------------------------------------
   handle(IpcInvoke.windowMinimize, (event) => senderWindow(event).minimize())

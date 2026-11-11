@@ -67,6 +67,7 @@ export const IpcInvoke = {
   appMissingFolders: 'app:missing-folders',
   appListFonts: 'app:list-fonts',
   appClipboardHasImage: 'app:clipboard-has-image',
+  appScreenReader: 'app:screen-reader',
 
   windowMinimize: 'window:minimize',
   windowToggleMaximize: 'window:toggle-maximize',
@@ -214,6 +215,7 @@ export const IpcEvent = {
   windowState: 'event:window-state',
   /** The app quits: the terminals close next, which the window mustn't take for closing them by hand. */
   appQuitting: 'event:app-quitting',
+  appScreenReader: 'event:app-screen-reader',
   settingsChanged: 'event:settings-changed',
   accountsChanged: 'event:accounts-changed',
   terminalsChanged: 'event:terminals-changed',
@@ -292,6 +294,9 @@ export interface ManagerApi {
     listFonts(): Promise<string[]>
     /** Whether the clipboard holds an image, e.g. a screenshot. */
     clipboardHasImage(): Promise<boolean>
+    /** Whether the system reports a screen reader (Chromium's accessibility support is on). */
+    screenReader(): Promise<boolean>
+    onScreenReader(cb: (active: boolean) => void): Unsubscribe
     /** Path of a file dragged into the window; empty for files that don't exist on disk. */
     pathForFile(file: File): string
   }

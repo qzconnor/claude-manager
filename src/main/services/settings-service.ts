@@ -255,6 +255,7 @@ function sanitize(s: AppSettings, fallback: AppSettings = createDefaultSettings(
   s.terminal.cursorStyle = cursors.includes(s.terminal.cursorStyle) ? s.terminal.cursorStyle : d.terminal.cursorStyle
   s.terminal.renderer = s.terminal.renderer === 'dom' ? 'dom' : 'webgl'
   s.terminal.unicode = s.terminal.unicode === 'unicode11' ? 'unicode11' : 'graphemes'
+  s.terminal.screenReader = s.terminal.screenReader === 'on' || s.terminal.screenReader === 'off' ? s.terminal.screenReader : 'auto'
   s.terminal.panelBackground = panelBackgrounds.includes(s.terminal.panelBackground)
     ? s.terminal.panelBackground
     : d.terminal.panelBackground

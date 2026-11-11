@@ -24,6 +24,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import type { TerminalPalette } from '@shared/themes/types'
+import { useScreenReader } from './useScreenReader'
 import { buildFontStack, ensureFontLoaded, useTerminalAppearance } from './useTerminalAppearance'
 
 export interface UseTerminalOptions {
@@ -218,6 +219,7 @@ function forgetCachedLinks(term: Terminal): void {
 export function useTerminal(options: UseTerminalOptions) {
   const { terminalId, claudeSession, container, active } = options
   const settingsStore = useSettingsStore()
+  const screenReader = useScreenReader()
   const appStore = useAppStore()
   const terminalsStore = useTerminalsStore()
   const ui = useUiStore()
@@ -595,6 +597,7 @@ export function useTerminal(options: UseTerminalOptions) {
     setSlotTints(slotTints.value)
     term = new Terminal({
       ...terminalOptions(s, palette.value, slotTints.value),
+      screenReaderMode: screenReader.value,
       allowProposedApi: true,
       allowTransparency: true,
       customGlyphs: true,
@@ -788,6 +791,11 @@ export function useTerminal(options: UseTerminalOptions) {
       fit()
     },
   )
+
+  // The output as text for a screen reader, once the setting or the system asks for it.
+  watch(screenReader, (on) => {
+    if (term) term.options.screenReaderMode = on
+  })
 
   onBeforeUnmount(() => {
     disposed = true

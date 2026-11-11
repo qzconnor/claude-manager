@@ -127,6 +127,7 @@ const TREE = [
           { id: 'terminal.copyOnSelect', label: 'Beim Markieren kopieren', keywords: 'Auswahl Zwischenablage' },
           { id: 'terminal.rightClickPaste', label: 'Rechtsklick kopiert / fügt ein', keywords: 'einfügen Maus Zwischenablage' },
           { id: 'terminal.multiLinePasteWarning', label: 'Vor mehrzeiligem Einfügen warnen', keywords: 'einfügen Zeilen Zwischenablage Befehle Sicherheit' },
+          { id: 'terminal.screenReader', label: 'Screenreader', keywords: 'Barrierefreiheit Sprachausgabe vorlesen NVDA JAWS Orca blind' },
           { id: 'terminal.scrollback', label: 'Scrollback', keywords: 'Zeilen Verlauf Puffer' },
         ],
       },

@@ -746,6 +746,8 @@ export type WindowMaterial = 'acrylic' | 'mica' | 'tabbed' | 'none'
 export type CursorStyle = 'block' | 'bar' | 'underline'
 export type TerminalRenderer = 'webgl' | 'dom'
 export type UnicodeMode = 'graphemes' | 'unicode11'
+/** Whether the terminals are readable for screen readers: while the system reports one (`auto`), always or never. */
+export type ScreenReaderMode = 'auto' | 'on' | 'off'
 /**
  * Background of Claude Code's side panels such as /diff and of the bars behind the user's own
  * messages in the transcript. `theme`: a see-through tint of the terminal theme's text color,
@@ -809,6 +811,8 @@ export interface TerminalSettings {
   unicode: UnicodeMode
   copyOnSelect: boolean
   rightClickPaste: boolean
+  /** xterm's screen reader mode: the output as text a screen reader reads (NVDA, JAWS, Narrator, Orca). */
+  screenReader: ScreenReaderMode
   /** Asks before pasted text with line breaks goes to a program that would run each line at once. */
   multiLinePasteWarning: boolean
   /** Use a terminal color scheme different from the app theme (theme id) or `null` to follow the app theme. */

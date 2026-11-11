@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { CursorStyle, DiffColors, LogoColor, PanelBackground, TerminalPadding, TerminalRenderer, TerminalSettings, UnicodeMode } from '@shared/types'
+import type { CursorStyle, DiffColors, LogoColor, PanelBackground, ScreenReaderMode, TerminalPadding, TerminalRenderer, TerminalSettings, UnicodeMode } from '@shared/types'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -50,6 +50,7 @@ const unicode = t('unicode')
 const copyOnSelect = t('copyOnSelect')
 const rightClickPaste = t('rightClickPaste')
 const multiLinePasteWarning = t('multiLinePasteWarning')
+const screenReader = t('screenReader')
 const minimumContrastRatio = t('minimumContrastRatio', 150)
 const colorSchemeId = t('colorSchemeId')
 const panelBackground = t('panelBackground')
@@ -70,6 +71,11 @@ const RENDERERS: { value: TerminalRenderer; label: string }[] = [
 const UNICODE_VERSIONS: { value: UnicodeMode; label: string }[] = [
   { value: 'graphemes', label: 'Unicode 15' },
   { value: 'unicode11', label: 'Unicode 11' },
+]
+const SCREEN_READER: { value: ScreenReaderMode; label: string }[] = [
+  { value: 'auto', label: 'Automatisch' },
+  { value: 'on', label: 'An' },
+  { value: 'off', label: 'Aus' },
 ]
 const PANEL_BACKGROUNDS: { value: PanelBackground; label: string }[] = [
   { value: 'theme', label: 'Theme' },
@@ -102,6 +108,10 @@ function onRenderer(value: unknown) {
 }
 function onUnicode(value: unknown) {
   if (value === 'graphemes' || value === 'unicode11') unicode.value = value
+}
+function onScreenReader(value: unknown) {
+  const match = SCREEN_READER.find((option) => option.value === value)
+  if (match) screenReader.value = match.value
 }
 // Template refs are auto-unwrapped, so each select gets its own handler.
 function parseWeight(value: unknown): number | null {
@@ -290,6 +300,13 @@ function onScheme(value: unknown) {
         description="Wie in Windows Terminal: fragt nach, bevor Text mit Zeilenumbrüchen in eine Shell geht, die jede Zeile sofort ausführen würde."
       >
         <Switch id="terminal-multi-line-paste" v-model="multiLinePasteWarning" />
+      </SettingField>
+      <SettingField
+        anchor="terminal.screenReader"
+        label="Screenreader"
+        description="Gibt die Ausgabe als Text an Screenreader wie NVDA, JAWS, die Sprachausgabe oder Orca. Automatisch: sobald das System einen Screenreader meldet."
+      >
+        <SegmentedControl :model-value="screenReader" :options="SCREEN_READER" aria-label="Screenreader" @update:model-value="onScreenReader" />
       </SettingField>
       <SettingField anchor="terminal.scrollback" for="terminal-scrollback" label="Scrollback" description="Anzahl Zeilen, die pro Terminal gehalten werden.">
         <NumberControl id="terminal-scrollback" v-model="scrollback" :min="500" :max="200000" :step="1000" />
