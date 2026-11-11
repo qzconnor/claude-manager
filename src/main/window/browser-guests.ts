@@ -51,7 +51,7 @@ function setupBrowserSession(): void {
     return browserPermissions.decide(contents, permission, mediaTypes, requestingOrigin) ?? ALLOWED_PERMISSIONS.has(permission)
   })
   // Files go to the downloads folder right away; Electron would ask where, in a window of its own.
-  ses.on('will-download', (_event, item, contents) => browserDownloads.add(item, contents))
+  ses.on('will-download', (event, item, contents) => browserDownloads.add(item, contents, () => event.preventDefault()))
 }
 
 /** Lets the window hold browser pages, and only as browser-policy.ts allows them. */

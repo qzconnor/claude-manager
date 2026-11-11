@@ -269,6 +269,10 @@ export interface BrowserDownload {
   totalBytes: number
   /** ISO time. */
   startedAt: string
+  /** Opening it runs it (a program, installer or script): the list asks first. */
+  executable: boolean
+  /** The browser refused it, e.g. one of too many a page started at once. */
+  refused: boolean
 }
 
 /** What the user can do with a download in the list. */
