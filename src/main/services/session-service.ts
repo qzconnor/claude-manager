@@ -10,6 +10,7 @@ import type {
   SessionSummary,
   TranscriptToolDetail,
 } from '@shared/types'
+import { CONVERSATION_PAGE_MESSAGES } from '@shared/defaults'
 import { folderKey, windowsPath } from '@shared/folders'
 import { liveSessionIds, sessionFiles } from '../lib/session-files'
 import { moveSession, moveSessions } from '../lib/session-move'
@@ -22,7 +23,8 @@ import type { TerminalService } from './terminal-service'
 
 type Events = { changed: [accountId: string] }
 
-const MAX_CONVERSATION_MESSAGES = 600
+/** The most messages of a history the window gets at once, however many it asks for. */
+const MAX_CONVERSATION_MESSAGES = 100_000
 /** Hits per account; a search with more is too vague to go through all of them. */
 const MAX_SEARCH_HITS = 200
 const TOOL_USE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
@@ -101,7 +103,8 @@ export class SessionService extends TypedEmitter<Events> {
     )
   }
 
-  async get(accountId: string, sessionId: string): Promise<SessionDetail> {
+  /** The session with the newest `limit` messages of its history. */
+  async get(accountId: string, sessionId: string, limit = CONVERSATION_PAGE_MESSAGES): Promise<SessionDetail> {
     // Re-scan first (cheap thanks to the worker cache) so the summary and file path are current.
     const [group] = await this.list(accountId)
     const summary = group?.sessions.find((s) => s.id === sessionId)
@@ -110,9 +113,9 @@ export class SessionService extends TypedEmitter<Events> {
     const conversation = await this.indexer.request<ConversationResult>({
       method: 'readConversation',
       filePath,
-      maxMessages: MAX_CONVERSATION_MESSAGES,
+      maxMessages: Math.max(1, Math.min(Math.floor(limit), MAX_CONVERSATION_MESSAGES)),
     })
-    return { summary, messages: conversation.messages, truncated: conversation.truncated }
+    return { summary, messages: conversation.messages, truncated: conversation.truncated, total: conversation.total }
   }
 
   /** Full-text search through the conversations of all accounts (see the indexer's search index). */

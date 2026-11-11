@@ -46,4 +46,5 @@ export interface TranscriptSearchHit {
 export interface ConversationResult {
   messages: TranscriptMessage[]
   truncated: boolean
+  total: number
 }

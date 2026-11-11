@@ -48,8 +48,10 @@ const props = defineProps<{
   summary: SessionSummary
   detail: SessionDetail | null
   loading: boolean
+  loadingOlder?: boolean
   error: string | null
 }>()
+defineEmits<{ loadOlder: [] }>()
 
 const app = useAppStore()
 const ui = useUiStore()
@@ -211,8 +213,11 @@ async function copyId() {
         v-else
         :messages="detail.messages"
         :truncated="detail.truncated"
+        :total="detail.total"
+        :loading-older="loadingOlder"
         :account-id="detail.summary.accountId"
         :session-id="detail.summary.id"
+        @load-older="$emit('loadOlder')"
       />
     </div>
   </div>

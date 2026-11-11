@@ -2,6 +2,9 @@ import type { AppSettings } from './types'
 
 export const SYSTEM_ACCOUNT_ID = 'system'
 
+/** The newest messages of a session's history shown at first, and how many more each „Ältere laden“ brings. */
+export const CONVERSATION_PAGE_MESSAGES = 600
+
 /**
  * Fonts appended to the user's terminal font so emoji and symbols always render.
  * The Nerd Font entries provide prompt icons (Starship, oh-my-posh) when one of them is installed.

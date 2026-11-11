@@ -184,6 +184,7 @@ export const schemas: Record<string, Schema> = {
     summary: ref('SessionSummary'),
     messages: arrayOf(ref('TranscriptMessage')),
     truncated: { type: 'boolean', description: 'true, wenn nur die neuesten Nachrichten enthalten sind' },
+    total: { type: 'integer', minimum: 0, description: 'Alle Nachrichten der Session, auch die nicht enthaltenen' },
   }),
   SessionLimit: object({
     type: { ...nullable(str), description: 'z. B. five_hour, seven_day' },

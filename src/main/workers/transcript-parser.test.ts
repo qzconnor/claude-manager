@@ -467,6 +467,7 @@ describe('readConversation', () => {
   it('builds the conversation with tool calls and their outcome', () => {
     expect(readConversation(conversation, 100)).toEqual({
       truncated: false,
+      total: 6,
       messages: [
         { uuid: 'u1', role: 'user', timestamp: '2026-11-06T10:00:00.000Z', text: 'Fix the tests', tools: [], model: null },
         {
@@ -503,8 +504,9 @@ describe('readConversation', () => {
   })
 
   it('keeps the latest messages when there are too many', () => {
-    const { messages, truncated } = readConversation(conversation, 2)
+    const { messages, truncated, total } = readConversation(conversation, 2)
     expect(truncated).toBe(true)
+    expect(total).toBe(6)
     expect(messages.map((m) => m.uuid)).toEqual(['s1', 'u4'])
     expect(readConversation(conversation, 6).truncated).toBe(false)
   })

@@ -294,6 +294,18 @@ describe('session and usage routes', () => {
     expect(app.sessions.get).not.toHaveBeenCalled()
   })
 
+  it('passes limit on and refuses one that is not a positive integer', async () => {
+    const app = fakeApp()
+    await call(app, 'GET', `/api/v1/sessions/system/${SESSION_ID}?limit=1500`)
+    expect(app.sessions.get).toHaveBeenLastCalledWith('system', SESSION_ID, 1500)
+    await call(app, 'GET', `/api/v1/sessions/system/${SESSION_ID}`)
+    expect(app.sessions.get).toHaveBeenLastCalledWith('system', SESSION_ID, undefined)
+    app.sessions.get.mockClear()
+    await expectStatus(call(app, 'GET', `/api/v1/sessions/system/${SESSION_ID}?limit=0`), 400)
+    await expectStatus(call(app, 'GET', `/api/v1/sessions/system/${SESSION_ID}?limit=abc`), 400)
+    expect(app.sessions.get).not.toHaveBeenCalled()
+  })
+
   it('turns a missing session into 404', async () => {
     const app = fakeApp()
     app.sessions.get.mockRejectedValueOnce(new Error('Session nicht gefunden.'))

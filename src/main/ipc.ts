@@ -396,8 +396,12 @@ export function registerIpc(ctx: AppContext): void {
   handle(IpcInvoke.sessionsList, (_e, accountId?: unknown) =>
     ctx.sessions.list(typeof accountId === 'string' ? accountId : undefined),
   )
-  handle(IpcInvoke.sessionsGet, (_e, accountId: unknown, sessionId: unknown) =>
-    ctx.sessions.get(requireString(accountId, 'accountId'), requireString(sessionId, 'sessionId')),
+  handle(IpcInvoke.sessionsGet, (_e, accountId: unknown, sessionId: unknown, limit: unknown) =>
+    ctx.sessions.get(
+      requireString(accountId, 'accountId'),
+      requireString(sessionId, 'sessionId'),
+      typeof limit === 'number' && Number.isSafeInteger(limit) && limit > 0 ? limit : undefined,
+    ),
   )
   handle(IpcInvoke.sessionsToolCall, (_e, accountId: unknown, sessionId: unknown, toolUseId: unknown) =>
     ctx.sessions.toolCall(

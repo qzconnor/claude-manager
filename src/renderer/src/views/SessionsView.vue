@@ -191,7 +191,7 @@ const terms = computed(() => searchTerms(query.value))
 /** Matches in the conversations; titles and prompts are searched right here. */
 const { hits, searching, error: searchError } = useSessionSearch(query)
 const selected = ref<SessionRef | null>(null)
-const { detail, summary, loading, error } = useSessionDetail(selected)
+const { detail, summary, loading, loadingOlder, error, loadOlder } = useSessionDetail(selected)
 
 /** Searching or filtering by age or size: then the folders with matches open by themselves. */
 const filtering = computed(() => terms.value.length > 0 || age.value !== null || size.value !== null)
@@ -854,7 +854,15 @@ onActivated(() => {
     </aside>
 
     <section class="min-w-0 flex-1">
-      <SessionDetailPanel v-if="summary" :summary="summary" :detail="detail" :loading="loading" :error="error" />
+      <SessionDetailPanel
+        v-if="summary"
+        :summary="summary"
+        :detail="detail"
+        :loading="loading"
+        :loading-older="loadingOlder"
+        :error="error"
+        @load-older="loadOlder"
+      />
       <Empty v-else class="size-full">
         <EmptyHeader>
           <EmptyMedia variant="icon">

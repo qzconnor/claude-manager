@@ -119,7 +119,7 @@ const api: ManagerApi = {
   },
   sessions: {
     list: (accountId) => invoke(IpcInvoke.sessionsList, accountId),
-    get: (accountId, sessionId) => invoke(IpcInvoke.sessionsGet, accountId, sessionId),
+    get: (accountId, sessionId, limit) => invoke(IpcInvoke.sessionsGet, accountId, sessionId, limit),
     toolCall: (accountId, sessionId, toolUseId) => invoke(IpcInvoke.sessionsToolCall, accountId, sessionId, toolUseId),
     search: (query) => invoke(IpcInvoke.sessionsSearch, query),
     continueWith: (accountId, sessionId, targetAccountId) =>

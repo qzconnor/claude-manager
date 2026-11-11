@@ -631,8 +631,12 @@ export interface TranscriptMessage {
 
 export interface SessionDetail {
   summary: SessionSummary
+  /** The newest messages, up to the number asked for. */
   messages: TranscriptMessage[]
+  /** Older messages weren't sent along. */
   truncated: boolean
+  /** All messages of the history. */
+  total: number
 }
 
 // ---------------------------------------------------------------------------

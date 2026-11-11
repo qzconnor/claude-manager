@@ -196,15 +196,19 @@ export const routes: Route[] = [
     doc: {
       tag: 'Sessions',
       summary: 'Verlauf einer Session',
-      description: 'Nachrichten als Markdown; bei sehr langen Sessions nur der neueste Teil.',
+      description: 'Nachrichten als Markdown; bei sehr langen Sessions nur der neueste Teil (`limit`).',
       pathParams: [accountIdParam, { name: 'sessionId', description: 'Session-ID (UUID)' }],
+      queryParams: [
+        { name: 'limit', description: 'Höchstens so viele neueste Nachrichten (Standard 600)', schema: { type: 'integer', minimum: 1 } },
+      ],
       response: { description: 'Session', schema: ref('SessionDetail') },
     },
     handler: async (ctx) => {
       requireAccount(ctx, ctx.params.accountId)
       if (!SESSION_ID_RE.test(ctx.params.sessionId)) throw new HttpError(400, 'Ungültige Session-ID.')
+      const limit = queryInteger(ctx.query, 'limit', 1, 100_000)
       try {
-        return await ctx.app.sessions.get(ctx.params.accountId, ctx.params.sessionId)
+        return await ctx.app.sessions.get(ctx.params.accountId, ctx.params.sessionId, limit)
       } catch (error) {
         throw new HttpError(404, error instanceof Error ? error.message : 'Session nicht gefunden.')
       }

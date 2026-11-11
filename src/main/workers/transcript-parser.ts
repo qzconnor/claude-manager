@@ -394,7 +394,7 @@ export function toolSummary(name: string, input: unknown): string {
 }
 
 /** Builds a readable conversation (user prompts, assistant text, tool calls). */
-export function readConversation(buf: Buffer, maxMessages: number): { messages: TranscriptMessage[]; truncated: boolean } {
+export function readConversation(buf: Buffer, maxMessages: number): { messages: TranscriptMessage[]; truncated: boolean; total: number } {
   const messages: TranscriptMessage[] = []
   const byMessageId = new Map<string, TranscriptMessage>()
   const calls: TranscriptToolCall[] = []
@@ -455,7 +455,7 @@ export function readConversation(buf: Buffer, maxMessages: number): { messages: 
 
   const visible = messages.filter((m) => m.text || m.tools.length)
   const truncated = visible.length > maxMessages
-  return { messages: truncated ? visible.slice(-maxMessages) : visible, truncated }
+  return { messages: truncated ? visible.slice(-maxMessages) : visible, truncated, total: visible.length }
 }
 
 /** Longest text per value that is sent to the window (a Read result can be a whole file). */

@@ -440,7 +440,8 @@ export interface ManagerApi {
   }
   sessions: {
     list(accountId?: string): Promise<SessionGroup[]>
-    get(accountId: string, sessionId: string): Promise<SessionDetail>
+    /** `limit`: the newest so many messages (default `CONVERSATION_PAGE_MESSAGES`). */
+    get(accountId: string, sessionId: string, limit?: number): Promise<SessionDetail>
     /** Complete input and output of one tool call. */
     toolCall(accountId: string, sessionId: string, toolUseId: string): Promise<TranscriptToolDetail | null>
     /**
