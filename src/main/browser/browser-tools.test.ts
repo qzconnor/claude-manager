@@ -3,6 +3,7 @@ import { NO_EMULATION } from '@shared/browser'
 import { describeEmulation, mergePermissions, parseEmulation } from './browser-tools/emulation-args'
 import { bodyText, formatBytes, headerLines, requestBodyText } from './browser-tools/network-format'
 import { formatMs, formatPerformance, type PerformanceReport } from './browser-tools/performance'
+import { cookieLine, type Cookie } from './browser-tools/storage'
 
 describe('parseEmulation', () => {
   it('takes only what is given', () => {
@@ -194,5 +195,30 @@ describe('formatPerformance', () => {
     expect(text).toContain('- JS heap 8.0 MB, 1200 DOM nodes')
     expect(text).not.toContain('layouts')
     expect(text).not.toContain('While loading')
+  })
+})
+
+describe('cookieLine', () => {
+  const cookie = (over: Partial<Cookie>): Cookie => ({
+    name: 'sid',
+    value: 'abc123',
+    domain: '.example.com',
+    path: '/',
+    expires: 0,
+    size: 9,
+    httpOnly: false,
+    secure: true,
+    session: true,
+    ...over,
+  })
+
+  it('shows the value of a cookie scripts can read', () => {
+    expect(cookieLine(cookie({}), 200)).toBe('- sid=abc123 (domain .example.com, secure, session)')
+  })
+
+  it('withholds the value of an httpOnly cookie, a login mostly', () => {
+    const line = cookieLine(cookie({ name: 'user_session', value: 'secret-token', httpOnly: true, sameSite: 'Lax' }), 20_000)
+    expect(line).toBe('- user_session (value withheld, 12 characters) (domain .example.com, httpOnly, secure, SameSite=Lax, session)')
+    expect(line).not.toContain('secret-token')
   })
 })

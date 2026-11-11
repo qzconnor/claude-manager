@@ -3,7 +3,11 @@ import { cut, oneOf, optionalBoolean, optionalNumber, optionalString, ToolError 
 import { str } from './test-code'
 import { quote, shortAddress, tool, type ToolDefinition } from './tool'
 
-/** browser_storage: the site's cookies (httpOnly ones too), local storage and session storage. */
+/**
+ * browser_storage: the site's cookies, local storage and session storage. The values of httpOnly
+ * cookies stay out: they are what keeps the user logged in (all sessions share the browser's
+ * profile), and no script of the page sees them either.
+ */
 
 const STORES = ['cookies', 'local', 'session'] as const
 type Store = (typeof STORES)[number]
@@ -13,7 +17,7 @@ const LIST_VALUE_CHARS = 200
 const VALUE_CHARS = 20_000
 const MAX_VALUE = 1_000_000
 
-interface Cookie {
+export interface Cookie {
   name: string
   value: string
   domain: string
@@ -33,7 +37,7 @@ export const storageTools: ToolDefinition<never>[] = [
     name: 'browser_storage',
     title: 'Cookies and storage',
     description:
-      "Reads and changes what the current site keeps in the browser: its cookies (httpOnly ones too, which scripts can't see), local storage and session storage. get: all of them (or one by name); set: a cookie or key; delete: one by name; clear: all of one store. Changes count from the next request or the next read of the page; reload it if it reads them only on load. Values can be secrets (session tokens): don't pass them on or write them to files unless the user asked.",
+      "Reads and changes what the current site keeps in the browser: its cookies, local storage and session storage. httpOnly cookies (which scripts can't see either, mostly logins) show with name and flags but without their value; set and delete work on them. get: all of them (or one by name); set: a cookie or key; delete: one by name; clear: all of one store. Changes count from the next request or the next read of the page; reload it if it reads them only on load. Values can be secrets (session tokens): don't pass them on or write them to files unless the user asked.",
     properties: {
       action: { type: 'string', enum: [...ACTIONS], description: 'Default: get.' },
       store: { type: 'string', enum: [...STORES], description: 'Which store; get without it reads all three.' },
@@ -122,6 +126,21 @@ function storageLabel(action: (typeof ACTIONS)[number], store: Store | null, nam
   return `Leert ${store ? STORE_NAMES[store] : 'den Speicher'}`
 }
 
+/** A cookie for Claude, its value cut at `chars`; an httpOnly one without its value. */
+export function cookieLine(c: Cookie, chars: number): string {
+  const flags = [
+    `domain ${c.domain}`,
+    c.path !== '/' && `path ${c.path}`,
+    c.httpOnly && 'httpOnly',
+    c.secure && 'secure',
+    c.sameSite && `SameSite=${c.sameSite}`,
+    c.session ? 'session' : `expires ${new Date(c.expires * 1000).toISOString().slice(0, 10)}`,
+  ].filter(Boolean)
+  if (c.httpOnly) return `- ${c.name} (value withheld, ${c.value.length} characters) (${flags.join(', ')})`
+  const value = cut(c.value, chars)
+  return `- ${c.name}=${value}${value.length < c.value.length ? ` (${c.value.length} characters)` : ''} (${flags.join(', ')})`
+}
+
 async function pageCookies(ctx: ActionContext, url: string): Promise<Cookie[]> {
   const { cookies } = await ctx.page.cdp<{ cookies: Cookie[] }>('Network.getCookies', { urls: [url] })
   return cookies
@@ -133,18 +152,7 @@ async function readStore(ctx: ActionContext, store: Store, url: string, name: st
   if (store === 'cookies') {
     const cookies = (await pageCookies(ctx, url)).filter((c) => !name || c.name === name)
     if (cookies.length === 0) return name ? `${title}: no cookie ${JSON.stringify(name)}.` : `${title}: none.`
-    const lines = cookies.map((c) => {
-      const flags = [
-        `domain ${c.domain}`,
-        c.path !== '/' && `path ${c.path}`,
-        c.httpOnly && 'httpOnly',
-        c.secure && 'secure',
-        c.sameSite && `SameSite=${c.sameSite}`,
-        c.session ? 'session' : `expires ${new Date(c.expires * 1000).toISOString().slice(0, 10)}`,
-      ].filter(Boolean)
-      const value = cut(c.value, name ? VALUE_CHARS : LIST_VALUE_CHARS)
-      return `- ${c.name}=${value}${value.length < c.value.length ? ` (${c.value.length} characters)` : ''} (${flags.join(', ')})`
-    })
+    const lines = cookies.map((c) => cookieLine(c, name ? VALUE_CHARS : LIST_VALUE_CHARS))
     return `${title} (${cookies.length}):\n${lines.join('\n')}`
   }
   type Entry = [string, string, number]
