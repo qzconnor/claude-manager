@@ -11,15 +11,19 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+# Read only by default: the builds run the install scripts of all dependencies (Electron download,
+# node-pty compiled) and need no more. Only the jobs that run semantic-release may write.
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+  contents: read
 
 jobs:
   version:
     name: Version
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
     outputs:
       version: ${{ steps.next.outputs.version }}
     steps:
@@ -48,12 +52,15 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
       # postinstall downloads the Electron binary; cm.exe is built with the .NET Framework's csc.
       - run: npm ci
+      - run: npm test
       # The version in package.json stays unchanged in the repository, only the build gets the new one.
       - run: npm version ${{ needs.version.outputs.version }} --no-git-tag-version --allow-same-version
       - run: npm run release:build
@@ -77,6 +84,8 @@ jobs:
     container: node:24-bookworm
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -85,6 +94,7 @@ jobs:
       - run: apt-get update && apt-get install -y rpm
       # postinstall downloads the Electron binary; node-pty has no Linux prebuilds and is compiled here.
       - run: npm ci
+      - run: npm test
       - run: npm version ${{ needs.version.outputs.version }} --no-git-tag-version --allow-same-version
       - run: npm run release:build:linux
       - run: bash scripts/check-linux-glibc.sh release
@@ -102,6 +112,10 @@ jobs:
     name: Release
     needs: [version, windows, linux]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
