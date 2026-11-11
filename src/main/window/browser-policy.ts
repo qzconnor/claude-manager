@@ -10,6 +10,33 @@ import type { ShortcutKey } from '@shared/shortcuts'
 export const ALLOWED_PERMISSIONS: ReadonlySet<string> = new Set(['clipboard-sanitized-write'])
 
 /**
+ * Like Chrome, a page that shows one dialog (alert, confirm, prompt) after another gets a box on the
+ * next one to stop them: otherwise a loop of them keeps the app from being used.
+ */
+export const SAFE_DIALOGS = { safeDialogs: true, safeDialogsMessage: 'Keine weiteren Dialoge dieser Seite zeigen' } as const
+
+/**
+ * Tabs and popups a page may open in `OPEN_BURST_MS`: links opened by hand or by Claude stay well
+ * below it, a page that opens them in a loop doesn't.
+ */
+export const MAX_OPENS = 8
+export const OPEN_BURST_MS = 10_000
+/** Popup windows a page may have open at once. */
+export const MAX_POPUPS = 4
+
+/** Counts what a page opens: true while it may open another, false once it opened too many at once. */
+export function openGate(now: () => number = Date.now): () => boolean {
+  let opens: number[] = []
+  return () => {
+    const at = now()
+    opens = opens.filter((before) => at - before < OPEN_BURST_MS)
+    if (opens.length >= MAX_OPENS) return false
+    opens.push(at)
+    return true
+  }
+}
+
+/**
  * The settings of every `<webview>` before it starts: no Node.js, not the app's preload, the browser's
  * own profile. False when its first address is none the browser may show (the view is then refused).
  */
@@ -23,6 +50,7 @@ export function hardenWebview(webPreferences: WebPreferences, params: Record<str
   webPreferences.webSecurity = true
   webPreferences.allowRunningInsecureContent = false
   webPreferences.experimentalFeatures = false
+  Object.assign(webPreferences, SAFE_DIALOGS)
   // A page without a background of its own is white (or dark with color-scheme: dark) as in
   // Chrome, on screen and in screenshots; a guest is transparent by default.
   webPreferences.transparent = false

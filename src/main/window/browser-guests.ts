@@ -21,7 +21,10 @@ import {
   faviconType,
   hardenWebview,
   MAX_FAVICON_BYTES,
+  MAX_POPUPS,
+  openGate,
   popupTitle,
+  SAFE_DIALOGS,
   toShortcutKey,
 } from './browser-policy'
 import { resourceIcon } from './tray'
@@ -134,19 +137,27 @@ function attachGuest(win: BrowserWindow, guest: WebContents): void {
   // Popups (window.open with a size, e.g. "Sign in with Google") become small windows of their own
   // that keep their opener, so they can report back to the page and close. Links that want a new
   // tab (`target=_blank`, the middle mouse button, Ctrl+click) get one, the others open in the view.
+  // A page that opens them in a loop gets no more after a few (a popup blocker of sorts).
+  const mayOpen = openGate()
+  let popups = 0
   guest.setWindowOpenHandler(({ url, disposition }) => {
     if (disposition === 'new-window' && isBrowsableUrl(url)) {
+      if (popups >= MAX_POPUPS || !mayOpen()) return { action: 'deny' }
       return { action: 'allow', overrideBrowserWindowOptions: popupOptions(win) }
     }
     if (url === BLANK_PAGE || !isBrowsableUrl(url)) return { action: 'deny' }
     if (disposition === 'foreground-tab' || disposition === 'background-tab') {
-      openTab(win, guest, url, disposition === 'background-tab')
+      if (mayOpen()) openTab(win, guest, url, disposition === 'background-tab')
     } else {
       void guest.loadURL(url)
     }
     return { action: 'deny' }
   })
-  guest.on('did-create-window', (popup) => guardPopup(popup))
+  guest.on('did-create-window', (popup) => {
+    popups++
+    popup.once('closed', () => popups--)
+    guardPopup(popup)
+  })
   guardNavigation(guest)
   // A site that wants a user name and password asks in the page's pane (BrowserPane) instead of failing.
   guest.on('login', (event, details, info, callback) => {
@@ -212,6 +223,7 @@ function popupOptions(win: BrowserWindow): BrowserWindowConstructorOptions {
       experimentalFeatures: false,
       webviewTag: false,
       partition: BROWSER_PARTITION,
+      ...SAFE_DIALOGS,
     },
   }
 }
