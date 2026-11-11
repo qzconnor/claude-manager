@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { FileDiff } from '@shared/types'
-import type { DiffMode, ParsedDiff } from '@/lib/file-diff'
+import type { DiffLine, DiffMode, ParsedDiff } from '@/lib/file-diff'
 
 interface Entry {
   diff: FileDiff | null
@@ -10,6 +10,11 @@ interface Entry {
   hash: string | null
   columns: number
   digits: number
+  /**
+   * The diff of the whole file, so its changes are highlighted in their file (a line in a Vue file's
+   * script is TypeScript). For a file shown the first time it comes after them, so they show at once.
+   */
+  whole: readonly DiffLine[] | null
   /** The highlighted lines, and how many languages were loaded when they were made. */
   html: (string | null)[] | null
   htmlFor: number
@@ -50,8 +55,8 @@ import {
   diffMode,
   lineAtRow,
   numberDigits,
+  parsePatch,
   wrapOffsets,
-  type DiffLine,
   type SeenState,
 } from '@/lib/file-diff'
 import { absolutePath, changedFiles, folderName, gitDecorations, parentPath, treeOrder, untrackedFolders } from '@/lib/file-tree'
@@ -144,6 +149,10 @@ async function load(path: string): Promise<void> {
     // Unchanged: nothing is drawn or highlighted again.
     if (before?.hash === hash && before.mode === mode) return
     const parsed = diffLines(diff, mode)
+    const inFile = mode === 'diff' && !!diff.patch && !diff.tooLarge && !!languageOf(path)
+    // A file on show already waits for the whole one, so its lines don't flash up without colours.
+    const whole = inFile && before ? await wholeOf(root, path) : null
+    if (root !== props.root || !paths.value.includes(path)) return
     entries.set(path, {
       diff: Object.freeze(diff),
       error: null,
@@ -152,15 +161,31 @@ async function load(path: string): Promise<void> {
       hash,
       columns: diffColumns(parsed.lines),
       digits: numberDigits(parsed.lines),
+      whole,
       html: null,
       htmlFor: -1,
       offsets: null,
       wrapWidth: 0,
     })
+    if (!inFile || before) return
+    // A new one shows at once, highlighted hunk by hunk, and again in its file once that is there.
+    const later = await wholeOf(root, path)
+    const entry = entries.get(path)
+    if (later && root === props.root && entry?.hash === hash) entries.set(path, { ...entry, whole: later, html: null, htmlFor: -1 })
   } catch (error) {
     if (root !== props.root) return
     const message = errorMessage(error).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
-    entries.set(path, { diff: null, error: message, mode: null, parsed: NO_LINES, hash: null, columns: 0, digits: 1, html: null, htmlFor: -1, offsets: null, wrapWidth: 0 })
+    entries.set(path, { diff: null, error: message, mode: null, parsed: NO_LINES, hash: null, columns: 0, digits: 1, whole: null, html: null, htmlFor: -1, offsets: null, wrapWidth: 0 })
+  }
+}
+
+/** The diff of the whole file for its highlighting; null without (the changes are highlighted hunk by hunk). */
+async function wholeOf(root: string, path: string): Promise<readonly DiffLine[] | null> {
+  try {
+    const all = await window.api.files.diff(root, path, true)
+    return all.patch && !all.tooLarge ? Object.freeze(parsePatch(all.patch).lines) : null
+  } catch {
+    return null
   }
 }
 
@@ -249,7 +274,7 @@ function htmlOf(path: string, entry: Entry): (string | null)[] | null {
   const loaded = loadedLanguages.value
   if (entry.htmlFor !== loaded) {
     const lang = languageOf(path)
-    entry.html = lang ? highlightDiff(entry.parsed.lines, lang) : null
+    entry.html = lang ? highlightDiff(entry.parsed.lines, lang, entry.mode === 'diff' ? entry.whole : null) : null
     entry.htmlFor = loaded
   }
   return entry.html
