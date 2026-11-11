@@ -12,6 +12,8 @@ import { createBackgroundFilter, slotPalette, type SlotTints } from '@/lib/claud
 import { claudeInputAt } from '@/lib/claude-input'
 import { answerColorQueries } from '@/lib/color-queries'
 import { matchShortcut } from '@shared/shortcuts'
+import { pastePreview, pasteRunsLines } from '@/lib/paste-guard'
+import { isWindows } from '@/lib/platform'
 import { addedImageRef, countImageRefs, pastedImageLinks } from '@/lib/pasted-image-links'
 import { terminalBus } from '@/lib/terminal-bus'
 import { makeSlotsTranslucent, setSlotTints } from '@/lib/translucent-slots'
@@ -20,6 +22,7 @@ import { useAppStore } from '@/stores/app'
 import { useFileTreeStore } from '@/stores/file-tree'
 import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
+import { useUiStore } from '@/stores/ui'
 import type { TerminalPalette } from '@shared/themes/types'
 import { buildFontStack, ensureFontLoaded, useTerminalAppearance } from './useTerminalAppearance'
 
@@ -217,6 +220,7 @@ export function useTerminal(options: UseTerminalOptions) {
   const settingsStore = useSettingsStore()
   const appStore = useAppStore()
   const terminalsStore = useTerminalsStore()
+  const ui = useUiStore()
   const fileTree = useFileTreeStore()
   const { palette, dark, slotTints, backgrounds, logo } = useTerminalAppearance()
   /** All output passes through here on its way to xterm. */
@@ -359,10 +363,41 @@ export function useTerminal(options: UseTerminalOptions) {
     return true
   }
 
+  /** Whether pasting `text` would run lines on its own, and the user wants to be asked first. */
+  function runsLines(text: string): boolean {
+    if (!term || !settingsStore.settings.terminal.multiLinePasteWarning) return false
+    // PowerShell takes no bracketed paste: in a shell under Windows the mode can only come from output
+    // (a printed ESC [?2004h, a program run in it), and PowerShell would still run each line.
+    const bracketed = term.modes.bracketedPasteMode && (claudeSession || !isWindows)
+    return pasteRunsLines(text, bracketed)
+  }
+
+  /**
+   * Text for the input of the program; with line breaks that a shell would run line by line at once,
+   * only after asking (like Windows Terminal), since copied text may hide commands.
+   */
+  async function pasteText(text: string): Promise<void> {
+    if (!runsLines(text)) {
+      term?.paste(text)
+      return
+    }
+    const ok = await ui.confirm({
+      title: 'Mehrere Zeilen einfügen?',
+      description:
+        'Der Text enthält Zeilenumbrüche: Die Shell führt jede Zeile sofort als Befehl aus. Abschalten lässt sich die Frage unter Einstellungen › Terminal › Verhalten.',
+      code: pastePreview(text),
+      confirmText: 'Einfügen',
+      warning: true,
+    })
+    if (!ok || !term) return
+    term.paste(text)
+    focus()
+  }
+
   async function pasteClipboard(): Promise<void> {
     const text = await navigator.clipboard.readText()
     if (text) {
-      term?.paste(text)
+      await pasteText(text)
       return
     }
     // Claude Code takes the image from the clipboard itself and puts an [Image #N] at the cursor:
@@ -652,6 +687,16 @@ export function useTerminal(options: UseTerminalOptions) {
     }
     el.addEventListener('contextmenu', onContextMenu)
     cleanups.push(() => el.removeEventListener('contextmenu', onContextMenu))
+    // A paste xterm takes itself (Shift+Insert, the paste of the system) asks like Ctrl+V.
+    const onPaste = (event: ClipboardEvent) => {
+      const text = event.clipboardData?.getData('text/plain') ?? ''
+      if (!runsLines(text)) return
+      event.preventDefault()
+      event.stopPropagation()
+      void pasteText(text)
+    }
+    el.addEventListener('paste', onPaste, true)
+    cleanups.push(() => el.removeEventListener('paste', onPaste, true))
     // With right-click paste the right button belongs to the app: a program that uses the mouse doesn't
     // get it as well. Claude Code does, and under Windows and Linux it pastes on a right-click itself,
     // so the text came twice. The press and release stop before xterm, which would report them.
@@ -773,8 +818,8 @@ export function useTerminal(options: UseTerminalOptions) {
     pasteClipboard,
     /** Pastes like Ctrl+V, e.g. the paths of dropped files. */
     paste: (text: string) => {
-      term?.paste(text)
       focus()
+      void pasteText(text)
     },
     clear: () => term?.clear(),
     selectAll: () => term?.selectAll(),

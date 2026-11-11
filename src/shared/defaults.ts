@@ -86,6 +86,7 @@ export function createDefaultSettings(platform = 'win32'): AppSettings {
       unicode: 'graphemes',
       copyOnSelect: false,
       rightClickPaste: true,
+      multiLinePasteWarning: true,
       colorSchemeId: null,
       minimumContrastRatio: 1,
       panelBackground: 'theme',

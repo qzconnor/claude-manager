@@ -49,6 +49,7 @@ const renderer = t('renderer')
 const unicode = t('unicode')
 const copyOnSelect = t('copyOnSelect')
 const rightClickPaste = t('rightClickPaste')
+const multiLinePasteWarning = t('multiLinePasteWarning')
 const minimumContrastRatio = t('minimumContrastRatio', 150)
 const colorSchemeId = t('colorSchemeId')
 const panelBackground = t('panelBackground')
@@ -281,6 +282,14 @@ function onScheme(value: unknown) {
         description="Wie in Windows Terminal: mit Auswahl kopieren, sonst einfügen."
       >
         <Switch id="terminal-right-click" v-model="rightClickPaste" />
+      </SettingField>
+      <SettingField
+        anchor="terminal.multiLinePasteWarning"
+        for="terminal-multi-line-paste"
+        label="Vor mehrzeiligem Einfügen warnen"
+        description="Wie in Windows Terminal: fragt nach, bevor Text mit Zeilenumbrüchen in eine Shell geht, die jede Zeile sofort ausführen würde."
+      >
+        <Switch id="terminal-multi-line-paste" v-model="multiLinePasteWarning" />
       </SettingField>
       <SettingField anchor="terminal.scrollback" for="terminal-scrollback" label="Scrollback" description="Anzahl Zeilen, die pro Terminal gehalten werden.">
         <NumberControl id="terminal-scrollback" v-model="scrollback" :min="500" :max="200000" :step="1000" />

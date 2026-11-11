@@ -126,6 +126,7 @@ const TREE = [
         fields: [
           { id: 'terminal.copyOnSelect', label: 'Beim Markieren kopieren', keywords: 'Auswahl Zwischenablage' },
           { id: 'terminal.rightClickPaste', label: 'Rechtsklick kopiert / fügt ein', keywords: 'einfügen Maus Zwischenablage' },
+          { id: 'terminal.multiLinePasteWarning', label: 'Vor mehrzeiligem Einfügen warnen', keywords: 'einfügen Zeilen Zwischenablage Befehle Sicherheit' },
           { id: 'terminal.scrollback', label: 'Scrollback', keywords: 'Zeilen Verlauf Puffer' },
         ],
       },

@@ -44,9 +44,7 @@ onBeforeUnmount(offDialog)
           {{ state.description }}
         </AlertDialogDescription>
       </AlertDialogHeader>
-      <p v-if="state.code" class="selectable rounded-md bg-muted px-2.5 py-1.5 font-mono text-xs break-all">
-        {{ state.code }}
-      </p>
+      <p v-if="state.code" class="selectable rounded-md bg-muted px-2.5 py-1.5 font-mono text-xs break-all whitespace-pre-wrap">{{ state.code }}</p>
       <AlertDialogFooter>
         <Button v-if="state.kind !== 'alert'" variant="outline" @click="ui.settleConfirm(false)">
           {{ state.cancelText ?? 'Abbrechen' }}

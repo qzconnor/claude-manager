@@ -796,6 +796,8 @@ export interface TerminalSettings {
   unicode: UnicodeMode
   copyOnSelect: boolean
   rightClickPaste: boolean
+  /** Asks before pasted text with line breaks goes to a program that would run each line at once. */
+  multiLinePasteWarning: boolean
   /** Use a terminal color scheme different from the app theme (theme id) or `null` to follow the app theme. */
   colorSchemeId: string | null
   minimumContrastRatio: number
