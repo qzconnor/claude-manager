@@ -12,7 +12,7 @@ import { Separator } from '@/components/ui/separator'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { attempt } from '@/lib/errors'
-import { accountKindLabel, formatRelative, planLabel } from '@/lib/format'
+import { accountKindLabel, formatRelative, formatUpcoming, planLabel } from '@/lib/format'
 import { usageFillClass, usageLevel } from '@/lib/usage'
 import { cn } from '@/lib/utils'
 import { useUsageStore } from '@/stores/usage'
@@ -121,7 +121,7 @@ function refresh() {
     <CardFooter class="mt-auto justify-between gap-2 text-xs text-muted-foreground">
       <span>Stand: {{ usage?.fetchedAt ? formatRelative(usage.fetchedAt, now) : '–' }}</span>
       <span v-if="usage?.nextRefreshAt && Date.parse(usage.nextRefreshAt) > now">
-        nächster Abruf {{ formatRelative(usage.nextRefreshAt, now) }}
+        nächster Abruf {{ formatUpcoming(usage.nextRefreshAt, now) }}
       </span>
     </CardFooter>
   </Card>

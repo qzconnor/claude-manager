@@ -9,6 +9,7 @@ import {
   formatRelative,
   formatReset,
   formatTokens,
+  formatUpcoming,
   identityLabel,
   organizationLabel,
   planLabel,
@@ -31,10 +32,17 @@ describe('formatRelative', () => {
     expect(formatRelative('yesterday', NOW)).toBe('–')
   })
 
-  it('says "gerade eben" within 45 seconds, and "gleich" ahead', () => {
+  it('says "gerade eben" within 45 seconds, both ways', () => {
     expect(formatRelative(at(0), NOW)).toBe('gerade eben')
     expect(formatRelative(at(-44 * SECOND), NOW)).toBe('gerade eben')
-    expect(formatRelative(at(44 * SECOND), NOW)).toBe('gleich')
+    // A session just written, a little ahead of the list's clock.
+    expect(formatRelative(at(44 * SECOND), NOW)).toBe('gerade eben')
+  })
+
+  it('says "gleich" for a time just ahead, as the next fetch', () => {
+    expect(formatUpcoming(at(44 * SECOND), NOW)).toBe('gleich')
+    expect(formatUpcoming(at(5 * MINUTE), NOW)).toBe('in 5 Minuten')
+    expect(formatUpcoming(null, NOW)).toBe('–')
   })
 
   it('counts days by the calendar, not in blocks of 24 hours', () => {

@@ -26,7 +26,8 @@ export function formatRelative(iso: string | null | undefined, now = Date.now())
   const ms = Date.parse(iso)
   if (Number.isNaN(ms)) return '–'
   const diff = (ms - now) / 1000
-  if (Math.abs(diff) < 45) return diff > 0 ? 'gleich' : 'gerade eben'
+  // Both ways: a time just past can lie a little ahead of a clock that ticks every 30 seconds.
+  if (Math.abs(diff) < 45) return 'gerade eben'
   const minutes = Math.round(diff / 60)
   if (Math.abs(minutes) < 60) return rtf.format(minutes, 'minute')
   const hours = Math.round(diff / 3600)
@@ -36,6 +37,12 @@ export function formatRelative(iso: string | null | undefined, now = Date.now())
   if (Math.abs(hours) < 24 || days === 0) return rtf.format(hours, 'hour')
   if (Math.abs(days) < 30) return rtf.format(days, 'day')
   return dateTime.format(ms)
+}
+
+/** A time ahead, like the next fetch: "gleich" within 45 seconds, otherwise as `formatRelative`. */
+export function formatUpcoming(iso: string | null | undefined, now = Date.now()): string {
+  const ahead = iso ? Date.parse(iso) - now : NaN
+  return ahead >= 0 && ahead < 45_000 ? 'gleich' : formatRelative(iso, now)
 }
 
 export function formatDateTime(iso: string | null | undefined): string {
