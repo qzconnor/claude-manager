@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import type { GitBranch, WorktreeCheck } from '@shared/types'
 import { TypedEmitter } from '../lib/typed-emitter'
 
@@ -29,6 +29,15 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
   async branch(cwd: string): Promise<GitBranch | null> {
     const gitDir = await this.gitDir(cwd)
     return gitDir ? readBranch(gitDir) : null
+  }
+
+  /**
+   * Folder of the main checkout when `cwd` lies in a linked worktree of its repository (`git worktree add`,
+   * `claude --worktree`, EnterWorktree); null in the main checkout itself, outside a repository and without git.
+   */
+  async mainWorktree(cwd: string): Promise<string | null> {
+    const gitDir = await this.gitDir(cwd)
+    return gitDir ? readMainWorktree(gitDir) : null
   }
 
   /**
@@ -185,6 +194,20 @@ export function repoWebUrl(remote: string): string | null {
   const azure = /^https:\/\/ssh\.dev\.azure\.com$/i.test(origin) && /^\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(path)
   if (azure) return `https://dev.azure.com/${azure[1]}/${azure[2]}/_git/${azure[3]}`
   return origin + path
+}
+
+/**
+ * Only the git directory of a linked worktree (`<repository>/.git/worktrees/<name>`) has a `commondir` file:
+ * it leads to the repository's own git directory, whose folder is the main checkout. A bare repository has
+ * no checkout of its own; then its folder stands in. Submodules have no `commondir` either.
+ */
+async function readMainWorktree(gitDir: string): Promise<string | null> {
+  try {
+    const common = resolve(gitDir, (await readFile(join(gitDir, 'commondir'), 'utf8')).trim())
+    return basename(common).toLowerCase() === '.git' ? dirname(common) : common
+  } catch {
+    return null
+  }
 }
 
 /** `ref: refs/heads/<name>` names the branch; a bare commit hash means a detached HEAD. */

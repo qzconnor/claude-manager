@@ -168,6 +168,7 @@ const api: ManagerApi = {
     watch: (cwds) => invoke(IpcInvoke.gitWatch, cwds),
     worktreeCheck: (cwd) => invoke(IpcInvoke.gitWorktreeCheck, cwd),
     webUrl: (cwd) => invoke(IpcInvoke.gitWebUrl, cwd),
+    mainWorktree: (cwd) => invoke(IpcInvoke.gitMainWorktree, cwd),
     onBranchChanged: (cb) => subscribe(IpcEvent.gitBranchChanged, cb),
   },
   files: {

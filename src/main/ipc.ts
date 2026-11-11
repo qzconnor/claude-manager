@@ -531,6 +531,7 @@ export function registerIpc(ctx: AppContext): void {
   })
   ipcMain.handle(IpcInvoke.gitWorktreeCheck, (_e, cwd: unknown) => ctx.git.worktreeCheck(requireString(cwd, 'cwd')))
   ipcMain.handle(IpcInvoke.gitWebUrl, (_e, cwd: unknown) => ctx.git.webUrl(requireString(cwd, 'cwd')))
+  ipcMain.handle(IpcInvoke.gitMainWorktree, (_e, cwd: unknown) => ctx.git.mainWorktree(requireString(cwd, 'cwd')))
   ctx.git.on('changed', (cwd, branch) => broadcast(IpcEvent.gitBranchChanged, cwd, branch))
 
   // --- file tree -----------------------------------------------------------

@@ -8,6 +8,7 @@ const api = {
   git: {
     branch: vi.fn(async (cwd: string): Promise<GitBranch | null> => (cwd.startsWith('/repo') ? { name: `main@${cwd}`, detached: false } : null)),
     webUrl: vi.fn(async (cwd: string) => (cwd.startsWith('/repo') ? `https://github.com/owner${cwd}` : null)),
+    mainWorktree: vi.fn(async (cwd: string) => (cwd.startsWith('/repo/.claude/worktrees/') ? '/repo' : null)),
     watch: vi.fn(async () => {}),
     onBranchChanged: (cb: typeof onBranchChanged) => {
       onBranchChanged = cb
@@ -45,8 +46,16 @@ describe('useGitStore', () => {
     expect(git.repos.get('/repo/a')).toEqual({
       branch: { name: 'main@/repo/a', detached: false },
       webUrl: 'https://github.com/owner/repo/a',
+      mainWorktree: null,
     })
     expect(api.git.watch).toHaveBeenLastCalledWith(['/repo/a'])
+  })
+
+  it('knows the main checkout of a folder in a worktree', async () => {
+    const git = await store()
+    git.hold('/repo/.claude/worktrees/login')
+    await settle()
+    expect(git.repos.get('/repo/.claude/worktrees/login')?.mainWorktree).toBe('/repo')
   })
 
   it('keeps the folder while one tab still shows it', async () => {
@@ -84,7 +93,7 @@ describe('useGitStore', () => {
     await settle()
     expect(api.git.watch).toHaveBeenCalledTimes(1)
     expect(api.git.watch).toHaveBeenLastCalledWith(['/repo/a', '/repo/b', '/plain'])
-    expect(git.repos.get('/plain')).toEqual({ branch: null, webUrl: null })
+    expect(git.repos.get('/plain')).toEqual({ branch: null, webUrl: null, mainWorktree: null })
   })
 
   it('takes a checkout reported by main', async () => {
