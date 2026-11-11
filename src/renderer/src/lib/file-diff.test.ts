@@ -14,6 +14,7 @@ import {
   sameDiff,
   shownText,
   unchangedNote,
+  wordMarks,
   wrapOffsets,
   wrappedRows,
   type DiffLine,
@@ -92,6 +93,18 @@ describe('parsePatch', () => {
     const { lines, eol } = parsePatch('@@ -1,2 +1,2 @@\n-one\n-two\n+one\r\n+TWO\r\n')
     expect(eol).toBe('Zeilenenden in 1 Zeile geändert (LF → CRLF)')
     expect(lines.map((l) => l.eol)).toEqual([undefined, 'lf', undefined, 'crlf', undefined])
+  })
+
+  it('marks the words that changed between a removed line and the added one in its place', () => {
+    const { lines } = parsePatch('@@ -1,3 +1,3 @@\n-let size = 10\n-old()\n+let size = 20\n+entirely different code\n same\n')
+    const [, size, old, newSize, other] = lines
+    const words = (line: DiffLine) => wordMarks(line).map(([start, end]) => line.text.slice(start, end))
+    expect(words(size!)).toEqual(['10'])
+    expect(words(newSize!)).toEqual(['20'])
+    // Changed whole: nothing to mark.
+    expect(words(old!)).toEqual([])
+    expect(words(other!)).toEqual([])
+    expect(wordMarks(lines[5]!)).toEqual([])
   })
 
   it('marks nothing where the text changed and the line ending stayed', () => {

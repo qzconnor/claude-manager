@@ -1,4 +1,5 @@
 import type { FileDiff, GitFileStatus } from '@shared/types'
+import { changedRanges, type Range } from './word-diff'
 
 /** A line of a diff as it is shown: unchanged, added, removed, or the head of a hunk. */
 export interface DiffLine {
@@ -82,10 +83,32 @@ export function parsePatch(patch: string): ParsedDiff {
   return eol ? { lines, added, removed, eol } : { lines, added, removed }
 }
 
+/** Each removed line and the added one at its place in the change, both ways (see `markLineEndings`). */
+const partners = new WeakMap<DiffLine, DiffLine>()
+/** The words that changed in a line, once worked out (see `wordMarks`). */
+const marks = new WeakMap<DiffLine, readonly Range[]>()
+
 /**
- * Marks removed and added lines that differ only in their line ending (`eol`), each removed line paired
- * with the added one at its place in the change, as git writes them. Without the marks, a file whose
- * line endings changed (CRLF ↔ LF) shows lines removed and added again as they were.
+ * The parts of a removed or added line that changed against the line in its place on the other side,
+ * word by word; empty when there is none to compare with or nothing to mark. Worked out when the line
+ * is first drawn, for both lines at once.
+ */
+export function wordMarks(line: DiffLine): readonly Range[] {
+  const known = marks.get(line)
+  if (known) return known
+  const partner = partners.get(line)
+  const ranges = partner && line.kind === 'del' ? changedRanges(line.text, partner.text) : partner ? changedRanges(partner.text, line.text) : null
+  const [mine, theirs] = !ranges ? [[], []] : line.kind === 'del' ? [ranges.a, ranges.b] : [ranges.b, ranges.a]
+  marks.set(line, mine)
+  if (partner) marks.set(partner, theirs)
+  return mine
+}
+
+/**
+ * Pairs each removed line with the added one at its place in the change, as git writes them, for the
+ * words that changed (`wordMarks`). Marks the pairs that differ only in their line ending (`eol`):
+ * without the marks, a file whose line endings changed (CRLF ↔ LF) shows lines removed and added
+ * again as they were.
  *
  * @returns The note for the head of the diff; undefined when no line changed only its ending.
  */
@@ -104,6 +127,8 @@ function markLineEndings(lines: DiffLine[], crlf: boolean[], changed: number): s
     for (let k = 0; k < Math.min(dels.length, adds.length); k++) {
       const del = dels[k]!
       const add = adds[k]!
+      partners.set(lines[del]!, lines[add]!)
+      partners.set(lines[add]!, lines[del]!)
       if (lines[del]!.text !== lines[add]!.text || crlf[del] === crlf[add]) continue
       lines[del]!.eol = crlf[del] ? 'crlf' : 'lf'
       lines[add]!.eol = crlf[add] ? 'crlf' : 'lf'

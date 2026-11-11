@@ -38,6 +38,9 @@ export function useDiffStyle() {
       '--diff-add-gutter': tint(c.green, 24),
       '--diff-del': tint(c.red, 15),
       '--diff-del-gutter': tint(c.red, 24),
+      // The words that changed in a line, over its tint.
+      '--diff-add-word': tint(c.green, 32),
+      '--diff-del-word': tint(c.red, 32),
       '--diff-hunk': tint(p.foreground, 6),
       '--diff-header': tint(p.foreground, 5),
       '--diff-number': tint(p.foreground, 40),

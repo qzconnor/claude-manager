@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { MAX_DIFF_COLUMNS, MAX_WRAPPED_COLUMNS, shownText, type DiffLine } from '@/lib/file-diff'
+import { MAX_DIFF_COLUMNS, MAX_WRAPPED_COLUMNS, shownText, wordMarks, type DiffLine } from '@/lib/file-diff'
+import { splitByRanges } from '@/lib/word-diff'
 import { cn } from '@/lib/utils'
 
 /**
@@ -46,6 +47,24 @@ const GUTTER_CLASS: Record<DiffLine['kind'], string> = {
   hunk: 'bg-(--diff-hunk) text-(--diff-number)',
 }
 const SIGN: Record<DiffLine['kind'], string> = { context: ' ', add: '+', del: '−', hunk: ' ' }
+/**
+ * The words that changed against the line in its place on the other side, as a copy of the text behind
+ * it: see-through, with the changed words tinted. As a copy in the same font, wrapped the same, the marks
+ * lie under their words also when the code is highlighted.
+ */
+const parts = computed(() => {
+  if (props.line.kind !== 'add' && props.line.kind !== 'del') return null
+  const ranges = wordMarks(props.line)
+  return ranges.length ? splitByRanges(text.value, ranges) : null
+})
+const MARK_CLASS = { add: 'bg-(--diff-add-word)', del: 'bg-(--diff-del-word)' } as const
+const marksClass = computed(() =>
+  cn(
+    'pointer-events-none absolute inset-y-0 left-0 right-0 pl-[1ch] text-transparent select-none',
+    props.wrap ? 'pr-[1ch] [line-break:anywhere] [white-space:break-spaces]' : 'whitespace-pre',
+  ),
+)
+
 /** A line that changed only its ending shows it: carriage return and line feed as their symbols. */
 const EOL = { crlf: '␍␊', lf: '␊' } as const
 
@@ -89,6 +108,6 @@ const style = computed(() => {
         <span v-if="withSign" class="w-[1ch]">{{ SIGN[line.kind] }}</span>
       </template>
     </span>
-    <span :class="codeClass"><span v-if="html !== null" v-html="html" /><template v-else>{{ text }}</template><span v-if="line.eol" class="text-(--diff-number) select-none">{{ EOL[line.eol] }}</span></span>
+    <span :class="cn(codeClass, parts && 'relative')"><span v-if="parts" aria-hidden="true" :class="marksClass"><template v-for="(part, i) in parts" :key="i"><span v-if="part.changed" :class="cn('rounded-[2px]', MARK_CLASS[line.kind as 'add' | 'del'])">{{ part.text }}</span><template v-else>{{ part.text }}</template></template></span><span v-if="html !== null" class="relative" v-html="html" /><span v-else class="relative">{{ text }}</span><span v-if="line.eol" class="relative text-(--diff-number) select-none">{{ EOL[line.eol] }}</span></span>
   </div>
 </template>
