@@ -75,6 +75,30 @@ describe('parsePatch', () => {
       { kind: 'context', text: 'same', old: 2, new: 2 },
     ])
   })
+
+  it('shows lines whose line ending alone changed, and says so', () => {
+    const { lines, eol } = parsePatch('@@ -1,3 +1,3 @@\n-one\r\n-two\r\n+one\n+two\n three\r\n')
+    expect(eol).toBe('Nur Zeilenenden geändert (CRLF → LF)')
+    expect(lines.slice(1)).toEqual([
+      { kind: 'del', text: 'one', old: 1, new: null, eol: 'crlf' },
+      { kind: 'del', text: 'two', old: 2, new: null, eol: 'crlf' },
+      { kind: 'add', text: 'one', old: null, new: 1, eol: 'lf' },
+      { kind: 'add', text: 'two', old: null, new: 2, eol: 'lf' },
+      { kind: 'context', text: 'three', old: 3, new: 3 },
+    ])
+  })
+
+  it('counts line endings changed among other changes, the other way round too', () => {
+    const { lines, eol } = parsePatch('@@ -1,2 +1,2 @@\n-one\n-two\n+one\r\n+TWO\r\n')
+    expect(eol).toBe('Zeilenenden in 1 Zeile geändert (LF → CRLF)')
+    expect(lines.map((l) => l.eol)).toEqual([undefined, 'lf', undefined, 'crlf', undefined])
+  })
+
+  it('marks nothing where the text changed and the line ending stayed', () => {
+    const parsed = parsePatch('@@ -1 +1 @@\r\n-a\r\n+b\r\n')
+    expect(parsed.eol).toBeUndefined()
+    expect(parsed.lines.some((l) => l.eol)).toBe(false)
+  })
 })
 
 describe('fileLines', () => {

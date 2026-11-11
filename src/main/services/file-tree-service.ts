@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { readdirSync, watch, type FSWatcher } from 'node:fs'
-import { readdir, readFile, stat } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { folderKey } from '@shared/folders'
 import type {
@@ -15,6 +16,7 @@ import type {
   GitTreeStatus,
 } from '@shared/types'
 import type { FileActivity } from '../lib/hook-events'
+import { decodeText, decodeUtf16, isUtf16 } from '../lib/text-encoding'
 import { TypedEmitter } from '../lib/typed-emitter'
 
 /**
@@ -229,6 +231,11 @@ export class FileTreeService extends TypedEmitter<Events> {
         else {
           result.patch = patch
           result.binary = /^Binary files /m.test(patch)
+          const utf16 = result.binary && info ? await this.utf16Patch(root, `${prefix}${path}`, patch, file, full) : null
+          if (utf16 !== null && utf16.length <= MAX_PATCH_CHARS) {
+            result.patch = utf16
+            result.binary = false
+          }
         }
       }
     }
@@ -238,10 +245,46 @@ export class FileTreeService extends TypedEmitter<Events> {
       return result
     }
     const buffer = await readFile(file)
+    if (isUtf16(buffer)) result.text = decodeUtf16(buffer)
     // A NUL byte early on: not text.
-    if (buffer.subarray(0, 8000).includes(0)) result.binary = true
-    else result.text = buffer.toString('utf8')
+    else if (buffer.subarray(0, 8000).includes(0)) result.binary = true
+    else result.text = decodeText(buffer)
     return result
+  }
+
+  /**
+   * The patch of a UTF-16 file (as `>` writes it in Windows PowerShell 5.1), which git takes for binary
+   * (`patch`): both sides decoded and compared by git as UTF-8 (`--no-index`), under the head of git's
+   * patch. Null when neither side is UTF-16, or for a side git can't give.
+   */
+  private async utf16Patch(root: string, top: string, patch: string, file: string, full: boolean): Promise<string | null> {
+    // Renamed with `git mv`: the old side is at the old path (git quotes unusual names; then there is none).
+    const from = /^rename from (.+)$/m.exec(patch)?.[1] ?? top
+    const [before, now] = await Promise.all([
+      runGitBuffer(root, ['--no-optional-locks', 'cat-file', 'blob', `HEAD:${from}`]),
+      readFile(file).catch(() => null),
+    ])
+    if (!before || !now || (!isUtf16(before) && !isUtf16(now))) return null
+    if (before.length > MAX_DIFF_FILE_BYTES || now.length > MAX_DIFF_FILE_BYTES) return null
+    const decode = (bytes: Buffer) => (isUtf16(bytes) ? decodeUtf16(bytes) : decodeText(bytes))
+    const dir = await mkdtemp(join(tmpdir(), 'cm-diff-'))
+    try {
+      await Promise.all([writeFile(join(dir, 'a'), decode(before)), writeFile(join(dir, 'b'), decode(now))])
+      const out = await runGitBuffer(
+        dir,
+        ['diff', '--no-index', '--no-color', '--no-ext-diff', '--no-textconv', `--unified=${full ? FULL_CONTEXT : DIFF_CONTEXT}`, '--', 'a', 'b'],
+        undefined,
+        // 1: they differ.
+        [0, 1],
+      )
+      if (out === null) return null
+      const hunks = out.toString('utf8')
+      const at = hunks.search(/^@@ /m)
+      // The same text in another encoding: the head alone, the file shows as it is.
+      return patch.replace(/^Binary files .*\n?/m, '') + (at === -1 ? '' : hunks.slice(at))
+    } finally {
+      await rm(dir, { recursive: true, force: true }).catch(() => undefined)
+    }
   }
 
   /**
@@ -434,7 +477,7 @@ export class FileTreeService extends TypedEmitter<Events> {
   private async patch(root: string, top: string, full: boolean): Promise<string | null> {
     const env = await this.guard(root)
     const diff = (paths: string[], renames: boolean) =>
-      runGit(
+      runGitText(
         root,
         [
           '--no-optional-locks',
@@ -905,6 +948,37 @@ function runGit(cwd: string, args: string[], env?: Record<string, string>): Prom
       (error, stdout) => resolve(error ? null : stdout),
     )
   })
+}
+
+/**
+ * git's output as bytes; null when it failed (an exit code not in `ok`) or is missing. File contents
+ * in a diff are in the file's own encoding, not UTF-8.
+ */
+function runGitBuffer(cwd: string, args: string[], env?: Record<string, string>, ok: number[] = [0]): Promise<Buffer | null> {
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      [...GUARD, ...args],
+      {
+        cwd,
+        windowsHide: true,
+        timeout: 15_000,
+        encoding: 'buffer',
+        maxBuffer: 64 * 1024 * 1024,
+        env: env && Object.keys(env).length > 0 ? { ...process.env, ...env } : undefined,
+      },
+      (error, stdout) => {
+        const code = error ? (typeof error.code === 'number' ? error.code : -1) : 0
+        resolve(ok.includes(code) && !error?.killed ? stdout : null)
+      },
+    )
+  })
+}
+
+/** git's output with files' contents read as `decodeText` reads them (Latin-1 lines without `�`). */
+async function runGitText(cwd: string, args: string[], env?: Record<string, string>): Promise<string | null> {
+  const out = await runGitBuffer(cwd, args, env)
+  return out === null ? null : decodeText(out)
 }
 
 /** A folder without git: its files up to the limits, leaving out what is hidden in the tree and `node_modules`. */

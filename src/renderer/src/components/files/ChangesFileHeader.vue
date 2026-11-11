@@ -21,6 +21,8 @@ const props = defineProps<{
   removed: number
   collapsed: boolean
   seen: SeenState
+  /** Something to know about the changes, beside the name (e.g. that only line endings changed). */
+  notice?: string | null
 }>()
 const emit = defineEmits<{ toggle: []; seen: []; open: [] }>()
 
@@ -54,6 +56,7 @@ const iconButton =
     <component :is="icon.icon" :class="cn('size-[16px] shrink-0', icon.class)" />
     <span :class="cn('shrink-0 font-medium', state?.status === 'deleted' && 'line-through')" v-tooltip="absolute">{{ name }}</span>
     <span v-if="dir" class="min-w-0 truncate text-muted-foreground" v-tooltip="absolute">{{ dir }}</span>
+    <span v-if="notice" class="min-w-0 truncate text-muted-foreground/80" v-tooltip="notice">· {{ notice }}</span>
     <span class="flex-1" />
     <span v-if="seen === 'changed'" class="shrink-0 truncate text-[11px] text-warning">Geändert, seit gesehen</span>
     <span

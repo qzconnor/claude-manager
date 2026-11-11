@@ -7,12 +7,19 @@ export interface DiffLine {
   /** Its number in the old and in the new file; null where it has none (added, removed, hunk). */
   old: number | null
   new: number | null
+  /**
+   * How a removed or added line ends where only that changed (the text is the same as its counterpart's):
+   * shown at its end, else the change can't be seen.
+   */
+  eol?: 'crlf' | 'lf'
 }
 
 export interface ParsedDiff {
   lines: DiffLine[]
   added: number
   removed: number
+  /** That lines changed only their line ending, e.g. „Nur Zeilenenden geändert (CRLF → LF)“. */
+  eol?: string
 }
 
 const HUNK_RE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@ ?(.*)$/
@@ -34,12 +41,19 @@ function textLines(text: string): string[] {
  */
 export function parsePatch(patch: string): ParsedDiff {
   const lines: DiffLine[] = []
+  /** Whether each line ended with CR LF, for the changes of line endings. */
+  const crlf: boolean[] = []
   let added = 0
   let removed = 0
   let old = 0
   let cur = 0
   let inHunk = false
-  for (const line of textLines(patch)) {
+  const rows = patch.split('\n')
+  if (patch.endsWith('\n')) rows.pop()
+  for (const row of patch === '' ? [] : rows) {
+    const cr = row.endsWith('\r')
+    const line = cr ? row.slice(0, -1) : row
+    crlf[lines.length] = cr
     const head = HUNK_RE.exec(line)
     if (head) {
       old = Number(head[1])
@@ -64,7 +78,43 @@ export function parsePatch(patch: string): ParsedDiff {
       inHunk = false
     }
   }
-  return { lines, added, removed }
+  const eol = markLineEndings(lines, crlf, added + removed)
+  return eol ? { lines, added, removed, eol } : { lines, added, removed }
+}
+
+/**
+ * Marks removed and added lines that differ only in their line ending (`eol`), each removed line paired
+ * with the added one at its place in the change, as git writes them. Without the marks, a file whose
+ * line endings changed (CRLF ↔ LF) shows lines removed and added again as they were.
+ *
+ * @returns The note for the head of the diff; undefined when no line changed only its ending.
+ */
+function markLineEndings(lines: DiffLine[], crlf: boolean[], changed: number): string | undefined {
+  let pairs = 0
+  const directions = new Set<string>()
+  for (let i = 0; i < lines.length; ) {
+    if (lines[i]!.kind !== 'del' && lines[i]!.kind !== 'add') {
+      i++
+      continue
+    }
+    const dels: number[] = []
+    const adds: number[] = []
+    for (; i < lines.length && lines[i]!.kind === 'del'; i++) dels.push(i)
+    for (; i < lines.length && lines[i]!.kind === 'add'; i++) adds.push(i)
+    for (let k = 0; k < Math.min(dels.length, adds.length); k++) {
+      const del = dels[k]!
+      const add = adds[k]!
+      if (lines[del]!.text !== lines[add]!.text || crlf[del] === crlf[add]) continue
+      lines[del]!.eol = crlf[del] ? 'crlf' : 'lf'
+      lines[add]!.eol = crlf[add] ? 'crlf' : 'lf'
+      directions.add(crlf[del] ? 'CRLF → LF' : 'LF → CRLF')
+      pairs++
+    }
+  }
+  if (pairs === 0) return undefined
+  const direction = directions.size === 1 ? [...directions][0]! : 'CRLF ↔ LF'
+  if (pairs * 2 === changed) return `Nur Zeilenenden geändert (${direction})`
+  return `Zeilenenden in ${pairs} ${pairs === 1 ? 'Zeile' : 'Zeilen'} geändert (${direction})`
 }
 
 /** A whole file as lines of a diff: unchanged (`context`), or all added for a file git doesn't know yet. */

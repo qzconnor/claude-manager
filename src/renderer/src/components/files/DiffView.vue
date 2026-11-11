@@ -163,6 +163,8 @@ const notice = computed(() => {
       return 'Kein Git-Repository'
     case 'new':
       return state.value?.status === 'added' ? 'Neu, noch in keinem Commit' : 'Neu, Git kennt sie noch nicht'
+    case 'diff':
+      return parsed.value.eol ?? null
     default:
       return null
   }

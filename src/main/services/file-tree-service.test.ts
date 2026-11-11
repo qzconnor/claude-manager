@@ -439,6 +439,53 @@ describe('FileTreeService with git', () => {
     expect(result.patch).toContain('new mode 100755')
     expect(result.text).toBe('echo hi\n')
   })
+
+  /** As `>` writes it in Windows PowerShell 5.1: UTF-16 with byte order mark and CRLF. */
+  const utf16 = (text: string) => Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, 'utf16le')])
+
+  it('shows the changes of a UTF-16 file instead of calling it binary', async () => {
+    const repo = join(dir, 'repo')
+    await mkdir(repo)
+    git(repo, 'init', '-q')
+    await writeFile(join(repo, 'out.txt'), utf16('Größe\r\nalt\r\nEnde\r\n'))
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-qm', 'init')
+    await writeFile(join(repo, 'out.txt'), utf16('Größe\r\nneu\r\nEnde\r\n'))
+    // git itself takes it for binary.
+    expect(git(repo, 'diff', 'HEAD')).toContain('Binary files')
+
+    const result = await service.diff(repo, 'out.txt', false)
+    expect(result.binary).toBe(false)
+    expect(result.patch).toContain('diff --git a/out.txt b/out.txt')
+    expect(result.patch).not.toContain('Binary files')
+    expect(result.patch).toContain(' Größe\r\n-alt\r\n+neu\r\n Ende\r\n')
+  })
+
+  it('reads a new UTF-16 file as text', async () => {
+    const repo = join(dir, 'repo')
+    await mkdir(repo)
+    git(repo, 'init', '-q')
+    await writeFile(join(repo, 'a.txt'), 'a\n')
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-qm', 'init')
+    await writeFile(join(repo, 'new.txt'), utf16('Grüße\r\n'))
+    expect(await service.diff(repo, 'new.txt', false)).toMatchObject({ binary: false, text: 'Grüße\r\n' })
+  })
+
+  it('reads a file saved as Latin-1 without replacement characters', async () => {
+    const repo = join(dir, 'repo')
+    await mkdir(repo)
+    git(repo, 'init', '-q')
+    await writeFile(join(repo, 'alt.txt'), Buffer.from('Gr\xfc\xdfe\nalt\n', 'latin1'))
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-qm', 'init')
+    await writeFile(join(repo, 'alt.txt'), Buffer.from('Gr\xfc\xdfe\nneu \xe4\n', 'latin1'))
+    const result = await service.diff(repo, 'alt.txt', false)
+    expect(result.patch).toContain(' Grüße\n-alt\n+neu ä\n')
+    expect(result.patch).not.toContain('�')
+    await writeFile(join(repo, 'alt.txt'), Buffer.from('Gr\xfc\xdfe\nalt\n', 'latin1'))
+    expect((await service.diff(repo, 'alt.txt', false)).text).toBe('Grüße\nalt\n')
+  })
 })
 
 describe('FileTreeService.list', () => {

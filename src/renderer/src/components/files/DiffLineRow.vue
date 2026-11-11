@@ -46,6 +46,8 @@ const GUTTER_CLASS: Record<DiffLine['kind'], string> = {
   hunk: 'bg-(--diff-hunk) text-(--diff-number)',
 }
 const SIGN: Record<DiffLine['kind'], string> = { context: ' ', add: '+', del: '−', hunk: ' ' }
+/** A line that changed only its ending shows it: carriage return and line feed as their symbols. */
+const EOL = { crlf: '␍␊', lf: '␊' } as const
 
 const rowClass = computed(() => (props.newFile && props.line.kind === 'add' ? 'bg-(--diff-add-new)' : ROW_CLASS[props.line.kind]))
 /**
@@ -87,7 +89,6 @@ const style = computed(() => {
         <span v-if="withSign" class="w-[1ch]">{{ SIGN[line.kind] }}</span>
       </template>
     </span>
-    <span v-if="html !== null" :class="codeClass" v-html="html" />
-    <span v-else :class="codeClass">{{ text }}</span>
+    <span :class="codeClass"><span v-if="html !== null" v-html="html" /><template v-else>{{ text }}</template><span v-if="line.eol" class="text-(--diff-number) select-none">{{ EOL[line.eol] }}</span></span>
   </div>
 </template>
