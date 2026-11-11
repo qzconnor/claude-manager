@@ -3,7 +3,7 @@ import { chmod, mkdtemp, mkdir, readdir, readFile, rm, stat, symlink, unlink, ut
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { FileTreeService, filterGuard, gitStateChange, isTreePath, MAX_GREP_MATCHES, parseGitStatus, parseGrep } from './file-tree-service'
+import { FileTreeService, filterGuard, gitStateChange, hunkPatch, isTreePath, MAX_GREP_MATCHES, parseGitStatus, parseGrep } from './file-tree-service'
 
 describe('isTreePath', () => {
   it('takes paths inside the root, joined with /', () => {
@@ -751,5 +751,160 @@ describe('FileTreeService.grep', () => {
 
   it('searches only open trees', async () => {
     await expect(service.grep(dir, 'x')).rejects.toThrow('in keinem offenen Dateibaum')
+  })
+})
+
+describe('hunkPatch', () => {
+  const patch = Buffer.from(
+    'diff --git a/x b/x\nindex 1..2 100644\n--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n-a\r\n+b\r\n c\n@@ -9 +9 @@\n-ü\n+ö\n',
+  )
+
+  it('keeps the head of the patch and the one section, byte for byte', () => {
+    expect(hunkPatch(patch, 0)?.toString()).toBe('diff --git a/x b/x\nindex 1..2 100644\n--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n-a\r\n+b\r\n c\n')
+    expect(hunkPatch(patch, 1)?.toString()).toBe('diff --git a/x b/x\nindex 1..2 100644\n--- a/x\n+++ b/x\n@@ -9 +9 @@\n-ü\n+ö\n')
+  })
+
+  it('has no section it does not have', () => {
+    expect(hunkPatch(patch, 2)).toBeNull()
+    expect(hunkPatch(patch, -1)).toBeNull()
+  })
+})
+
+describe('FileTreeService staging and discarding', () => {
+  let dir: string
+  let service: FileTreeService
+  /** What went to the recycle bin: the file's name and what it held. */
+  let trashed: { name: string; content: string }[]
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'file-tree-stage-'))
+    vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
+    vi.stubEnv('GIT_CONFIG_GLOBAL', join(dir, 'no-gitconfig'))
+    vi.stubEnv('GIT_CEILING_DIRECTORIES', tmpdir())
+    vi.stubEnv('GIT_DIR', undefined)
+    vi.stubEnv('GIT_WORK_TREE', undefined)
+    trashed = []
+    service = new FileTreeService(async (path) => {
+      trashed.push({ name: path.split(/[\\/]/).pop()!, content: await readFile(path, 'utf8') })
+      await rm(path)
+    })
+  })
+  afterEach(async () => {
+    vi.unstubAllEnvs()
+    service.dispose()
+    await rm(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  })
+
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'init.defaultBranch=main', ...args], {
+      cwd: dir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+  const lines = (count: number, change: Record<number, string> = {}) =>
+    Array.from({ length: count }, (_, i) => change[i + 1] ?? `line ${i + 1}`).join('\n') + '\n'
+
+  async function repo(files: Record<string, string | Buffer>) {
+    git('init', '-q')
+    for (const [name, content] of Object.entries(files)) await writeFile(join(dir, name), content)
+    git('add', '.')
+    git('commit', '-qm', 'init')
+    service.watch([{ root: dir, dirs: [''] }])
+  }
+
+  it('stages a file and takes it out again', async () => {
+    await repo({ 'a.txt': 'one\n' })
+    await writeFile(join(dir, 'a.txt'), 'two\n')
+    await service.stage(dir, 'a.txt')
+    expect(git('diff', '--cached', '--name-only')).toBe('a.txt\n')
+    await service.unstage(dir, 'a.txt')
+    expect(git('diff', '--cached', '--name-only')).toBe('')
+    expect(await readFile(join(dir, 'a.txt'), 'utf8')).toBe('two\n')
+  })
+
+  it('takes a file out of the index before the first commit', async () => {
+    git('init', '-q')
+    service.watch([{ root: dir, dirs: [''] }])
+    await writeFile(join(dir, 'new.txt'), 'x\n')
+    await service.stage(dir, 'new.txt')
+    expect(git('ls-files')).toBe('new.txt\n')
+    await service.unstage(dir, 'new.txt')
+    expect(git('ls-files')).toBe('')
+  })
+
+  it('discards the changes of a file, staged ones too, keeping the file as it was in the recycle bin', async () => {
+    await repo({ 'a.txt': 'one\n' })
+    await writeFile(join(dir, 'a.txt'), 'two\n')
+    git('add', 'a.txt')
+    await writeFile(join(dir, 'a.txt'), 'three\n')
+    await service.discard(dir, 'a.txt')
+    expect(await readFile(join(dir, 'a.txt'), 'utf8')).toBe('one\n')
+    expect(git('status', '--porcelain')).toBe('')
+    expect(trashed).toEqual([{ name: 'a.txt', content: 'three\n' }])
+  })
+
+  it('puts a file git did not have in the last commit into the recycle bin', async () => {
+    await repo({ 'a.txt': 'one\n' })
+    await writeFile(join(dir, 'new.txt'), 'new\n')
+    await writeFile(join(dir, 'added.txt'), 'added\n')
+    git('add', 'added.txt')
+    await service.discard(dir, 'new.txt')
+    await service.discard(dir, 'added.txt')
+    expect(trashed).toEqual([
+      { name: 'new.txt', content: 'new\n' },
+      { name: 'added.txt', content: 'added\n' },
+    ])
+    expect(git('status', '--porcelain')).toBe('')
+  })
+
+  it('moves a file git mv moved back to its place', async () => {
+    await repo({ 'old.txt': 'x\n' })
+    git('mv', 'old.txt', 'new.txt')
+    await service.discard(dir, 'new.txt')
+    expect(await readFile(join(dir, 'old.txt'), 'utf8')).toBe('x\n')
+    expect(git('status', '--porcelain')).toBe('')
+  })
+
+  it('stages one section of the changes and discards another', async () => {
+    await repo({ 'f.txt': lines(30) })
+    await writeFile(join(dir, 'f.txt'), lines(30, { 2: 'first change', 25: 'second change' }))
+    const { patch } = await service.diff(dir, 'f.txt', false)
+    await service.applyHunk(dir, 'f.txt', patch, 0, false)
+    expect(git('diff', '--cached')).toContain('+first change')
+    expect(git('diff', '--cached')).not.toContain('second change')
+
+    const now = (await service.diff(dir, 'f.txt', false)).patch
+    await service.applyHunk(dir, 'f.txt', now, 1, true)
+    expect(await readFile(join(dir, 'f.txt'), 'utf8')).toBe(lines(30, { 2: 'first change' }))
+    expect(trashed.map((t) => t.name)).toEqual(['f.txt'])
+  })
+
+  it('touches nothing when the file changed since it was shown, or is new', async () => {
+    await repo({ 'f.txt': lines(5) })
+    await writeFile(join(dir, 'f.txt'), lines(5, { 1: 'shown' }))
+    const { patch } = await service.diff(dir, 'f.txt', false)
+    await writeFile(join(dir, 'f.txt'), lines(5, { 1: 'changed since' }))
+    await expect(service.applyHunk(dir, 'f.txt', patch, 0, true)).rejects.toThrow('hat sich inzwischen geändert')
+    expect(await readFile(join(dir, 'f.txt'), 'utf8')).toBe(lines(5, { 1: 'changed since' }))
+
+    await writeFile(join(dir, 'n.txt'), 'n\n')
+    git('add', 'n.txt')
+    const added = (await service.diff(dir, 'n.txt', false)).patch
+    await expect(service.applyHunk(dir, 'n.txt', added, 0, true)).rejects.toThrow('nur als Ganzes')
+    expect(trashed).toEqual([])
+  })
+
+  it('takes sections only of files in UTF-8, as the view shows others converted', async () => {
+    await repo({ 'alt.txt': Buffer.from('Größe\n', 'latin1') })
+    await writeFile(join(dir, 'alt.txt'), Buffer.from('Größer\n', 'latin1'))
+    const { patch } = await service.diff(dir, 'alt.txt', false)
+    expect(patch).toContain('+Größer')
+    await expect(service.applyHunk(dir, 'alt.txt', patch, 0, false)).rejects.toThrow('nur bei Dateien in UTF-8')
+  })
+
+  it('works only in a repository', async () => {
+    service.watch([{ root: dir, dirs: [''] }])
+    await writeFile(join(dir, 'a.txt'), 'x')
+    await expect(service.stage(dir, 'a.txt')).rejects.toThrow('in keinem Git-Repository')
   })
 })

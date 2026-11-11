@@ -19,6 +19,7 @@ import {
   GitCommitHorizontalIcon,
   ListFilterIcon,
   ListTreeIcon,
+  MinusIcon,
   PencilIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -27,6 +28,7 @@ import {
   TextCursorInputIcon,
   TextSearchIcon,
   Trash2Icon,
+  Undo2Icon,
   XIcon,
 } from '@lucide/vue'
 import { useElementSize } from '@vueuse/core'
@@ -51,6 +53,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { MIN_CONTENT_QUERY, useContentSearch } from '@/composables/useContentSearch'
 import { useFileTreeModel } from '@/composables/useFileTreeModel'
+import { useGitActions } from '@/composables/useGitActions'
 import { useLauncher } from '@/composables/useLauncher'
 import { useOpenFile } from '@/composables/useOpenFile'
 import { attempt } from '@/lib/errors'
@@ -634,6 +637,23 @@ function onSearchKeydown(event: KeyboardEvent) {
 
 /** The entry the context menu is for; the tree's folder itself on an empty spot. */
 const menuTarget = ref<{ path: string; dir: boolean }>({ path: '', dir: true })
+/** How git sees the file the context menu is for; null for a folder and an unchanged file. */
+const menuState = computed(() => (menuTarget.value.dir ? null : decorations.value.file(menuTarget.value.path)))
+const gitActions = useGitActions()
+
+async function onGit(action: 'stage' | 'unstage' | 'discard', path: string) {
+  const state = decorations.value.file(path)
+  if (!state) return
+  const root = props.target.root
+  const done =
+    action === 'stage'
+      ? await gitActions.stage(root, path)
+      : action === 'unstage'
+        ? await gitActions.unstage(root, path)
+        : await gitActions.discard(root, path, state.status)
+  if (done) fileTree.refresh(model.value)
+}
+
 /** The folder new entries of the context menu go in: the entry's own, or the one a file lies in. */
 const menuFolder = computed(() => (menuTarget.value.dir ? menuTarget.value.path : parentPath(menuTarget.value.path)))
 const isSession = computed(() => props.target.session.mode === 'session')
@@ -1185,6 +1205,21 @@ const iconButton =
           <ListTreeIcon />
           Im Baum zeigen
         </ContextMenuItem>
+        <template v-if="menuState">
+          <ContextMenuSeparator />
+          <ContextMenuItem @select="onGit('stage', menuTarget.path)">
+            <PlusIcon />
+            Vormerken
+          </ContextMenuItem>
+          <ContextMenuItem v-if="menuState.staged" @select="onGit('unstage', menuTarget.path)">
+            <MinusIcon />
+            Nicht mehr vormerken
+          </ContextMenuItem>
+          <ContextMenuItem :variant="menuState.status === 'deleted' ? 'default' : 'destructive'" @select="onGit('discard', menuTarget.path)">
+            <Undo2Icon />
+            {{ menuState.status === 'deleted' ? 'Wiederherstellen…' : 'Änderungen verwerfen…' }}
+          </ContextMenuItem>
+        </template>
         <ContextMenuSeparator />
         <ContextMenuItem @select="create('file', menuFolder)">
           <FilePlusIcon />

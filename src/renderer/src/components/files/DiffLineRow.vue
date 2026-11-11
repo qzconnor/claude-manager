@@ -30,7 +30,10 @@ const props = defineProps<{
   clipTop?: number
   /** Marked for a moment: the line a search hit leads to. */
   marked?: boolean
+  /** A section's row: with its buttons to stage or discard it. */
+  hunkActions?: boolean
 }>()
+const emit = defineEmits<{ stage: []; discard: [] }>()
 
 const max = computed(() => (props.wrap ? MAX_WRAPPED_COLUMNS : MAX_DIFF_COLUMNS))
 const text = computed(() => shownText(props.line.text, max.value))
@@ -112,5 +115,25 @@ const style = computed(() => {
     </span>
     <span v-if="marked" aria-hidden="true" class="pointer-events-none absolute inset-0 z-[11] bg-primary/15 ring-1 ring-primary/50 ring-inset" />
     <span :class="cn(codeClass, parts && 'relative')"><span v-if="parts" aria-hidden="true" :class="marksClass"><template v-for="(part, i) in parts" :key="i"><span v-if="part.changed" :class="cn('rounded-[2px]', MARK_CLASS[line.kind as 'add' | 'del'])">{{ part.text }}</span><template v-else>{{ part.text }}</template></template></span><span v-if="html !== null" class="relative" v-html="html" /><span v-else class="relative">{{ text }}</span><span v-if="line.eol" class="relative text-(--diff-number) select-none">{{ EOL[line.eol] }}</span></span>
+    <!-- At the right edge of the view however far it scrolls sideways. -->
+    <span
+      v-if="hunkActions"
+      class="sticky right-0 z-10 ml-auto flex shrink-0 items-center gap-0.5 bg-(--diff-hunk) pr-2 pl-3 font-sans text-[11px] not-italic select-none"
+    >
+      <button
+        type="button"
+        class="cursor-pointer rounded px-1.5 leading-[18px] text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+        @click="emit('stage')"
+      >
+        Vormerken
+      </button>
+      <button
+        type="button"
+        class="cursor-pointer rounded px-1.5 leading-[18px] text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
+        @click="emit('discard')"
+      >
+        Verwerfen
+      </button>
+    </span>
   </div>
 </template>

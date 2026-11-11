@@ -171,6 +171,10 @@ export const IpcInvoke = {
   filesRename: 'files:rename',
   filesTrash: 'files:trash',
   filesGrep: 'files:grep',
+  filesStage: 'files:stage',
+  filesUnstage: 'files:unstage',
+  filesDiscard: 'files:discard',
+  filesHunk: 'files:hunk',
 
   commandStatus: 'command:status',
   commandSetRegistered: 'command:set-registered',
@@ -583,6 +587,20 @@ export interface ManagerApi {
      * ignores; a newer search of the tree ends this one.
      */
     grep(root: string, query: string): Promise<ContentSearchResult>
+    /** Stages a changed file of an open tree (`git add`). */
+    stage(root: string, path: string): Promise<void>
+    /** Takes a file of an open tree out of what is staged. */
+    unstage(root: string, path: string): Promise<void>
+    /**
+     * Gives a file of an open tree back the state of the last commit; the file as it was goes to the
+     * recycle bin, a new one whole.
+     */
+    discard(root: string, path: string): Promise<void>
+    /**
+     * Stages a section of a file's changes, or gives it back the state of the last commit (`discard`).
+     * `patch`: the changes as the view showed them (`diff` without the whole file); `index`: the section.
+     */
+    hunk(root: string, path: string, change: { patch: string; index: number; discard: boolean }): Promise<void>
     /** Files a session's Claude (or one of its subagents) reads, writes or commits, as it happens. */
     onTouched(cb: (terminalId: string, touches: FileTouch[]) => void): Unsubscribe
   }

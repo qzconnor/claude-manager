@@ -1,8 +1,9 @@
+import { isUtf8 } from 'node:buffer'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { readdirSync, watch, type FSWatcher } from 'node:fs'
-import { lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathProblem } from '@shared/file-names'
 import { folderKey } from '@shared/folders'
 import type {
@@ -325,6 +326,97 @@ export class FileTreeService extends TypedEmitter<Events> {
         resolve({ files, matches: files.reduce((sum, file) => sum + file.matches.length, 0), truncated })
       })
     })
+  }
+
+  /** Stages a changed file of an open tree (`git add`), its deletion too. */
+  async stage(root: string, path: string): Promise<void> {
+    const { top } = await this.repoEntry(root, path)
+    // The repository's own filters don't run (see `filterGuard`), like everywhere the tree uses git.
+    await this.gitOrFail(root, ['add', '--', topPathspec(top)], 'Die Datei ließ sich nicht vormerken.', await this.guard(root))
+  }
+
+  /** Takes a file of an open tree out of what is staged; its changes stay. */
+  async unstage(root: string, path: string): Promise<void> {
+    const { top } = await this.repoEntry(root, path)
+    const head = (await runGit(root, ['rev-parse', '--verify', '--quiet', 'HEAD'])) !== null
+    // Before the first commit there is nothing to restore from: the file leaves the index.
+    const args = head ? ['restore', '--staged', '--', topPathspec(top)] : ['rm', '--cached', '-q', '--', topPathspec(top)]
+    await this.gitOrFail(root, args, 'Die Datei ließ sich nicht aus dem Vorgemerkten nehmen.', await this.guard(root))
+  }
+
+  /**
+   * Gives a file of an open tree back the state of the last commit, staged changes too. The file as it
+   * was goes to the recycle bin first; one git didn't have in the last commit goes there whole (it
+   * leaves the index first), and a file `git mv` moved here gets its old place back.
+   */
+  async discard(root: string, path: string): Promise<void> {
+    const { top, file } = await this.repoEntry(root, path)
+    const env = await this.guard(root)
+    const failed = 'Die Änderungen ließen sich nicht verwerfen.'
+    const committed = (await runGit(root, ['cat-file', '-e', `HEAD:${top}`])) !== null
+    if (committed) {
+      await this.keepCopy(file)
+      await this.gitOrFail(root, ['restore', '--source=HEAD', '--staged', '--worktree', '--', topPathspec(top)], failed, env)
+      return
+    }
+    const from = await this.renamedFrom(root, top, env)
+    await this.gitOrFail(root, ['rm', '--cached', '-q', '--ignore-unmatch', '--', topPathspec(top)], failed, env)
+    if (await exists(file)) await this.trashItem(file)
+    if (from) await this.gitOrFail(root, ['restore', '--source=HEAD', '--staged', '--worktree', '--', topPathspec(from)], failed, env)
+  }
+
+  /**
+   * Stages one section (`index`, from 0) of a file's changes, or gives it back the state of the last
+   * commit in the file (`discard`; the file as it was goes to the recycle bin first). Only when the
+   * changes are still those the view showed (`seen`, the patch of `diff` without the whole file); a
+   * new, deleted or moved file goes whole.
+   */
+  async applyHunk(root: string, path: string, seen: string, index: number, discard: boolean): Promise<void> {
+    const { top, file } = await this.repoEntry(root, path)
+    const env = await this.guard(root)
+    const raw = await runGitBuffer(
+      root,
+      ['--no-optional-locks', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', `--unified=${DIFF_CONTEXT}`, 'HEAD', '--', topPathspec(top)],
+      env,
+    )
+    // Shown converted (UTF-16, Latin-1): the sections can't go back into the file as they were shown.
+    if (raw !== null && (/^Binary files /m.test(raw.toString('latin1')) || !isUtf8(raw))) {
+      throw new Error('Abschnitte gehen nur bei Dateien in UTF-8. Diese Datei geht nur als Ganzes.')
+    }
+    if (raw === null || raw.toString('utf8') !== seen) throw new Error('Die Datei hat sich inzwischen geändert. Die Ansicht zeigt jetzt ihren neuen Stand.')
+    if (/^(new|deleted) file mode /m.test(seen)) throw new Error('Eine neue oder gelöschte Datei geht nur als Ganzes.')
+    const patch = hunkPatch(raw, index)
+    if (!patch) throw new Error('Diesen Abschnitt gibt es nicht mehr.')
+    if (discard) await this.keepCopy(file)
+    const applied = await runGitInput(root, ['apply', discard ? '-R' : '--cached', '--whitespace=nowarn', '-'], patch, env)
+    if (!applied) {
+      throw new Error(discard ? 'Der Abschnitt ließ sich nicht verwerfen.' : 'Der Abschnitt ließ sich nicht vormerken. Vielleicht ist er schon vorgemerkt.')
+    }
+  }
+
+  /** A file of an open tree in a repository: its path from the repository's top and on disk. */
+  private async repoEntry(root: string, path: string): Promise<{ top: string; file: string }> {
+    const file = this.entryOf(root, path, false)
+    const prefix = await this.prefix(root)
+    if (prefix === null) throw new Error('Der Ordner liegt in keinem Git-Repository.')
+    return { top: `${prefix}${path}`, file }
+  }
+
+  /** The file as it is, as a copy in the recycle bin, before git overwrites it; without a recycle bin nothing. */
+  private async keepCopy(file: string): Promise<void> {
+    if (!(await exists(file))) return
+    const dir = await mkdtemp(join(tmpdir(), 'claude-manager-'))
+    try {
+      const copy = join(dir, basename(file))
+      await copyFile(file, copy)
+      await this.trashItem(copy).catch(() => undefined)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }
+
+  private async gitOrFail(root: string, args: string[], message: string, env?: Record<string, string>): Promise<void> {
+    if ((await runGit(root, args, env)) === null) throw new Error(message)
   }
 
   /**
@@ -1071,6 +1163,19 @@ function matchOf(full: string, line: number, query: string): ContentMatch {
   return { line, text: shown, ranges }
 }
 
+/**
+ * The patch of a file with only its section `index` (from 0), as git wrote it (bytes, so no line
+ * ending or encoding changes); null when it has no such section.
+ */
+export function hunkPatch(patch: Buffer, index: number): Buffer | null {
+  // latin1: one character per byte, so the offsets are those of the bytes.
+  const text = patch.toString('latin1')
+  const starts = [...text.matchAll(/^@@ /gm)].map((match) => match.index)
+  const start = starts[index]
+  if (start === undefined || index < 0) return null
+  return Buffer.concat([patch.subarray(0, starts[0]), patch.subarray(start, starts[index + 1] ?? patch.length)])
+}
+
 /** Why a file operation on `path` failed, in words for the user. */
 function fileError(error: unknown, path: string): string {
   const name = `„${path.split('/').pop()}“`
@@ -1216,6 +1321,26 @@ function runGitBuffer(cwd: string, args: string[], env?: Record<string, string>,
 }
 
 /** git's output with files' contents read as `decodeText` reads them (Latin-1 lines without `�`). */
+/** Runs git with `input` on its standard input; whether it succeeded. */
+function runGitInput(cwd: string, args: string[], input: Buffer, env?: Record<string, string>): Promise<boolean> {
+  return new Promise((resolve) => {
+    const child = spawn('git', [...GUARD, ...args], { cwd, windowsHide: true, env: { ...process.env, ...env } })
+    const timer = setTimeout(() => child.kill(), 15_000)
+    child.stdout.resume()
+    child.stderr.resume()
+    child.on('error', () => {
+      clearTimeout(timer)
+      resolve(false)
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      resolve(code === 0)
+    })
+    child.stdin.on('error', () => undefined)
+    child.stdin.end(input)
+  })
+}
+
 async function runGitText(cwd: string, args: string[], env?: Record<string, string>): Promise<string | null> {
   const out = await runGitBuffer(cwd, args, env)
   return out === null ? null : decodeText(out)

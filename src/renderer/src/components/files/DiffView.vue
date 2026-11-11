@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ExternalLinkIcon, FileWarningIcon, FoldVerticalIcon, UnfoldVerticalIcon, XIcon } from '@lucide/vue'
+import { ExternalLinkIcon, FileWarningIcon, FoldVerticalIcon, MinusIcon, PlusIcon, Undo2Icon, UnfoldVerticalIcon, XIcon } from '@lucide/vue'
 import { useElementSize } from '@vueuse/core'
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import type { FileDiff } from '@shared/types'
@@ -7,6 +7,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDiffStyle } from '@/composables/useDiffStyle'
 import { useFileTreeModel } from '@/composables/useFileTreeModel'
+import { useGitActions } from '@/composables/useGitActions'
 import { useOpenFile } from '@/composables/useOpenFile'
 import { errorMessage } from '@/lib/errors'
 import {
@@ -299,6 +300,45 @@ function openFile() {
   void openPath(absolute.value)
 }
 
+// ── Staging and discarding ──
+
+const gitActions = useGitActions()
+
+/** Sections go one by one where the changes show as git wrote them; a new, deleted or moved file goes whole. */
+const hunksApart = computed(
+  () => mode.value === 'diff' && !full.value && !!diff.value?.repo && !/^(new file|deleted file|rename from) /m.test(diff.value.patch),
+)
+/** The number of each section by the index of its row. */
+const hunkNumbers = computed(() => {
+  const numbers = new Map<number, number>()
+  lines.value.forEach((line, index) => {
+    if (line.kind === 'hunk') numbers.set(index, numbers.size)
+  })
+  return numbers
+})
+
+async function onFile(action: 'stage' | 'unstage' | 'discard') {
+  const { root, path } = props
+  const done =
+    action === 'stage'
+      ? await gitActions.stage(root, path)
+      : action === 'unstage'
+        ? await gitActions.unstage(root, path)
+        : !!state.value && (await gitActions.discard(root, path, state.value.status))
+  if (done) void load()
+}
+
+async function onHunk(row: number, discard: boolean) {
+  const number = hunkNumbers.value.get(row)
+  const patch = diff.value?.patch
+  if (number === undefined || !patch) return
+  const { root, path } = props
+  const done = discard ? await gitActions.discardHunk(root, path, patch, number) : await gitActions.stageHunk(root, path, patch, number)
+  // Refused because the file changed meanwhile: its changes as they are now.
+  void load()
+  return done
+}
+
 const iconButton =
   'flex size-[24px] shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 aria-pressed:bg-accent aria-pressed:text-foreground'
 </script>
@@ -326,6 +366,33 @@ const iconButton =
         <span v-if="parsed.removed" class="text-destructive">−{{ parsed.removed }}</span>
       </span>
       <Spinner v-if="loading && diff" class="size-[12px] shrink-0 text-muted-foreground" />
+      <!-- Like the buttons of a changed file in VS Code's source control. -->
+      <template v-if="state">
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <button type="button" aria-label="Vormerken" :class="iconButton" @click="onFile('stage')">
+              <PlusIcon class="size-[16px]" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Vormerken (git add)</TooltipContent>
+        </Tooltip>
+        <Tooltip v-if="state.staged">
+          <TooltipTrigger as-child>
+            <button type="button" aria-label="Nicht mehr vormerken" :class="iconButton" @click="onFile('unstage')">
+              <MinusIcon class="size-[16px]" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Nicht mehr vormerken</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <button type="button" aria-label="Änderungen verwerfen" :class="iconButton" @click="onFile('discard')">
+              <Undo2Icon class="size-[16px]" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{{ state.status === 'deleted' ? 'Wiederherstellen' : 'Änderungen verwerfen' }}</TooltipContent>
+        </Tooltip>
+      </template>
       <Tooltip v-if="mode === 'diff'">
         <TooltipTrigger as-child>
           <button
@@ -402,6 +469,9 @@ const iconButton =
             :number-width="numberWidth"
             :with-sign="withSign"
             :marked="view.index === markedIndex"
+            :hunk-actions="hunksApart && view.line.kind === 'hunk'"
+            @stage="onHunk(view.index, false)"
+            @discard="onHunk(view.index, true)"
           />
         </div>
         <p v-if="lines.length === 0" class="px-4 pt-3 text-center text-xs text-muted-foreground">Die Datei ist leer.</p>

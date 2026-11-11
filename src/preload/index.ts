@@ -185,6 +185,10 @@ const api: ManagerApi = {
     rename: (root, from, to) => invoke(IpcInvoke.filesRename, root, from, to),
     trash: (root, path) => invoke(IpcInvoke.filesTrash, root, path),
     grep: (root, query) => invoke(IpcInvoke.filesGrep, root, query),
+    stage: (root, path) => invoke(IpcInvoke.filesStage, root, path),
+    unstage: (root, path) => invoke(IpcInvoke.filesUnstage, root, path),
+    discard: (root, path) => invoke(IpcInvoke.filesDiscard, root, path),
+    hunk: (root, path, change) => invoke(IpcInvoke.filesHunk, root, path, change),
     onTouched: (cb) => subscribe(IpcEvent.filesTouched, cb),
   },
   command: {

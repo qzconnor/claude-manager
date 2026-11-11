@@ -102,6 +102,8 @@ const MAX_CHECKED_FOLDERS = 20_000
 const MAX_PATH_LENGTH = 32_767
 /** The longest text the content search of a tree takes. */
 const MAX_GREP_QUERY = 200
+/** The longest patch a section of changes is checked against (the diff view shows no longer one). */
+const MAX_HUNK_PATCH = 4 * 1024 * 1024
 
 /** An absolute path from the window. */
 function requirePath(value: unknown, name: string): string {
@@ -603,6 +605,16 @@ export function registerIpc(ctx: AppContext): void {
       throw new Error('Ungültiger Parameter: query')
     }
     return ctx.files.grep(requirePath(root, 'root'), query)
+  })
+  handle(IpcInvoke.filesStage, (_e, root: unknown, path: unknown) => ctx.files.stage(requirePath(root, 'root'), requireTreeEntry(path, 'path')))
+  handle(IpcInvoke.filesUnstage, (_e, root: unknown, path: unknown) => ctx.files.unstage(requirePath(root, 'root'), requireTreeEntry(path, 'path')))
+  handle(IpcInvoke.filesDiscard, (_e, root: unknown, path: unknown) => ctx.files.discard(requirePath(root, 'root'), requireTreeEntry(path, 'path')))
+  handle(IpcInvoke.filesHunk, (_e, root: unknown, path: unknown, change: unknown) => {
+    const { patch, index, discard } = (change ?? {}) as Record<string, unknown>
+    if (typeof patch !== 'string' || patch.length > MAX_HUNK_PATCH || !Number.isInteger(index) || (index as number) < 0) {
+      throw new Error('Ungültiger Parameter: change')
+    }
+    return ctx.files.applyHunk(requirePath(root, 'root'), requireTreeEntry(path, 'path'), patch, index as number, discard === true)
   })
   ctx.files.on('changed', (root, dirs, git, repo) => broadcast(IpcEvent.filesChanged, root, dirs, git, repo))
   ctx.files.on('touched', (terminalId, touches) => broadcast(IpcEvent.filesTouched, terminalId, touches))
