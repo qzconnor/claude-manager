@@ -1,3 +1,4 @@
+import { MAX_STATS_DAYS } from '@shared/defaults'
 import type { TerminalCreateOptions } from '@shared/types'
 import type { AppContext } from '../context'
 import {
@@ -169,7 +170,7 @@ export const routes: Route[] = [
     },
     handler: (ctx) => {
       requireAccount(ctx, ctx.params.accountId)
-      return ctx.app.usage.stats(ctx.params.accountId, queryInteger(ctx.query, 'days', 1, 365) ?? 30)
+      return ctx.app.usage.stats(ctx.params.accountId, queryInteger(ctx.query, 'days', 1, MAX_STATS_DAYS) ?? 30)
     },
   },
 

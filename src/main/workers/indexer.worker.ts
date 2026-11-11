@@ -8,7 +8,10 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { parentPort, workerData } from 'node:worker_threads'
+import { MAX_STATS_DAYS } from '@shared/defaults'
 import { readJson, writeJsonAtomic } from '../lib/json-file'
+import { ThrottledSave } from '../lib/throttled-save'
+import { dropOldUsage, firstStatsDay } from './index-cache'
 import { readAppended } from './read-appended'
 import {
   newTranscriptScan,
@@ -42,7 +45,6 @@ const CACHE_VERSION = 5
 const { cacheFile, searchCacheFile } = workerData as { cacheFile: string; searchCacheFile: string }
 let cache: Record<string, CacheEntry> = {}
 let cacheLoaded: Promise<void> | null = null
-let saveTimer: NodeJS.Timeout | null = null
 
 function ensureCache(): Promise<void> {
   cacheLoaded ??= readJson<CacheFile>(cacheFile).then((data) => {
@@ -51,13 +53,20 @@ function ensureCache(): Promise<void> {
   return cacheLoaded
 }
 
-function scheduleSave(): void {
-  if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    saveTimer = null
+/**
+ * The whole index is written at once (megabytes for a long history). Sessions at work change it all the
+ * time: it is written 3 seconds after a change, then at most once a minute. What a crash loses meanwhile
+ * is read from the transcripts again.
+ */
+const saver = new ThrottledSave(
+  () => {
+    dropOldUsage(Object.values(cache), firstStatsDay(new Date(), MAX_STATS_DAYS + 1))
     void writeJsonAtomic(cacheFile, { version: CACHE_VERSION, files: cache } satisfies CacheFile).catch(() => undefined)
-  }, 3000)
-}
+  },
+  3000,
+  60_000,
+)
+const scheduleSave = () => saver.schedule()
 
 interface TranscriptFile {
   path: string
@@ -214,11 +223,7 @@ async function scanSessions(projectsDir: string): Promise<IndexedSession[]> {
 async function tokenStats(projectsDir: string, days: number): Promise<TokenStatsResult> {
   await ensureCache()
   const files = await listTranscripts(projectsDir, true)
-  const since = new Date()
-  since.setHours(0, 0, 0, 0)
-  since.setDate(since.getDate() - (days - 1))
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const sinceDay = `${since.getFullYear()}-${pad(since.getMonth() + 1)}-${pad(since.getDate())}`
+  const sinceDay = firstStatsDay(new Date(), days)
 
   const seen = new Set<string>()
   const byDay = new Map<string, TokenTuple>()
@@ -312,6 +317,8 @@ async function handle(request: IndexerRequest): Promise<unknown> {
       return readToolCall(await readFile(request.filePath), request.toolUseId)
     case 'searchTranscripts':
       return searchIndex.search(request.projectsDir, request.query, request.limit)
+    case 'ping':
+      return true
   }
 }
 

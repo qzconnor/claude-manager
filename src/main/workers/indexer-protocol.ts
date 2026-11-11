@@ -8,6 +8,8 @@ export type IndexerRequest =
   | { method: 'readToolCall'; filePath: string; toolUseId: string }
   /** An empty query only brings the search index up to date. */
   | { method: 'searchTranscripts'; projectsDir: string; query: string; limit: number }
+  /** Answered between two files: whether the worker is still alive while a request takes long. */
+  | { method: 'ping' }
 
 export type IndexerResponse =
   | { id: number; ok: true; result: unknown }

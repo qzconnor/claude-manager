@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { net } from 'electron'
+import { MAX_STATS_DAYS } from '@shared/defaults'
 import { mergeFolderStats } from '@shared/token-stats'
 import type { AccountTokenStats, AccountUsage, DailyTokenStats, TokenCounts, UsageStatus, UsageWindow } from '@shared/types'
 import { addSample, forecastWindow, windowStart, type UsageSample } from '@shared/usage-forecast'
@@ -127,7 +128,7 @@ export class UsageService extends TypedEmitter<Events> {
   }
 
   async stats(accountId: string, days = 30): Promise<AccountTokenStats> {
-    const span = Math.max(1, Math.min(365, Math.floor(days)))
+    const span = Math.max(1, Math.min(MAX_STATS_DAYS, Math.floor(days)))
     const result = await this.indexer.request<TokenStatsResult>({
       method: 'tokenStats',
       projectsDir: this.accounts.paths(accountId).projectsDir,

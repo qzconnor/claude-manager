@@ -8,6 +8,7 @@ import { readFile, stat } from 'node:fs/promises'
 import { sep } from 'node:path'
 import { foldCase, searchTerms } from '@shared/utils'
 import { readJson, writeJsonAtomic } from '../lib/json-file'
+import { ThrottledSave } from '../lib/throttled-save'
 import type { TranscriptSearchHit } from './indexer-protocol'
 import { readAppended } from './read-appended'
 import { collectSearchText, SEARCH_ASSISTANT, SEARCH_USER } from './transcript-parser'
@@ -42,7 +43,12 @@ export class SearchIndex {
   /** Lower-case text of an entry, made when it is first searched. */
   private readonly folded = new WeakMap<Entry, string>()
   private loaded: Promise<void> | null = null
-  private saveTimer: NodeJS.Timeout | null = null
+  /** Written 5 seconds after a change, then at most once a minute (see the transcript index). */
+  private readonly saver = new ThrottledSave(
+    () => void writeJsonAtomic(this.cacheFile, { version: CACHE_VERSION, files: this.entries } satisfies CacheFile).catch(() => undefined),
+    5000,
+    60_000,
+  )
   private readonly refreshes = new Map<string, { at: number; pending: boolean; files: Promise<SearchFile[]> }>()
 
   constructor(
@@ -98,7 +104,7 @@ export class SearchIndex {
         changed = true
       }
     }
-    if (changed) this.scheduleSave()
+    if (changed) this.saver.schedule()
     return files
   }
 
@@ -144,15 +150,24 @@ export class SearchIndex {
         this.entries[path] = entry
       }
     }
+    void this.dropMissing()
   }
 
-  private scheduleSave(): void {
-    if (this.saveTimer) clearTimeout(this.saveTimer)
-    this.saveTimer = setTimeout(() => {
-      this.saveTimer = null
-      const data: CacheFile = { version: CACHE_VERSION, files: this.entries }
-      void writeJsonAtomic(this.cacheFile, data).catch(() => undefined)
-    }, 5000)
+  /**
+   * Drops the text of transcripts that are gone. A search only tidies up the folder it searches: the
+   * folders of a removed account, or one no longer searched, would otherwise stay in the index forever.
+   */
+  private async dropMissing(): Promise<void> {
+    let changed = false
+    for (const path of Object.keys(this.entries)) {
+      try {
+        await stat(path)
+      } catch {
+        delete this.entries[path]
+        changed = true
+      }
+    }
+    if (changed) this.saver.schedule()
   }
 }
 

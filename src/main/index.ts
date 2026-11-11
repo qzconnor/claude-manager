@@ -25,6 +25,7 @@ import { CswapImport } from './services/cswap-import'
 import { FileTreeService } from './services/file-tree-service'
 import { GitService } from './services/git-service'
 import { IndexerClient } from './services/indexer-client'
+import createIndexerWorker from './workers/indexer.worker?nodeWorker'
 import { NotificationService } from './services/notification-service'
 import { LoginProfiles } from './services/login-profiles'
 import { AutoSwitch } from './services/auto-switch'
@@ -79,7 +80,14 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   const cli = new ClaudeCli(() => settings.get().claude.executablePath)
   // Known before the first session starts, for the options that depend on it (see SessionPrompt).
   void cli.version()
-  const indexer = new IndexerClient(userDataDir)
+  const indexer = new IndexerClient(() =>
+    createIndexerWorker({
+      workerData: {
+        cacheFile: join(userDataDir, 'cache', 'transcript-index.json'),
+        searchCacheFile: join(userDataDir, 'cache', 'search-index.json'),
+      },
+    }),
+  )
   const dialogs = new WindowDialogs()
   let mainWindow: BrowserWindow | null = null
   // Claude Code's question whether to trust a folder comes up in the app, before the session starts.
