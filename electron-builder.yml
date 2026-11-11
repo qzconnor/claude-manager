@@ -29,6 +29,12 @@ asarUnpack:
 # One way only: turned off again, the encrypted cookies can't be read any more.
 electronFuses:
   enableCookieEncryption: true
+  # The app can't be made to run other code through the environment or a debugger: NODE_OPTIONS
+  # (e.g. --require) and --inspect are ignored, and it only starts from its own app.asar. Running
+  # as Node stays, the app asks the login shell for its environment with it (Linux).
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  onlyLoadAppFromAsar: true
 
 # node-pty and koffi use Node-API, so nothing has to be compiled for Electron: Windows takes the
 # prebuilds, on Linux `npm ci` compiles node-pty once for Node, which Electron loads as well.

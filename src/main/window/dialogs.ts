@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { BrowserWindow, dialog, ipcMain, type WebContents } from 'electron'
 import { IpcEvent, IpcSend } from '@shared/ipc'
 import type { DialogOptions, DialogRequest } from '@shared/types'
-import { revealWindow } from './main-window'
+import { fromAppWindow, revealWindow } from './main-window'
 
 interface PendingDialog {
   contents: WebContents
@@ -25,6 +25,7 @@ export class WindowDialogs {
 
   constructor() {
     ipcMain.on(IpcSend.dialogsReady, (event) => {
+      if (!fromAppWindow(event)) return
       this.watch(event.sender)
       this.listening.add(event.sender)
       for (const resolve of this.waiting.get(event.sender) ?? []) resolve()
@@ -34,6 +35,7 @@ export class WindowDialogs {
       }
     })
     ipcMain.on(IpcSend.dialogAnswer, (event, id: unknown, confirmed: unknown) => {
+      if (!fromAppWindow(event)) return
       const entry = typeof id === 'string' ? this.pending.get(id) : undefined
       if (!entry || entry.contents !== event.sender) return
       this.pending.delete(id as string)

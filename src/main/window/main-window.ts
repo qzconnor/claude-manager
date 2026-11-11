@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { BrowserWindow, screen, shell } from 'electron'
+import { BrowserWindow, screen, session, shell, type WebContents, type WebFrameMain } from 'electron'
 import type { AppSettings, WindowState } from '@shared/types'
 import { readJsonSync, writeJsonAtomic } from '../lib/json-file'
 import { guardBrowserGuests } from './browser-guests'
@@ -29,6 +29,30 @@ function restoreBounds(file: string): Partial<SavedBounds> {
 
 /** The app's own windows. Popups of browser pages are windows too, but must get nothing of the app. */
 const appWindows = new WeakSet<BrowserWindow>()
+
+/** What the app's own pages may use: the clipboard (copying, and pasting into the terminal). */
+const APP_PERMISSIONS = new Set(['clipboard-read', 'clipboard-sanitized-write'])
+let appSessionGuarded = false
+
+/** The app's pages get no permission beyond the clipboard; Electron would grant them all. */
+function guardAppSession(): void {
+  if (appSessionGuarded) return
+  appSessionGuarded = true
+  session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => callback(APP_PERMISSIONS.has(permission)))
+  session.defaultSession.setPermissionCheckHandler((_contents, permission) => APP_PERMISSIONS.has(permission))
+}
+
+/**
+ * Whether a message to the main process comes from the page of one of the app's windows: not from a
+ * browser tab (webview), the popup of a page or a frame inside a page. Those have no preload, but a
+ * page whose renderer was taken over could send the app's messages anyway.
+ */
+export function fromAppWindow(event: { sender: WebContents; senderFrame: WebFrameMain | null }): boolean {
+  const frame = event.senderFrame
+  if (!frame || frame.parent) return false
+  const win = BrowserWindow.fromWebContents(event.sender)
+  return !!win && appWindows.has(win) && win.webContents === event.sender
+}
 
 /** The app's windows that are open, without the popups of browser pages. */
 export function openAppWindows(): BrowserWindow[] {
@@ -85,6 +109,7 @@ export function createMainWindow(settings: AppSettings, userDataDir: string, { h
     },
   })
   appWindows.add(win)
+  guardAppSession()
   guardBrowserGuests(win)
   win.setMenu(null)
   if (saved.maximized) {
