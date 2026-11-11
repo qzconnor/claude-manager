@@ -1,10 +1,24 @@
+import { existsSync, readFileSync } from 'node:fs'
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { readShellEnv } from './shell-env'
 
+/**
+ * Whether the process still runs. A killed one may stay a zombie: in a container (as in the CI) the
+ * first process often reaps nothing, and `kill(pid, 0)` still finds it. /proc tells its state.
+ */
 const alive = (pid: number) => {
+  if (existsSync('/proc/self/stat')) {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+      const state = stat.slice(stat.lastIndexOf(')') + 2)[0]
+      return state !== 'Z' && state !== 'X'
+    } catch {
+      return false
+    }
+  }
   try {
     process.kill(pid, 0)
     return true

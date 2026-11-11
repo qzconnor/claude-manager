@@ -15,9 +15,9 @@ const ASK_USER = 'Ask the user to upload it themselves (they can take over the b
 
 /** Why `path` can't be uploaded, or null when it can. `folders`: where uploads may come from. */
 export function uploadProblem(path: string, folders: readonly string[], platform: NodeJS.Platform = process.platform): string | null {
-  if (!isAbsolute(path)) return `Not an absolute path: ${path}`
   // Even looking at a network path makes Windows sign in to the server.
   if (isNetworkPath(path, platform)) return `Files on network shares can't be uploaded: ${path}. ${ASK_USER}`
+  if (!isAbsolute(path)) return `Not an absolute path: ${path}`
   let real: string
   try {
     real = realpathSync.native(path)

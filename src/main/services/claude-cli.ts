@@ -124,7 +124,8 @@ export function npmShimTarget(shim: string, content: string, findNode: () => str
   // npm 7+: "%dp0%\node_modules\…\cli.js" %*  — older npm: "%~dp0\node_modules\…\cli.js" %*
   const match = /"%(?:~dp0|dp0%)\\([^"%]+?\.(?:c?js|mjs|exe))"\s*%\*/i.exec(content)
   if (!match) return null
-  const target = join(dirname(shim), match[1])
+  // The shim names it with backslashes; split up, it is the same path where the tests run on Linux too.
+  const target = join(dirname(shim), ...match[1].split('\\'))
   if (!isFile(target)) return null
   if (/\.exe$/i.test(target)) return { file: target, args: [] }
   const local = join(dirname(shim), 'node.exe')
