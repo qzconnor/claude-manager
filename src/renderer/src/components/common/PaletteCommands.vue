@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import {
+  ArrowRightLeftIcon,
   BellIcon,
   BellOffIcon,
+  CircleStopIcon,
   Columns2Icon,
   FilesIcon,
   FolderGit2Icon,
@@ -9,6 +11,7 @@ import {
   FolderOpenIcon,
   GlobeIcon,
   PanelRightIcon,
+  PencilIcon,
   PlusIcon,
   RefreshCwIcon,
   RotateCwIcon,
@@ -30,6 +33,7 @@ import {
 } from '@/components/ui/command'
 import { SETTINGS_TAB_ICONS } from '@/components/settings/settings-tabs'
 import BrowserFavicon from '@/components/terminal/BrowserFavicon.vue'
+import { useAccountSwitch } from '@/composables/useAccountSwitch'
 import { useFileTreeToggle } from '@/composables/useFileTreeToggle'
 import { useLauncher } from '@/composables/useLauncher'
 import { useRecentFolders } from '@/composables/useRecentFolders'
@@ -46,6 +50,7 @@ import { useAppStore } from '@/stores/app'
 import { useSessionsStore } from '@/stores/sessions'
 import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
+import { useUiStore } from '@/stores/ui'
 import { useUsageStore } from '@/stores/usage'
 import AccountDot from './AccountDot.vue'
 import PaletteInput from './PaletteInput.vue'
@@ -63,7 +68,9 @@ const sessions = useSessionsStore()
 const usage = useUsageStore()
 const settings = useSettingsStore()
 const launcher = useLauncher()
-const { closeGroup } = useTerminalActions()
+const ui = useUiStore()
+const { closeGroup, closeTerminal, restartTerminal, stopTerminal } = useTerminalActions()
+const accountSwitch = useAccountSwitch()
 const recent = useRecentFolders(8)
 const fileTree = useFileTreeToggle()
 /** The tree the command opens or closes, if the tab has one. */
@@ -109,6 +116,35 @@ function switchTo(id: string) {
 /** The settings page scrolls there and gives a row's control the keyboard. */
 function openSetting(entry: SettingsEntry) {
   run(() => router.push({ name: 'settings', query: { tab: entry.tab, setting: entry.id } }), entry.kind === 'field')
+}
+
+/**
+ * The terminal or browser whose tab has the keyboard, for the commands of that tab. With the tabs in
+ * groups only while its tab is the one in front (not a page or the browser tab).
+ */
+const tab = computed(() => {
+  const terminal = terminals.active
+  if (!terminal || (terminals.grouped && terminals.focusedTab !== terminal.id)) return null
+  return terminal
+})
+/** Accounts the session of the tab could go on with, as in the tab's menu. */
+const switchChoices = computed(() =>
+  tab.value?.mode === 'session' && tab.value.sessionId ? accountSwitch.choices(tab.value.accountId, tab.value.authAccountId) : [],
+)
+
+/** Opens the tab's name for editing, in its tab: the keyboard goes there, not back to the terminal. */
+function renameTab(id: string) {
+  if (!terminals.grouped && router.currentRoute.value.name !== 'terminals') void router.push({ name: 'terminals' })
+  ui.tabRenameRequest = id
+}
+
+function toggleTabMuted(id: string, muted: boolean) {
+  return attempt(() => terminals.setMuted(id, !muted), 'Benachrichtigungen des Tabs konnten nicht geändert werden')
+}
+
+function openTabFolder(terminal: { cwd: string; worktree: { path: string } | null }) {
+  // A session in a worktree works in the worktree's folder.
+  return attempt(() => window.api.app.openPath(terminal.worktree?.path ?? terminal.cwd), 'Ordner konnte nicht geöffnet werden')
 }
 
 /** The group with the keyboard, with the tabs in groups. */
@@ -231,6 +267,61 @@ const closesBrowser = computed(
           Fenster neu laden
         </CommandItem>
       </CommandGroup>
+
+      <template v-if="tab">
+        <CommandSeparator />
+        <CommandGroup :heading="`Tab „${tab.title}“`">
+          <CommandItem value="tab-rename" filter-text="Tab umbenennen Name Titel" @select="run(() => renameTab(tab!.id), true)">
+            <PencilIcon />
+            Tab umbenennen
+          </CommandItem>
+          <template v-if="tab.mode !== 'browser'">
+            <CommandItem value="tab-restart" filter-text="Tab neu starten Session Neustart" @select="run(() => restartTerminal(tab!.id))">
+              <RotateCwIcon />
+              {{ tab.mode === 'session' ? 'Session neu starten' : 'Terminal neu starten' }}
+            </CommandItem>
+            <CommandItem
+              v-if="tab.status === 'running'"
+              value="tab-stop"
+              filter-text="Tab Prozess beenden stoppen abbrechen"
+              @select="run(() => stopTerminal(tab!.id))"
+            >
+              <CircleStopIcon />
+              Prozess beenden
+            </CommandItem>
+            <CommandItem
+              value="tab-mute"
+              filter-text="Tab Benachrichtigungen stummschalten einschalten"
+              @select="run(() => toggleTabMuted(tab!.id, tab!.muted))"
+            >
+              <BellIcon v-if="tab.muted" />
+              <BellOffIcon v-else />
+              {{ tab.muted ? 'Benachrichtigungen des Tabs einschalten' : 'Tab stummschalten' }}
+            </CommandItem>
+            <CommandItem value="tab-folder" filter-text="Tab Ordner öffnen Explorer" @select="run(() => openTabFolder(tab!))">
+              <FolderOpenIcon />
+              Ordner des Tabs öffnen
+            </CommandItem>
+          </template>
+          <CommandItem
+            v-for="choice in switchChoices"
+            :key="choice.account.id"
+            :value="`tab-switch-${choice.account.id}`"
+            :filter-text="`Account wechseln Weiter mit ${choice.account.name}`"
+            :disabled="choice.disabled"
+            @select="run(() => accountSwitch.continueTerminal(tab!, choice.account.id))"
+          >
+            <ArrowRightLeftIcon />
+            <span class="min-w-0 truncate">Weiter mit „{{ choice.account.name }}“</span>
+            <CommandShortcut v-if="choice.hint" class="tracking-normal">{{ choice.hint }}</CommandShortcut>
+          </CommandItem>
+          <CommandItem value="tab-close" filter-text="Tab schließen" @select="run(() => closeTerminal(tab!.id))">
+            <XIcon />
+            {{ tab.mode === 'browser' ? 'Browser schließen' : 'Tab schließen' }}
+            <CommandShortcut>Strg+Umschalt+W</CommandShortcut>
+          </CommandItem>
+        </CommandGroup>
+      </template>
 
       <CommandSeparator />
       <!-- In groups the pages open as tabs; in one tab bar the terminals are a page of their own. -->

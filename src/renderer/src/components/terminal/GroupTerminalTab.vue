@@ -121,6 +121,16 @@ function onMenuOpen(open: boolean) {
   if (open) hovered.value = false
 }
 
+watch(
+  () => ui.tabRenameRequest,
+  (id) => {
+    if (id !== props.terminal.id) return
+    ui.tabRenameRequest = null
+    startRename()
+  },
+  { immediate: true },
+)
+
 function startRename() {
   draft.value = props.terminal.title
   renaming.value = true

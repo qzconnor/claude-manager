@@ -166,6 +166,16 @@ watch(hovered, (open) => {
   if (!open) point(null)
 })
 
+watch(
+  () => ui.tabRenameRequest,
+  (id) => {
+    if (!id || !props.tab.panes.some((p) => p.id === id)) return
+    ui.tabRenameRequest = null
+    startRename(id)
+  },
+  { immediate: true },
+)
+
 function startRename(id = terminal.value.id) {
   const pane = props.tab.panes.find((p) => p.id === id)
   if (!pane) return

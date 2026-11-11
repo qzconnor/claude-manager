@@ -74,6 +74,8 @@ export const useUiStore = defineStore('ui', () => {
   const projectRequest = ref<{ workspace: string; name: string } | null>(null)
   /** Asks for a session's name (`SessionRenameDialog`): `name` is the one it has, null without one. */
   const sessionRenameRequest = ref<{ sessionId: string; title: string; name: string | null } | null>(null)
+  /** The tab of this terminal opens its name for editing, as from its menu (e.g. from the command palette). */
+  const tabRenameRequest = ref<string | null>(null)
   /** Asks for a worktree name before a session starts in one (`WorktreeDialog`); `cwd` null asks for the folder too. */
   const worktreeRequest = ref<{ accountId: string; cwd: string | null } | null>(null)
   const themeEditorRequest = ref<ThemeEditorRequest | null>(null)
@@ -137,6 +139,7 @@ export const useUiStore = defineStore('ui', () => {
     workspaceRequest,
     projectRequest,
     sessionRenameRequest,
+    tabRenameRequest,
     themeEditorRequest,
     selectedTabEdges,
     hoveredTab,
