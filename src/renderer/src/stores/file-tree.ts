@@ -74,6 +74,8 @@ interface Saved {
   hiddenKinds: FileTouchKind[]
   /** Long lines of the review of all changes wrap. */
   diffWrap: boolean
+  /** A file's changes show side by side. */
+  diffSplit: boolean
   /** Tabs of a file's changes shown without the tree (see `bare`). */
   bare: string[]
 }
@@ -154,6 +156,8 @@ export const useFileTreeStore = defineStore('file-tree', () => {
   const filtersOpen = ref(saved.filtersOpen === true)
   /** Long lines of the review of all changes wrap (the default), or scroll sideways. */
   const diffWrap = ref(saved.diffWrap !== false)
+  /** A file's changes show side by side, the old file left and the new one right; or one below the other (the default). */
+  const diffSplit = ref(saved.diffSplit === true)
   const hiddenStatuses = reactive(new Set(knownValues(saved.hiddenStatuses, GIT_STATUSES)))
   const hiddenKinds = reactive(new Set(knownValues(saved.hiddenKinds, TOUCH_KINDS)))
   /**
@@ -246,6 +250,7 @@ export const useFileTreeStore = defineStore('file-tree', () => {
         hiddenStatuses: [...hiddenStatuses],
         hiddenKinds: [...hiddenKinds],
         diffWrap: diffWrap.value,
+        diffSplit: diffSplit.value,
         bare: [...bare],
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
@@ -254,7 +259,7 @@ export const useFileTreeStore = defineStore('file-tree', () => {
     }
   }
   watch(
-    [width, showIgnored, diffShare, filtersOpen, diffWrap, filters, hiddenStatuses, hiddenKinds, () => [...open].join('\n'), () => [...bare].join('\n')],
+    [width, showIgnored, diffShare, filtersOpen, diffWrap, diffSplit, filters, hiddenStatuses, hiddenKinds, () => [...open].join('\n'), () => [...bare].join('\n')],
     save,
   )
 
@@ -820,6 +825,7 @@ export const useFileTreeStore = defineStore('file-tree', () => {
     filters,
     filtersOpen,
     diffWrap,
+    diffSplit,
     hiddenStatuses,
     hiddenKinds,
     targetOf,

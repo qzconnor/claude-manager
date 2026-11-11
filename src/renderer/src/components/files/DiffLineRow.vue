@@ -11,7 +11,8 @@ import { cn } from '@/lib/utils'
  * `inset`: away from the view's left edge (px), the numbers too; the view sets `--clip-right` to cut the
  * lines off as far from its right edge. `wrap`: the line wraps over `rows` rows (`wrappedRows`) and
  * ends `inset` before the right edge, instead of scrolling sideways. `clipTop`: cut off above that (px),
- * where something stands over it.
+ * where something stands over it. `side`: side by side, in the left half (the old file, its numbers)
+ * or the right one (the new file); it wraps.
  */
 const props = defineProps<{
   line: DiffLine
@@ -32,10 +33,14 @@ const props = defineProps<{
   marked?: boolean
   /** A section's row: with its buttons to stage or discard it. */
   hunkActions?: boolean
+  side?: 'left' | 'right'
 }>()
 const emit = defineEmits<{ stage: []; discard: [] }>()
 
-const max = computed(() => (props.wrap ? MAX_WRAPPED_COLUMNS : MAX_DIFF_COLUMNS))
+const wrapped = computed(() => props.wrap || !!props.side)
+const max = computed(() => (wrapped.value ? MAX_WRAPPED_COLUMNS : MAX_DIFF_COLUMNS))
+/** One number: a removed line's in the old file, the others' in the new; on the left side the old file's. */
+const number = computed(() => (props.side === 'left' ? props.line.old : (props.line.new ?? props.line.old)))
 const text = computed(() => shownText(props.line.text, max.value))
 const html = computed(() => (props.line.text.length > max.value ? null : props.html))
 
@@ -66,7 +71,7 @@ const MARK_CLASS = { add: 'bg-(--diff-add-word)', del: 'bg-(--diff-del-word)' } 
 const marksClass = computed(() =>
   cn(
     'pointer-events-none absolute inset-y-0 left-0 right-0 pl-[1ch] text-transparent select-none',
-    props.wrap ? 'pr-[1ch] [line-break:anywhere] [white-space:break-spaces]' : 'whitespace-pre',
+    wrapped.value ? 'pr-[1ch] [line-break:anywhere] [white-space:break-spaces]' : 'whitespace-pre',
   ),
 )
 
@@ -81,17 +86,18 @@ const rowClass = computed(() => (props.newFile && props.line.kind === 'add' ? 'b
 const codeClass = computed(() =>
   cn(
     'flex-1 pl-[1ch]',
-    props.wrap
-      ? 'min-w-0 pr-[1ch] [line-break:anywhere] [white-space:break-spaces]'
+    wrapped.value
+      ?'min-w-0 pr-[1ch] [line-break:anywhere] [white-space:break-spaces]'
       : '[clip-path:inset(0_var(--clip-right,0px)_0_var(--scroll-left,0px))]',
     rowClass.value,
   ),
 )
 const style = computed(() => {
   const inset = `${props.inset ?? 0}px`
+  const [left, right] = props.side === 'left' ? ['0px', '50%'] : props.side === 'right' ? ['50%', '0px'] : [inset, props.wrap ? inset : '0px']
   return {
-    left: inset,
-    right: props.wrap ? inset : '0px',
+    left,
+    right,
     transform: `translateY(${props.top}px)`,
     height: `${props.height * (props.rows ?? 1)}px`,
     lineHeight: `${props.height}px`,
@@ -102,14 +108,14 @@ const style = computed(() => {
 
 <template>
   <!-- Wrapped, a row counted too few cuts its line instead of covering the next (`clip` keeps the numbers sticky). -->
-  <div :class="cn('absolute top-0 flex whitespace-pre', wrap && 'overflow-clip')" :style="style">
+  <div :class="cn('absolute top-0 flex whitespace-pre', wrapped && 'overflow-clip')" :style="style">
     <span
       :class="cn('sticky z-10 flex shrink-0 justify-end gap-[1ch] px-[1ch] tabular-nums select-none', GUTTER_CLASS[line.kind])"
       :style="{ left: `${inset ?? 0}px`, width: `${gutterWidth}ch` }"
     >
       <span v-if="line.kind === 'hunk'" class="flex-1 text-left">⋯</span>
       <template v-else>
-        <span class="text-right" :style="{ width: `${numberWidth}ch` }">{{ line.new ?? line.old ?? '' }}</span>
+        <span class="text-right" :style="{ width: `${numberWidth}ch` }">{{ number ?? '' }}</span>
         <span v-if="withSign" class="w-[1ch]">{{ SIGN[line.kind] }}</span>
       </template>
     </span>

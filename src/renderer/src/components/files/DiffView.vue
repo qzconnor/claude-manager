@@ -1,6 +1,16 @@
 <script setup lang="ts">
-import { ExternalLinkIcon, FileWarningIcon, FoldVerticalIcon, MinusIcon, PlusIcon, Undo2Icon, UnfoldVerticalIcon, XIcon } from '@lucide/vue'
-import { useElementSize } from '@vueuse/core'
+import {
+  Columns2Icon,
+  ExternalLinkIcon,
+  FileWarningIcon,
+  FoldVerticalIcon,
+  MinusIcon,
+  PlusIcon,
+  Undo2Icon,
+  UnfoldVerticalIcon,
+  XIcon,
+} from '@lucide/vue'
+import { useElementSize, useResizeObserver } from '@vueuse/core'
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import type { FileDiff } from '@shared/types'
 import { Spinner } from '@/components/ui/spinner'
@@ -15,9 +25,13 @@ import {
   diffColumns,
   diffLines,
   diffMode,
+  isHeadRow,
+  lineAtRow,
   numberDigits,
   parsePatch,
   sameDiff,
+  sideBySide,
+  splitOffsets,
   unchangedNote,
   type DiffLine,
   type ParsedDiff,
@@ -36,6 +50,7 @@ import ImageDiff from './ImageDiff.vue'
  * removed lines red, added ones green, each with one number (a removed one its old), the code highlighted.
  * It follows the file live: whenever it or git's state changes, the changes are asked again. A file
  * git doesn't know yet shows as all added, one without changes (or outside a repository) as it is.
+ * The changes can also stand side by side, the old file left and the new one right, wrapped.
  */
 const props = defineProps<{
   root: string
@@ -157,7 +172,7 @@ function scrollToLine(list: readonly DiffLine[]): boolean {
   const el = scroller.value
   const index = list.findIndex((l) => (l.kind === 'context' || l.kind === 'add') && l.new === target.line)
   if (!el || index < 0) return true
-  el.scrollTop = Math.max(0, index * rowHeight.value - el.clientHeight / 3)
+  el.scrollTop = Math.max(0, lineTop(index) - el.clientHeight / 3)
   el.scrollLeft = 0
   onScroll()
   markedIndex.value = index
@@ -254,6 +269,73 @@ const scroller = ref<HTMLElement | null>(null)
 const { height: viewHeight } = useElementSize(scroller)
 const scrollTop = ref(0)
 
+// ── Side by side: the old file left, the new one right, both wrapped ──
+
+/** Only a diff shows side by side; a new file, say, has no old side. */
+const split = computed(() => fileTree.diffSplit && mode.value === 'diff')
+const splitRows = computed(() => (split.value ? sideBySide(lines.value) : []))
+
+/** A row of characters in the code's font, for how many fit in a side. */
+const probe = ref<HTMLElement | null>(null)
+const PROBE_CHARS = 100
+const charWidth = ref(0)
+/** The view's width without its scrollbar (px). */
+const viewWidth = ref(0)
+/** Measured as they change, and at once where a place is worked out right after the view is drawn. */
+function measure() {
+  if (scroller.value) viewWidth.value = scroller.value.clientWidth
+  if (probe.value) charWidth.value = probe.value.getBoundingClientRect().width / PROBE_CHARS
+}
+useResizeObserver(scroller, measure)
+useResizeObserver(probe, measure)
+
+/** Columns a side holds: half the view less the numbers, the code's gaps and the line between the sides; a hair less, so a row never holds fewer than counted. */
+const splitColumns = computed(() => {
+  const ch = charWidth.value
+  if (ch <= 0 || viewWidth.value <= 0) return 0
+  return Math.max(1, Math.floor((viewWidth.value / 2 - 1) / ch - gutterWidth.value - 2 - 0.02))
+})
+/** Where the rows side by side start; null until the font is measured (a row each). */
+const splitStarts = computed(() =>
+  split.value && splitColumns.value > 0 ? splitOffsets(splitRows.value, lines.value, splitColumns.value) : null,
+)
+const contentHeight = computed(() => {
+  if (!split.value) return lines.value.length * rowHeight.value
+  const starts = splitStarts.value
+  return (starts ? starts[splitRows.value.length]! : splitRows.value.length) * rowHeight.value
+})
+
+/** Where the line at `index` starts (px); side by side, the row it stands in. */
+function lineTop(index: number): number {
+  if (!split.value) return index * rowHeight.value
+  measure()
+  const row = splitRows.value.findIndex((r) => r.left === index || r.right === index)
+  const starts = splitStarts.value
+  return (row < 0 ? 0 : starts ? starts[row]! : row) * rowHeight.value
+}
+
+/** The line at the top of the view: on the right side where it has one. */
+function lineAtTop(): number {
+  const row = Math.floor(scrollTop.value / rowHeight.value)
+  if (!split.value) return row
+  const starts = splitStarts.value
+  const at = splitRows.value[starts ? lineAtRow(starts, row) : row]
+  return at?.right ?? at?.left ?? 0
+}
+
+/** Side by side or one below the other; the line at the top stays there. */
+function toggleSplit() {
+  const index = lineAtTop()
+  fileTree.diffSplit = !fileTree.diffSplit
+  void nextTick(() => {
+    const el = scroller.value
+    if (!el) return
+    el.scrollTop = lineTop(index)
+    el.scrollLeft = 0
+    onScroll()
+  })
+}
+
 /**
  * The numbers stay at the left edge while the lines scroll sideways. The background is see-through,
  * so instead of covering the lines the numbers cut them off where they pass below (`--scroll-left`).
@@ -279,6 +361,49 @@ const visibleLines = computed<LineView[]>(() => {
   return lines.value.slice(first, last).map((line, i) => ({ line, index: first + i, html: html?.[first + i] ?? null }))
 })
 
+interface SplitView {
+  /** The row's index. */
+  key: number
+  top: number
+  rows: number
+  /** A section's head, across both sides. */
+  head: LineView | null
+  /** The old file's line and the new one's; none where the row has a head, or a side no line. */
+  sides: { side: 'left' | 'right'; view: LineView | null }[]
+}
+
+const visibleSplit = computed<SplitView[]>(() => {
+  if (!split.value) return []
+  const height = rowHeight.value
+  const list = splitRows.value
+  const starts = splitStarts.value
+  const firstRow = Math.max(0, Math.floor(scrollTop.value / height) - OVERSCAN)
+  const lastRow = Math.ceil((scrollTop.value + viewHeight.value) / height) + OVERSCAN
+  const first = starts ? lineAtRow(starts, firstRow) : firstRow
+  const last = Math.min(list.length, starts ? lineAtRow(starts, lastRow) + 1 : lastRow)
+  const html = highlighted.value
+  const all = lines.value
+  const view = (index: number | null): LineView | null => (index === null ? null : { line: all[index]!, index, html: html?.[index] ?? null })
+  const views: SplitView[] = []
+  for (let i = first; i < last; i++) {
+    const row = list[i]!
+    const head = isHeadRow(row, all)
+    views.push({
+      key: i,
+      top: (starts ? starts[i]! : i) * height,
+      rows: starts ? starts[i + 1]! - starts[i]! : 1,
+      head: head ? view(row.left) : null,
+      sides: head
+        ? []
+        : [
+            { side: 'left', view: view(row.left) },
+            { side: 'right', view: view(row.right) },
+          ],
+    })
+  }
+  return views
+})
+
 // A new file, or the whole file asked for: its first change comes into view, a third down.
 watch(lines, (list) => {
   // Lines of the file before (counted again as the new path's git state comes) don't count.
@@ -289,7 +414,7 @@ watch(lines, (list) => {
     if (!el) return
     if (scrollToLine(list)) return
     const index = list.findIndex((line) => line.kind === 'add' || line.kind === 'del')
-    const top = index <= 0 || !full.value ? 0 : Math.max(0, index * rowHeight.value - el.clientHeight / 3)
+    const top = index <= 0 || !full.value ? 0 : Math.max(0, lineTop(index) - el.clientHeight / 3)
     el.scrollTop = top
     el.scrollLeft = 0
     onScroll()
@@ -395,6 +520,14 @@ const iconButton =
       </template>
       <Tooltip v-if="mode === 'diff'">
         <TooltipTrigger as-child>
+          <button type="button" aria-label="Nebeneinander zeigen" :aria-pressed="split" :class="iconButton" @click="toggleSplit">
+            <Columns2Icon class="size-[16px]" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>{{ split ? 'Untereinander zeigen' : 'Vorher und nachher nebeneinander zeigen' }}</TooltipContent>
+      </Tooltip>
+      <Tooltip v-if="mode === 'diff'">
+        <TooltipTrigger as-child>
           <button
             type="button"
             :aria-pressed="full"
@@ -450,29 +583,80 @@ const iconButton =
     <template v-else>
       <div
         ref="scroller"
-        class="syntax relative min-h-0 flex-1 overflow-auto select-text"
+        :class="cn('syntax relative min-h-0 flex-1 overflow-auto select-text', split && 'overflow-x-hidden')"
         :style="{ fontFamily, fontSize: `${fontSize}px`, tabSize: DIFF_TAB_SIZE }"
         @scroll.passive="onScroll"
       >
+        <div aria-hidden="true" class="invisible absolute top-0 left-0 size-0 overflow-hidden">
+          <span ref="probe" class="inline-block whitespace-pre">{{ '0'.repeat(PROBE_CHARS) }}</span>
+        </div>
         <div
           class="relative min-w-full"
-          :style="{ height: `${lines.length * rowHeight}px`, width: `calc(${gutterWidth + columns}ch + 24px)` }"
+          :style="{ height: `${contentHeight}px`, width: split ? undefined : `calc(${gutterWidth + columns}ch + 24px)` }"
         >
-          <DiffLineRow
-            v-for="view in visibleLines"
-            :key="view.index"
-            :line="view.line"
-            :html="view.html"
-            :top="view.index * rowHeight"
-            :height="rowHeight"
-            :gutter-width="gutterWidth"
-            :number-width="numberWidth"
-            :with-sign="withSign"
-            :marked="view.index === markedIndex"
-            :hunk-actions="hunksApart && view.line.kind === 'hunk'"
-            @stage="onHunk(view.index, false)"
-            @discard="onHunk(view.index, true)"
-          />
+          <template v-if="split">
+            <template v-for="row in visibleSplit" :key="row.key">
+              <DiffLineRow
+                v-if="row.head"
+                :line="row.head.line"
+                :html="row.head.html"
+                :top="row.top"
+                :height="rowHeight"
+                :gutter-width="gutterWidth"
+                :number-width="numberWidth"
+                :with-sign="withSign"
+                :hunk-actions="hunksApart"
+                @stage="onHunk(row.head.index, false)"
+                @discard="onHunk(row.head.index, true)"
+              />
+              <template v-for="half in row.sides" :key="half.side">
+                <DiffLineRow
+                  v-if="half.view"
+                  :class="half.side === 'right' && 'border-l'"
+                  :side="half.side"
+                  :line="half.view.line"
+                  :html="half.view.html"
+                  :top="row.top"
+                  :height="rowHeight"
+                  :rows="row.rows"
+                  :gutter-width="gutterWidth"
+                  :number-width="numberWidth"
+                  :with-sign="withSign"
+                  :marked="half.view.index === markedIndex"
+                />
+                <!-- No line on this side: lines only removed, or only added. Hatched, like VS Code's. -->
+                <div
+                  v-else
+                  aria-hidden="true"
+                  :class="cn('absolute top-0', half.side === 'right' && 'border-l')"
+                  :style="{
+                    left: half.side === 'left' ? '0px' : '50%',
+                    right: half.side === 'left' ? '50%' : '0px',
+                    transform: `translateY(${row.top}px)`,
+                    height: `${row.rows * rowHeight}px`,
+                    backgroundImage: 'repeating-linear-gradient(-45deg, var(--diff-filler) 0 1px, transparent 1px 7px)',
+                  }"
+                />
+              </template>
+            </template>
+          </template>
+          <template v-else>
+            <DiffLineRow
+              v-for="view in visibleLines"
+              :key="view.index"
+              :line="view.line"
+              :html="view.html"
+              :top="view.index * rowHeight"
+              :height="rowHeight"
+              :gutter-width="gutterWidth"
+              :number-width="numberWidth"
+              :with-sign="withSign"
+              :marked="view.index === markedIndex"
+              :hunk-actions="hunksApart && view.line.kind === 'hunk'"
+              @stage="onHunk(view.index, false)"
+              @discard="onHunk(view.index, true)"
+            />
+          </template>
         </div>
         <p v-if="lines.length === 0" class="px-4 pt-3 text-center text-xs text-muted-foreground">Die Datei ist leer.</p>
       </div>

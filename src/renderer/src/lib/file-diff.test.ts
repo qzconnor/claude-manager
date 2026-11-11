@@ -6,6 +6,7 @@ import {
   diffLines,
   diffMode,
   fileLines,
+  isHeadRow,
   lineAtRow,
   lineColumns,
   MAX_DIFF_COLUMNS,
@@ -13,6 +14,8 @@ import {
   parsePatch,
   sameDiff,
   shownText,
+  sideBySide,
+  splitOffsets,
   unchangedNote,
   wordMarks,
   wrapOffsets,
@@ -240,5 +243,57 @@ describe('wrapping', () => {
     expect([...offsets]).toEqual([0, 1, 4, 5])
     expect([0, 1, 2, 3, 4, 9].map((row) => lineAtRow(offsets, row))).toEqual([0, 1, 1, 1, 2, 2])
     expect(lineAtRow(new Uint32Array([0]), 3)).toBe(0)
+  })
+})
+
+describe('side by side', () => {
+  const line = (kind: DiffLine['kind'], text = 'x'): DiffLine => ({ kind, text, old: null, new: null })
+
+  it('puts removed lines beside the added ones at their place, the rest on both sides', () => {
+    const { lines } = parsePatch(PATCH)
+    expect(sideBySide(lines)).toEqual([
+      { left: 0, right: 0 },
+      { left: 1, right: 1 },
+      { left: 2, right: 3 },
+      { left: null, right: 4 },
+      { left: 5, right: 5 },
+      // The empty line before the second section is one of the file.
+      { left: 6, right: 6 },
+      { left: 7, right: 7 },
+      { left: 8, right: 8 },
+      { left: 9, right: 10 },
+    ])
+    expect(sideBySide(lines).map((row) => isHeadRow(row, lines))).toEqual([true, false, false, false, false, false, true, false, false])
+  })
+
+  it('leaves a side empty where lines were only removed or only added', () => {
+    const lines = [line('context'), line('add'), line('add'), line('context'), line('del'), line('del'), line('del'), line('add')]
+    expect(sideBySide(lines)).toEqual([
+      { left: 0, right: 0 },
+      { left: null, right: 1 },
+      { left: null, right: 2 },
+      { left: 3, right: 3 },
+      { left: 4, right: 7 },
+      { left: 5, right: null },
+      { left: 6, right: null },
+    ])
+    expect(sideBySide([])).toEqual([])
+  })
+
+  it('pairs the lines whose changed words are marked', () => {
+    const { lines } = parsePatch(['@@ -1,2 +1,2 @@', '-const a = 1', '-const b = 1', '+const a = 2', '+const b = 3', ''].join('\n'))
+    expect(sideBySide(lines)).toEqual([
+      { left: 0, right: 0 },
+      { left: 1, right: 3 },
+      { left: 2, right: 4 },
+    ])
+    const marked = (index: number) => wordMarks(lines[index]!).map(([start, end]) => lines[index]!.text.slice(start, end))
+    expect([marked(1), marked(3), marked(2), marked(4)]).toEqual([['1'], ['2'], ['1'], ['3']])
+  })
+
+  it('gives a row the rows of its longer side, a section head one', () => {
+    const lines = [line('hunk', 'h'.repeat(30)), line('context', 'c'.repeat(25)), line('del', 'short'), line('add', 'a'.repeat(21)), line('add')]
+    const rows = sideBySide(lines)
+    expect([...splitOffsets(rows, lines, 10)]).toEqual([0, 1, 4, 7, 8])
   })
 })

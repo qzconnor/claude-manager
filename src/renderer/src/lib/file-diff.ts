@@ -255,6 +255,58 @@ export function lineAtRow(offsets: Uint32Array, row: number): number {
   return low
 }
 
+/**
+ * A row of the changes side by side: the line of the old file on the left and the one of the new file
+ * on the right, by their index in the diff's lines; null where a side has none (more lines removed than
+ * added there, or the other way round). An unchanged line and a section's head stand on both sides.
+ */
+export interface SplitRow {
+  left: number | null
+  right: number | null
+}
+
+/**
+ * The lines of a diff side by side: each run of removed lines beside the added ones that follow it,
+ * line by line as git wrote them (the pairs whose changed words `wordMarks` marks).
+ */
+export function sideBySide(lines: readonly DiffLine[]): SplitRow[] {
+  const rows: SplitRow[] = []
+  for (let i = 0; i < lines.length; ) {
+    const kind = lines[i]!.kind
+    if (kind === 'context' || kind === 'hunk') {
+      rows.push({ left: i, right: i })
+      i++
+      continue
+    }
+    const dels: number[] = []
+    const adds: number[] = []
+    for (; i < lines.length && lines[i]!.kind === 'del'; i++) dels.push(i)
+    for (; i < lines.length && lines[i]!.kind === 'add'; i++) adds.push(i)
+    for (let k = 0; k < Math.max(dels.length, adds.length); k++) rows.push({ left: dels[k] ?? null, right: adds[k] ?? null })
+  }
+  return rows
+}
+
+/** Whether a row side by side is a section's head, drawn across both sides. */
+export function isHeadRow(row: SplitRow, lines: readonly DiffLine[]): boolean {
+  return row.left !== null && lines[row.left]!.kind === 'hunk'
+}
+
+/**
+ * Where each row side by side starts, in rows, both sides wrapped at `width` columns: a row takes as
+ * many as its longer side, a section's head one (it doesn't wrap). The last entry is the rows of all of them.
+ */
+export function splitOffsets(rows: readonly SplitRow[], lines: readonly DiffLine[], width: number): Uint32Array {
+  const offsets = new Uint32Array(rows.length + 1)
+  const rowsOf = (index: number | null) => (index === null ? 1 : wrappedRows(shownText(lines[index]!.text, MAX_WRAPPED_COLUMNS), width))
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]!
+    const taken = isHeadRow(row, lines) ? 1 : row.left === row.right ? rowsOf(row.left) : Math.max(rowsOf(row.left), rowsOf(row.right))
+    offsets[i + 1] = offsets[i]! + taken
+  }
+  return offsets
+}
+
 /** The widest line of a diff (columns), at most `MAX_DIFF_COLUMNS`. */
 export function diffColumns(lines: readonly DiffLine[]): number {
   let most = 0

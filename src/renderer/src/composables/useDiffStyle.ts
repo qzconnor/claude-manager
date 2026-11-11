@@ -42,6 +42,8 @@ export function useDiffStyle() {
       '--diff-add-word': tint(c.green, 32),
       '--diff-del-word': tint(c.red, 32),
       '--diff-hunk': tint(p.foreground, 6),
+      // The hatching of a side without a line, side by side.
+      '--diff-filler': tint(p.foreground, 12),
       '--diff-header': tint(p.foreground, 5),
       '--diff-number': tint(p.foreground, 40),
       '--diff-add-number': c.green,
