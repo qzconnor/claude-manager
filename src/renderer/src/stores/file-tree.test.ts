@@ -24,6 +24,7 @@ function session(id: string, sessionId: string | null): TerminalInfo {
     mode: 'session',
     url: null,
     resumeSessionId: null,
+    args: [],
     status: 'running',
     exitCode: null,
     pid: 0,

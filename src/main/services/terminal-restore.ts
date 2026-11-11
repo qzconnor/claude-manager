@@ -1,6 +1,7 @@
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isBrowsableUrl } from '@shared/browser'
+import { lastingArgs } from '@shared/claude-args'
 import { isSplit, mapPanes, paneIds, parsePaneNode, removePanes } from '@shared/panes'
 import type { PaneNode } from '@shared/types'
 import { readJsonSync, writeJsonAtomicSync } from '../lib/json-file'
@@ -24,6 +25,8 @@ interface SavedTerminal {
   fixedTitle?: boolean
   /** Missing in files of older versions. */
   muted?: boolean
+  /** Claude Code arguments that hold for every start (see `lastingArgs`). Missing in files of older versions. */
+  args?: string[]
   /** Starts in a row it didn't open at: after `MAX_FAILED_STARTS` it is left out. */
   failedStarts?: number
   /**
@@ -192,6 +195,7 @@ export class TerminalRestore {
         resumeSessionId: located ? tab.sessionId : null,
         title: fixedTitle ? tab.title : null,
         muted: tab.muted === true,
+        args: tab.args ?? [],
         restoredFrom: savedId(tab),
       })
       return { id: info.id }
@@ -264,6 +268,7 @@ export class TerminalRestore {
         title: t.title,
         fixedTitle: t.fixedTitle,
         muted: t.muted,
+        ...(t.args.length ? { args: lastingArgs(t.args) } : {}),
         ...layout,
       }
     })
@@ -305,6 +310,7 @@ function isSavedTerminal(value: unknown): value is SavedTerminal {
     typeof t.title === 'string' &&
     (t.fixedTitle === undefined || typeof t.fixedTitle === 'boolean') &&
     (t.muted === undefined || typeof t.muted === 'boolean') &&
+    (t.args === undefined || (Array.isArray(t.args) && t.args.every((arg) => typeof arg === 'string'))) &&
     (t.failedStarts === undefined || (typeof t.failedStarts === 'number' && Number.isInteger(t.failedStarts) && t.failedStarts >= 0))
   )
 }

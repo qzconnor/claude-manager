@@ -1,3 +1,4 @@
+import { argsWithoutPrompt, lastingArgs } from '@shared/claude-args'
 import { folderKey } from '@shared/folders'
 import type { Account, TerminalCreateOptions, TerminalInfo } from '@shared/types'
 import { canLendCredentials } from '@shared/utils'
@@ -66,6 +67,8 @@ export class SessionHandoff extends TypedEmitter<Events> {
         cwd,
         mode: old.mode,
         resumeSessionId: old.resumeSessionId ?? undefined,
+        // What picked the conversation picks it again, the prompt isn't sent once more.
+        args: argsWithoutPrompt(old.args),
         title: old.fixedTitle ? old.title : null,
         muted: old.muted,
         replaces: terminalId,
@@ -108,6 +111,7 @@ export class SessionHandoff extends TypedEmitter<Events> {
       const options = await this.prepare(old.accountId, sessionId, failed ? (located?.cwd ?? old.cwd) : cwd, this.accounts.get(old.authAccountId))
       const info = this.terminals.create({
         ...options,
+        args: lastingArgs(old.args),
         title: old.fixedTitle ? old.title : null,
         muted: old.muted,
         replaces: terminalId,
@@ -143,6 +147,8 @@ export class SessionHandoff extends TypedEmitter<Events> {
       if (carryOn && old.limit && options.resumeSessionId) options.prompt = this.settings.get().claude.continuePrompt || null
       const info = this.terminals.create({
         ...options,
+        // `--model opus` and the like hold for the session, also with another account.
+        args: lastingArgs(old.args),
         title: old.fixedTitle ? old.title : null,
         muted: old.muted,
         // Its place in the tab order and in a split tab.

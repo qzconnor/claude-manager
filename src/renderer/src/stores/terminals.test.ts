@@ -26,6 +26,7 @@ function terminal(id: string, mode: TerminalMode = 'session'): TerminalInfo {
     mode,
     url: mode === 'browser' ? 'https://example.com/' : null,
     resumeSessionId: null,
+    args: [],
     status: 'running',
     exitCode: null,
     pid: 0,

@@ -87,6 +87,7 @@ function info(overrides: Partial<TerminalInfo>): TerminalInfo {
     mode: 'session',
     url: null,
     resumeSessionId: null,
+    args: [],
     status: 'running',
     exitCode: null,
     pid: 1,
@@ -149,7 +150,7 @@ describe('TerminalRestore on start', () => {
       file,
       JSON.stringify([
         // Default title of an older version without fixedTitle: follows the session again.
-        { accountId: 'acc-a', authAccountId: 'acc-a', cwd: project, mode: 'session', sessionId: S1, title: 'Alpha · project' },
+        { accountId: 'acc-a', authAccountId: 'acc-a', cwd: project, mode: 'session', sessionId: S1, title: 'Alpha · project', args: ['--model', 'opus'] },
         // The lending account is gone; no transcript was written; a chosen title of an older version.
         { accountId: 'acc-b', authAccountId: 'gone', cwd: other, mode: 'session', sessionId: S2, title: 'Custom', muted: true },
         { accountId: 'acc-a', authAccountId: 'acc-b', cwd: project, mode: 'session', sessionId: null, title: 'Mine', fixedTitle: false },
@@ -160,11 +161,11 @@ describe('TerminalRestore on start', () => {
     )
     await start().init()
     expect(create.mock.calls.map(([options]) => options)).toEqual([
-      { accountId: 'acc-a', authAccountId: 'acc-a', cwd: project, mode: 'session', resumeSessionId: S1, title: null, muted: false, restoredFrom: null },
-      { accountId: 'acc-b', authAccountId: 'acc-b', cwd: other, mode: 'session', resumeSessionId: null, title: 'Custom', muted: true, restoredFrom: null },
-      { accountId: 'acc-a', authAccountId: 'acc-b', cwd: project, mode: 'session', resumeSessionId: null, title: null, muted: false, restoredFrom: null },
-      { accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', resumeSessionId: null, title: 'Build', muted: false, restoredFrom: null },
-      { accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', resumeSessionId: null, title: null, muted: false, restoredFrom: null },
+      { accountId: 'acc-a', authAccountId: 'acc-a', cwd: project, mode: 'session', resumeSessionId: S1, title: null, muted: false, args: ['--model', 'opus'], restoredFrom: null },
+      { accountId: 'acc-b', authAccountId: 'acc-b', cwd: other, mode: 'session', resumeSessionId: null, title: 'Custom', muted: true, args: [], restoredFrom: null },
+      { accountId: 'acc-a', authAccountId: 'acc-b', cwd: project, mode: 'session', resumeSessionId: null, title: null, muted: false, args: [], restoredFrom: null },
+      { accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', resumeSessionId: null, title: 'Build', muted: false, args: [], restoredFrom: null },
+      { accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', resumeSessionId: null, title: null, muted: false, args: [], restoredFrom: null },
     ])
   })
 
@@ -196,6 +197,8 @@ describe('TerminalRestore on start', () => {
         { ...valid, title: undefined },
         { ...valid, fixedTitle: 'yes' },
         { ...valid, muted: 1 },
+        { ...valid, args: '--model opus' },
+        { ...valid, args: ['--model', 5] },
         { ...valid, title: 'kept' },
       ]),
     )
@@ -376,6 +379,13 @@ describe('TerminalRestore while running', () => {
         muted: false,
       },
     ])
+  })
+
+  it('saves the own Claude Code options that hold for every start, without the prompt', async () => {
+    await start().init()
+    terminalList = [info({ id: 'a', sessionId: S1, args: ['--model', 'opus', '--continue', 'Fix the build'] })]
+    terminalEvents.fire('changed', terminalList)
+    expect(await readSaved()).toMatchObject([{ id: 'a', args: ['--model', 'opus'] }])
   })
 
   it('saves how split tabs share their space, by index and without login tabs', async () => {

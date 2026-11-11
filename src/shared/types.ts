@@ -465,6 +465,11 @@ export interface TerminalInfo {
   /** The page a browser shows; null for terminals. */
   url: string | null
   resumeSessionId: string | null
+  /**
+   * Claude Code arguments given for this tab (`cm -- …`, a worktree), without those from the settings
+   * and the account. Starting it again keeps those that hold for every start (see `lastingArgs`).
+   */
+  args: string[]
   /** Opened again at the start: the id it had in the last run, so the window finds its place in the groups. */
   restoredFrom?: string | null
   status: TerminalStatus

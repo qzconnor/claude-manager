@@ -140,6 +140,7 @@ function terminal(overrides: Partial<TerminalInfo> = {}): TerminalInfo {
     mode: 'session',
     url: null,
     resumeSessionId: null,
+    args: [],
     status: 'running',
     exitCode: null,
     pid: 1,
