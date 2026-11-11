@@ -8,6 +8,9 @@ import type { DropSide } from '@/lib/workspace'
 
 export type ConfirmOptions = DialogOptions
 
+/** Between two questions of the confirmation dialog: the first fades out (100 ms), the next one comes. */
+const NEXT_CONFIRM_MS = 150
+
 /** A tab dragged over the page: dropped now, it goes on `side` of the terminal `targetId`. */
 export interface TabDock {
   tabId: string
@@ -89,20 +92,36 @@ export const useUiStore = defineStore('ui', () => {
   const groupDock = ref<GroupDock | null>(null)
 
   const confirmState = ref<(ConfirmOptions & { open: boolean }) | null>(null)
-  let confirmResolve: ((value: boolean) => void) | null = null
+  /** The question shown, and those that wait for it: one never answers another one with No. */
+  let shownConfirm: ((value: boolean) => void) | null = null
+  const waitingConfirms: { options: ConfirmOptions; resolve: (value: boolean) => void }[] = []
 
+  function showNextConfirm(): void {
+    const next = waitingConfirms.shift()
+    if (!next) return
+    shownConfirm = next.resolve
+    confirmState.value = { ...next.options, open: true }
+  }
+
+  /**
+   * Asks in the confirmation dialog. While it asks something else (e.g. a question of the main process
+   * comes while „Session löschen?“ is open), this one waits its turn.
+   */
   function confirm(options: ConfirmOptions): Promise<boolean> {
-    confirmResolve?.(false)
-    confirmState.value = { ...options, open: true }
     return new Promise((resolve) => {
-      confirmResolve = resolve
+      waitingConfirms.push({ options, resolve })
+      if (!shownConfirm) showNextConfirm()
     })
   }
 
   function settleConfirm(result: boolean): void {
-    confirmResolve?.(result)
-    confirmResolve = null
+    const resolve = shownConfirm
+    if (!resolve) return
+    shownConfirm = null
     if (confirmState.value) confirmState.value = { ...confirmState.value, open: false }
+    resolve(result)
+    // Once the dialog has gone, so the next one is seen to be another question.
+    if (waitingConfirms.length > 0) setTimeout(() => shownConfirm ?? showNextConfirm(), NEXT_CONFIRM_MS)
   }
 
   return {
