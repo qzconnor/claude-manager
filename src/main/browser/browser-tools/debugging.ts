@@ -195,7 +195,7 @@ export const debuggingTools: ToolDefinition<never>[] = [
         properties: Object.fromEntries(PERMISSIONS.map((name) => [name, { type: 'string', enum: ['granted', 'denied', 'default'] }])),
         additionalProperties: false,
         description:
-          "Permissions the page gets (granted) or is refused (denied); default: as the browser has it (it refuses them). camera and microphone are the computer's real devices; notifications show as real notifications.",
+          "Permissions the page gets (granted) or is refused (denied); default: as the browser has it (it refuses them). A grant holds for the site open now only (its origin, like the location from geolocation): not for frames of other sites in it, nor after the tab goes to another site; give it again there. A refusal holds for every site. camera and microphone are the computer's real devices; notifications show as real notifications.",
       },
       reset: { type: 'boolean', description: 'End all emulation.' },
     },

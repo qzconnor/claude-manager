@@ -44,11 +44,11 @@ function setupBrowserSession(): void {
   ses.setUserAgent(browserUserAgent(ses.getUserAgent()))
   ses.setPermissionRequestHandler((contents, permission, callback, details) => {
     const mediaTypes = 'mediaTypes' in details ? (details.mediaTypes ?? []) : []
-    callback(browserPermissions.decide(contents, permission, mediaTypes) ?? ALLOWED_PERMISSIONS.has(permission))
+    callback(browserPermissions.decide(contents, permission, mediaTypes, details.requestingUrl) ?? ALLOWED_PERMISSIONS.has(permission))
   })
-  ses.setPermissionCheckHandler((contents, permission, _origin, details) => {
+  ses.setPermissionCheckHandler((contents, permission, requestingOrigin, details) => {
     const mediaTypes = details.mediaType && details.mediaType !== 'unknown' ? [details.mediaType] : []
-    return browserPermissions.decide(contents, permission, mediaTypes) ?? ALLOWED_PERMISSIONS.has(permission)
+    return browserPermissions.decide(contents, permission, mediaTypes, requestingOrigin) ?? ALLOWED_PERMISSIONS.has(permission)
   })
   // Files go to the downloads folder right away; Electron would ask where, in a window of its own.
   ses.on('will-download', (_event, item, contents) => browserDownloads.add(item, contents))

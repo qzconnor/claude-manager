@@ -5,7 +5,7 @@ import type { BrowserActivity, BrowserControlState, BrowserDownload, BrowserEmul
 import { TypedEmitter } from '../lib/typed-emitter'
 import { browserDownloads } from '../window/browser-downloads'
 import { browserLogins } from '../window/browser-logins'
-import { browserPermissions } from '../window/browser-permissions'
+import { browserPermissions, originOf } from '../window/browser-permissions'
 import type { TerminalService } from '../services/terminal-service'
 import type { ActionContext, ActionStep, BrowserTab, ConsoleEntry, FileChooser, PageEvent, RecordedStep } from './action-context'
 import { autoAttachFrames, PageFrames } from './frames'
@@ -26,7 +26,7 @@ import {
   type DialogSignal,
   type PageDialog,
 } from './page-dialogs'
-import { applyEmulation, applyFrameEmulation, isEmulating, setPhoneMode, untilViewport } from './page-emulation'
+import { applyEmulation, applyFrameEmulation, isEmulating, permissionsKey, setPhoneMode, untilViewport } from './page-emulation'
 import { pointerMoveMs, type PointerSpot } from './pointer'
 import { snapshotChanges } from './snapshot-diff'
 import { ToolError } from './tool-args'
@@ -90,6 +90,8 @@ interface Browser {
   lastSnapshot: { sessionId: string; doc: string; text: string } | null
   /** What the page pretends for Claude; it ends with the session. */
   emulation: BrowserEmulation | null
+  /** The site Claude's grants of permissions are for: the one open when it gave them. */
+  permissionOrigin: string | null
   dialog: PageDialog | null
   dialogSignal: DialogSignal
   caught: CaughtDialog[]
@@ -280,9 +282,10 @@ export class BrowserControl extends TypedEmitter<Events> {
   private async dropEmulation(browser: Browser): Promise<void> {
     if (!browser.emulation) return
     browser.emulation = null
+    browser.permissionOrigin = null
     const contents = browser.contents
     if (!contents || contents.isDestroyed()) return
-    browserPermissions.set(contents, {})
+    browserPermissions.set(contents, {}, null)
     if (!contents.debugger.isAttached()) return
     await applyEmulation(new PageDriver(contents), null, browser.viewport?.mobile ?? false, browser.frames.frameSessions()).catch(() => undefined)
   }
@@ -473,8 +476,11 @@ export class BrowserControl extends TypedEmitter<Events> {
       networkEntries: () => [...browser.network.values()].sort((a, b) => a.id - b.id),
       emulation: () => (browser.emulation ? { ...browser.emulation } : null),
       setEmulation: async (emulation) => {
+        const before = browser.emulation
         browser.emulation = emulation && isEmulating(emulation) ? { ...emulation } : null
-        await applyEmulation(page, browser.emulation, browser.viewport?.mobile ?? false, browser.frames.frameSessions())
+        // Grants go to the site open now, not to the next one the tab goes to.
+        if (permissionsKey(before) !== permissionsKey(browser.emulation)) browser.permissionOrigin = originOf(page.contents.getURL())
+        await applyEmulation(page, browser.emulation, browser.viewport?.mobile ?? false, browser.frames.frameSessions(), browser.permissionOrigin)
         this.emitControl(browser)
       },
       routes: () => browser.routes.map(routeState),
@@ -678,7 +684,9 @@ export class BrowserControl extends TypedEmitter<Events> {
     await autoAttachFrames(page, undefined)
     // A new connection starts without the phone mode and the emulation Claude chose.
     if (browser.viewport?.mobile) await setPhoneMode(page, true, browser.emulation?.locale ?? null).catch(() => undefined)
-    if (browser.emulation) await applyEmulation(page, browser.emulation, browser.viewport?.mobile ?? false, []).catch(() => undefined)
+    if (browser.emulation) {
+      await applyEmulation(page, browser.emulation, browser.viewport?.mobile ?? false, [], browser.permissionOrigin).catch(() => undefined)
+    }
     if (browser.routes.length) await enableRoutes(page, undefined, browser.routes).catch(() => undefined)
     browser.dialogScript = null
     browser.protocol = true
@@ -885,6 +893,7 @@ export class BrowserControl extends TypedEmitter<Events> {
         frames: new PageFrames(),
         lastSnapshot: null,
         emulation: null,
+        permissionOrigin: null,
         dialog: null,
         dialogSignal: dialogSignal(),
         caught: [],
