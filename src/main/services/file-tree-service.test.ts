@@ -2,7 +2,32 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { FileTreeService, parseGitStatus } from './file-tree-service'
+import { FileTreeService, isTreePath, parseGitStatus } from './file-tree-service'
+
+describe('isTreePath', () => {
+  it('takes paths inside the root, joined with /', () => {
+    expect(isTreePath('', 'win32')).toBe(true)
+    expect(isTreePath('src/main/index.ts', 'win32')).toBe(true)
+    expect(isTreePath('.github/workflows', 'linux')).toBe(true)
+  })
+
+  it('refuses whatever leads out of the root', () => {
+    for (const platform of ['win32', 'linux'] as const) {
+      expect(isTreePath('..', platform)).toBe(false)
+      expect(isTreePath('src/../../x', platform)).toBe(false)
+      expect(isTreePath('/etc/passwd', platform)).toBe(false)
+      expect(isTreePath('src//x', platform)).toBe(false)
+      expect(isTreePath('a\0b', platform)).toBe(false)
+      expect(isTreePath(42, platform)).toBe(false)
+    }
+    expect(isTreePath('..\\..\\Windows\\win.ini', 'win32')).toBe(false)
+    expect(isTreePath('src\\..\\..\\x', 'win32')).toBe(false)
+    expect(isTreePath('C:/Windows/win.ini', 'win32')).toBe(false)
+    expect(isTreePath('file.txt:stream', 'win32')).toBe(false)
+    // On Linux `\` is an ordinary character of a name.
+    expect(isTreePath('a\\b', 'linux')).toBe(true)
+  })
+})
 
 const z = (...tokens: string[]) => tokens.map((t) => `${t}\0`).join('')
 

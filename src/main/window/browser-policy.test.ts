@@ -102,8 +102,13 @@ describe('uniqueFileName', () => {
   })
 
   it('takes only the name, without folders or characters Windows forbids', () => {
-    expect(uniqueFileName('..\..\evil.exe', takenOf())).toBe('evil.exe')
+    expect(uniqueFileName('..\\..\\evil.exe', takenOf())).toBe('evil.exe')
+    expect(uniqueFileName('C:\\Windows\\evil.exe', takenOf())).toBe('evil.exe')
+    expect(uniqueFileName('..\\../a\\b/evil.exe', takenOf())).toBe('evil.exe')
     expect(uniqueFileName('a/b/c.txt', takenOf())).toBe('c.txt')
+    expect(uniqueFileName('CON', takenOf())).toBe('_CON')
+    expect(uniqueFileName('nul.pdf', takenOf())).toBe('_nul.pdf')
+    expect(uniqueFileName('console.pdf', takenOf())).toBe('console.pdf')
     expect(uniqueFileName('what?.txt', takenOf())).toBe('what_.txt')
     expect(uniqueFileName('', takenOf())).toBe('download')
     expect(uniqueFileName('...', takenOf())).toBe('download')

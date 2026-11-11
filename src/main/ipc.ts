@@ -27,6 +27,7 @@ import { claudeInChromeStatus } from './browser/claude-in-chrome'
 import type { AppContext } from './context'
 import { listFontFamilies } from './lib/fonts'
 import { SESSION_ID_RE } from './lib/session-files'
+import { isTreePath } from './services/file-tree-service'
 import { browserDownloads } from './window/browser-downloads'
 import { clearBrowserData, loadFavicon } from './window/browser-guests'
 import { browserLogins } from './window/browser-logins'
@@ -122,7 +123,7 @@ function promptOf(value: unknown): string | null {
 
 /** A folder of a tree relative to its root: `/`-separated, without `..` and empty parts. */
 function isTreeDir(value: unknown): value is string {
-  return typeof value === 'string' && value.length <= MAX_PATH_LENGTH && !value.includes('\0') && (value === '' || value.split('/').every((part) => part !== '' && part !== '.' && part !== '..'))
+  return typeof value === 'string' && value.length <= MAX_PATH_LENGTH && isTreePath(value)
 }
 
 function treesOf(value: unknown): FileTreeWatch[] {

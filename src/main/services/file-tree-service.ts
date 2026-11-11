@@ -16,6 +16,17 @@ import type {
 import type { FileActivity } from '../lib/hook-events'
 import { TypedEmitter } from '../lib/typed-emitter'
 
+/**
+ * A folder or file of a tree as the renderer names it: relative to the root, its parts joined with `/`,
+ * nothing that leads out of the root. On Windows `\` separates folders too and `:` names another
+ * drive or a stream of a file, so neither is part of such a path there.
+ */
+export function isTreePath(value: unknown, platform: NodeJS.Platform = process.platform): value is string {
+  if (typeof value !== 'string' || value.includes('\0')) return false
+  if (platform === 'win32' && /[\\:]/.test(value)) return false
+  return value === '' || value.split('/').every((part) => part !== '' && part !== '.' && part !== '..')
+}
+
 /** Not shown in the tree, as in VS Code's Explorer (`files.exclude`); `desktop.ini` is hidden on Windows anyway. */
 const HIDDEN = new Set(['.git', '.svn', '.hg', 'CVS', '.DS_Store', 'Thumbs.db', 'desktop.ini'])
 /** The most entries of one folder the tree gets; the rest is counted. */
@@ -147,6 +158,7 @@ export class FileTreeService extends TypedEmitter<Events> {
    * as `git diff HEAD` shows them. Without changes, or outside a repository, the file as it is.
    */
   async diff(root: string, path: string, full: boolean): Promise<FileDiff> {
+    if (!isTreePath(path) || path === '') throw new Error('Diese Datei liegt nicht im Ordner.')
     const file = join(root, ...path.split('/'))
     const result: FileDiff = { patch: '', text: null, repo: false, binary: false, tooLarge: false, missing: false }
     const info = await stat(file).catch(() => null)

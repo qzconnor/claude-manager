@@ -95,13 +95,15 @@ export function faviconType(bytes: Uint8Array): string | null {
  * `report.pdf`, then `report (1).pdf`, `report (2).pdf` … Names that are no file name become `download`.
  */
 export function uniqueFileName(name: string, taken: (candidate: string) => boolean): string {
-  // Only the last part of a path, without characters Windows doesn't allow in names.
-  const base =
+  // Only the last part of a path (`/` or `\`), without characters Windows doesn't allow in names.
+  const cleaned =
     name
-      .split(/[\/]/)
+      .split(/[\\/]/)
       .pop()!
       .replace(/[<>:"|?*\u0000-\u001f]/g, '_')
       .replace(/^[\s.]+|[\s.]+$/g, '') || 'download'
+  // Names of devices (`CON`, `NUL.txt`, `COM1` …) don't name a file on Windows.
+  const base = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\.|$)/i.test(cleaned) ? `_${cleaned}` : cleaned
   if (!taken(base)) return base
   const extension = /(\.tar)?\.[^.\s]{1,10}$/i.exec(base)?.[0] ?? ''
   const stem = base.slice(0, base.length - extension.length) || 'download'
