@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -108,7 +108,7 @@ describe('filterGuard', () => {
   })
 })
 
-describe('FileTreeService and the config of a repository', () => {
+describe('FileTreeService with git', () => {
   let dir: string
   const service = new FileTreeService()
 
@@ -172,6 +172,60 @@ describe('FileTreeService and the config of a repository', () => {
     expect(diff.patch).toContain('+HELLO')
     expect((await service.searchList(repo)).paths).toContain('a.txt')
     expect(await programs()).toEqual([])
+  })
+
+  it('shows the files of a repository without a commit as new', async () => {
+    const repo = join(dir, 'repo')
+    await mkdir(join(repo, 'sub'), { recursive: true })
+    git(repo, 'init', '-q')
+    await writeFile(join(repo, 'sub', 'new.txt'), 'a\n')
+    git(repo, 'add', '-A')
+    const sub = join(repo, 'sub')
+    expect(await service.status(sub)).toMatchObject({ branch: 'main', commit: null, files: { 'new.txt': { status: 'added' } } })
+    expect(await service.diff(sub, 'new.txt', false)).toMatchObject({ repo: true, patch: '', text: 'a\n' })
+  })
+
+  it('compares a file git mv moved with the one it was', async () => {
+    const repo = join(dir, 'repo')
+    await mkdir(join(repo, 'sub'), { recursive: true })
+    git(repo, 'init', '-q')
+    const numbers = Array.from({ length: 20 }, (_, i) => `${i + 1}\n`).join('')
+    await writeFile(join(repo, 'sub', 'a.txt'), numbers)
+    await writeFile(join(repo, 'b.txt'), numbers)
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-qm', 'init')
+    git(repo, 'mv', 'sub/a.txt', 'sub/moved.txt')
+    git(repo, 'mv', 'b.txt', 'sub/b.txt')
+    await writeFile(join(repo, 'sub', 'moved.txt'), numbers.replace('5\n', 'five\n'))
+    const sub = join(repo, 'sub')
+
+    // Renamed and changed: only the change, not the whole file as new.
+    const moved = await service.diff(sub, 'moved.txt', false)
+    expect(moved.patch).toContain('rename from sub/a.txt')
+    expect(moved.patch).toMatch(/^-5$/m)
+    expect(moved.patch).toMatch(/^\+five$/m)
+    expect(moved.patch).not.toMatch(/^\+1$/m)
+
+    // Only renamed, from outside the folder: no hunk, the file as it is.
+    const kept = await service.diff(sub, 'b.txt', false)
+    expect(kept.patch).toContain('rename from b.txt')
+    expect(kept.patch).not.toContain('@@')
+    expect(kept.text).toBe(numbers)
+  })
+
+  it('reads a file whose mode alone changed', async () => {
+    const repo = join(dir, 'repo')
+    await mkdir(repo)
+    git(repo, 'init', '-q')
+    await writeFile(join(repo, 'run.sh'), 'echo hi\n')
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-qm', 'init')
+    // On disk for Linux, in the index for Windows (it has no executable bit).
+    await chmod(join(repo, 'run.sh'), 0o755)
+    git(repo, 'update-index', '--chmod=+x', 'run.sh')
+    const result = await service.diff(repo, 'run.sh', false)
+    expect(result.patch).toContain('new mode 100755')
+    expect(result.text).toBe('echo hi\n')
   })
 })
 

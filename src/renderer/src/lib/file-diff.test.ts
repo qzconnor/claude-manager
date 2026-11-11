@@ -12,6 +12,7 @@ import {
   numberDigits,
   parsePatch,
   shownText,
+  unchangedNote,
   wrapOffsets,
   wrappedRows,
   type DiffLine,
@@ -64,6 +65,15 @@ describe('parsePatch', () => {
     expect(parsePatch('@@ -1 +1 @@\r\n-a\r\n+b\r\n').lines.map((l) => l.text)).toEqual(['', 'a', 'b'])
     expect(parsePatch('')).toEqual({ lines: [], added: 0, removed: 0 })
   })
+
+  it('keeps a lone carriage return in its line, as git does', () => {
+    const { lines } = parsePatch('@@ -1,2 +1,2 @@\n-50%\r100%\n+done\n same\n')
+    expect(lines.slice(1)).toEqual([
+      { kind: 'del', text: '50%\r100%', old: 1, new: null },
+      { kind: 'add', text: 'done', old: null, new: 1 },
+      { kind: 'context', text: 'same', old: 2, new: 2 },
+    ])
+  })
 })
 
 describe('fileLines', () => {
@@ -76,6 +86,7 @@ describe('fileLines', () => {
     expect(fresh.added).toBe(2)
     expect(fresh.lines[1]).toEqual({ kind: 'add', text: 'y', old: null, new: 2 })
     expect(fileLines('', 'context').lines).toEqual([])
+    expect(fileLines('a\rb\n', 'context').lines.map((l) => l.text)).toEqual(['a\rb'])
   })
 })
 
@@ -99,6 +110,20 @@ describe('diffMode', () => {
     expect(diffMode(diff({ missing: true }), 'deleted')).toBe('missing')
     expect(diffMode(diff({ binary: true, patch: PATCH }), 'modified')).toBe('binary')
     expect(diffMode(diff({ tooLarge: true, binary: true }), 'modified')).toBe('tooLarge')
+  })
+
+  it('shows a file only renamed or made executable as it is, and says why', () => {
+    const renamed = 'diff --git a/a.ts b/b.ts\nsimilarity index 100%\nrename from a.ts\nrename to b.ts\n'
+    const chmod = 'diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode 100755\n'
+    expect(diffMode(diff({ patch: renamed, text: 'x' }), 'renamed')).toBe('unchanged')
+    expect(diffMode(diff({ patch: chmod, text: 'x' }), 'modified')).toBe('unchanged')
+    expect(unchangedNote(renamed)).toBe('Umbenannt, Inhalt unverändert')
+    expect(unchangedNote(chmod)).toBe('Jetzt ausführbar, Inhalt unverändert')
+    expect(unchangedNote(`${renamed.replace('100%', '100%\nold mode 100755\nnew mode 100644')}`)).toBe(
+      'Umbenannt und nicht mehr ausführbar, Inhalt unverändert',
+    )
+    expect(unchangedNote('')).toBeNull()
+    expect(unchangedNote(PATCH)).toBeNull()
   })
 
   it('gives the lines of each mode', () => {

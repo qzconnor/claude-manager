@@ -18,6 +18,17 @@ export interface ParsedDiff {
 const HUNK_RE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@ ?(.*)$/
 
 /**
+ * The lines of a text as git counts them: only `\n` ends one, a `\r` before it belongs to the line
+ * break (CRLF), one anywhere else to the line (a progress bar's output, an old Mac file).
+ */
+function textLines(text: string): string[] {
+  const rows = text.split('\n').map((row) => (row.endsWith('\r') ? row.slice(0, -1) : row))
+  // A text ending with a line break would get an empty last line.
+  if (text.endsWith('\n')) rows.pop()
+  return text === '' ? [] : rows
+}
+
+/**
  * The lines of a unified diff of one file (`git diff`), hunk by hunk. The header before the first
  * hunk (`diff --git`, `index`, `---`, `+++`) and `\ No newline at end of file` are left out.
  */
@@ -28,10 +39,7 @@ export function parsePatch(patch: string): ParsedDiff {
   let old = 0
   let cur = 0
   let inHunk = false
-  const source = patch.replace(/\r\n?/g, '\n')
-  // The patch ends with a newline, which would make an empty last line.
-  const all = source.endsWith('\n') ? source.slice(0, -1).split('\n') : source.split('\n')
-  for (const line of all) {
+  for (const line of textLines(patch)) {
     const head = HUNK_RE.exec(line)
     if (head) {
       old = Number(head[1])
@@ -61,10 +69,7 @@ export function parsePatch(patch: string): ParsedDiff {
 
 /** A whole file as lines of a diff: unchanged (`context`), or all added for a file git doesn't know yet. */
 export function fileLines(text: string, kind: 'context' | 'add'): ParsedDiff {
-  const source = text.replace(/\r\n?/g, '\n')
-  const rows = source.endsWith('\n') ? source.slice(0, -1).split('\n') : source.split('\n')
-  if (source === '') rows.length = 0
-  const lines = rows.map<DiffLine>((line, i) => ({ kind, text: line, old: kind === 'context' ? i + 1 : null, new: i + 1 }))
+  const lines = textLines(text).map<DiffLine>((line, i) => ({ kind, text: line, old: kind === 'context' ? i + 1 : null, new: i + 1 }))
   return { lines, added: kind === 'add' ? lines.length : 0, removed: 0 }
 }
 
@@ -90,10 +95,25 @@ export type DiffMode = 'diff' | 'new' | 'unchanged' | 'plain' | 'binary' | 'tooL
 export function diffMode(diff: FileDiff, status: GitFileStatus | null | undefined): DiffMode {
   if (diff.tooLarge) return 'tooLarge'
   if (diff.binary) return 'binary'
-  if (diff.patch) return 'diff'
+  // Without a hunk only the name or the mode changed: the file shows as it is.
+  if (/^@@ /m.test(diff.patch)) return 'diff'
   if (diff.missing || diff.text === null) return 'missing'
   if (!diff.repo) return 'plain'
   return status === 'untracked' || status === 'added' ? 'new' : 'unchanged'
+}
+
+/**
+ * Why a file whose content is the same as at the last commit still counts as changed: `git mv`
+ * renamed it, or `chmod` made it executable or not (the head of its patch says so); null for neither.
+ */
+export function unchangedNote(patch: string | null | undefined): string | null {
+  const parts: string[] = []
+  if (patch && /^rename from /m.test(patch)) parts.push('umbenannt')
+  const mode = patch ? /^new mode (\d+)/m.exec(patch) : null
+  if (mode) parts.push(mode[1] === '100755' ? 'jetzt ausführbar' : 'nicht mehr ausführbar')
+  if (parts.length === 0) return null
+  const text = parts.join(' und ')
+  return `${text[0]!.toUpperCase()}${text.slice(1)}, Inhalt unverändert`
 }
 
 const NO_LINES: ParsedDiff = { lines: [], added: 0, removed: 0 }

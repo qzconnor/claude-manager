@@ -9,7 +9,17 @@ import { useDiffStyle } from '@/composables/useDiffStyle'
 import { useFileTreeModel } from '@/composables/useFileTreeModel'
 import { useOpenFile } from '@/composables/useOpenFile'
 import { errorMessage } from '@/lib/errors'
-import { DIFF_TAB_SIZE, diffColumns, diffLines, diffMode, numberDigits, parsePatch, type DiffLine, type ParsedDiff } from '@/lib/file-diff'
+import {
+  DIFF_TAB_SIZE,
+  diffColumns,
+  diffLines,
+  diffMode,
+  numberDigits,
+  parsePatch,
+  unchangedNote,
+  type DiffLine,
+  type ParsedDiff,
+} from '@/lib/file-diff'
 import { fileIcon } from '@/lib/file-icons'
 import { absolutePath, baseName, gitDecorations, parentPath, STATUS_CLASS, STATUS_LABEL, STATUS_LETTER } from '@/lib/file-tree'
 import { hasLanguage, highlightDiff, languageOf, loadLanguage } from '@/lib/syntax'
@@ -140,11 +150,11 @@ const lines = computed(() => parsed.value.lines)
 const notice = computed(() => {
   switch (mode.value) {
     case 'unchanged':
-      return 'Keine Änderungen seit dem letzten Commit'
+      return unchangedNote(diff.value?.patch) ?? 'Keine Änderungen seit dem letzten Commit'
     case 'plain':
       return 'Kein Git-Repository'
     case 'new':
-      return 'Neu, Git kennt sie noch nicht'
+      return state.value?.status === 'added' ? 'Neu, noch in keinem Commit' : 'Neu, Git kennt sie noch nicht'
     default:
       return null
   }

@@ -57,6 +57,7 @@ import {
   lineAtRow,
   numberDigits,
   parsePatch,
+  unchangedNote,
   wrapOffsets,
   type SeenState,
 } from '@/lib/file-diff'
@@ -381,8 +382,10 @@ function noteOf(entry: Entry | undefined): string | null {
       return 'Zu groß, um sie hier zu zeigen.'
     case 'missing':
       return 'Die Datei gibt es nicht mehr.'
-    case 'unchanged':
-      return 'Keine Änderungen mehr seit dem letzten Commit.'
+    case 'unchanged': {
+      const note = unchangedNote(entry.diff?.patch)
+      return note ? `${note}.` : 'Keine Änderungen mehr seit dem letzten Commit.'
+    }
     default:
       return entry.parsed.lines.length === 0 ? 'Die Datei ist leer.' : null
   }

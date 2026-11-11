@@ -172,7 +172,8 @@ export class FileTreeService extends TypedEmitter<Events> {
 
   /**
    * A file's changes since the last commit (`path` relative to `root`): staged and unstaged together,
-   * as `git diff HEAD` shows them. Without changes, or outside a repository, the file as it is.
+   * as `git diff HEAD` shows them. Without changes, or outside a repository, the file as it is; so too
+   * when only its name or mode changed (the patch has no hunk then).
    */
   async diff(root: string, path: string, full: boolean): Promise<FileDiff> {
     if (!isTreePath(path) || path === '') throw new Error('Diese Datei liegt nicht im Ordner.')
@@ -181,25 +182,9 @@ export class FileTreeService extends TypedEmitter<Events> {
     const info = await stat(file).catch(() => null)
     if (info && !info.isFile()) throw new Error('Das ist keine Datei.')
     result.missing = info === null
-    if ((await this.prefix(root)) !== null) {
-      const patch = await runGit(
-        root,
-        [
-          '--no-optional-locks',
-          '--literal-pathspecs',
-          'diff',
-          '--no-color',
-          '--no-ext-diff',
-          '--no-textconv',
-          '--no-renames',
-          `--unified=${full ? FULL_CONTEXT : DIFF_CONTEXT}`,
-          'HEAD',
-          '--',
-          path,
-        ],
-        await this.guard(root),
-      )
-      // Fails before the first commit: there is nothing to compare with yet.
+    const prefix = await this.prefix(root)
+    if (prefix !== null) {
+      const patch = await this.patch(root, `${prefix}${path}`, full)
       if (patch !== null) {
         result.repo = true
         if (patch.length > MAX_PATCH_CHARS) result.tooLarge = true
@@ -209,7 +194,7 @@ export class FileTreeService extends TypedEmitter<Events> {
         }
       }
     }
-    if (result.patch || !info || result.binary || result.tooLarge) return result
+    if (!info || result.binary || result.tooLarge || /^@@ /m.test(result.patch)) return result
     if (info.size > MAX_DIFF_FILE_BYTES) {
       result.tooLarge = true
       return result
@@ -307,6 +292,58 @@ export class FileTreeService extends TypedEmitter<Events> {
       fresh.push(path)
     }
     if (fresh.length > 0) this.emit('touched', terminalId, fresh.map((path) => ({ path, kind: 'write' as const })))
+  }
+
+  /**
+   * `git diff HEAD` of the file at `top` (from the top of the repository); null when git failed. A file
+   * `git mv` moved is compared with the one it was instead of shown as new. Before the first commit
+   * there is nothing to compare with: no changes (''), the tree shows the file as new.
+   */
+  private async patch(root: string, top: string, full: boolean): Promise<string | null> {
+    const env = await this.guard(root)
+    const diff = (paths: string[], renames: boolean) =>
+      runGit(
+        root,
+        [
+          '--no-optional-locks',
+          'diff',
+          '--no-color',
+          '--no-ext-diff',
+          '--no-textconv',
+          renames ? '--find-renames' : '--no-renames',
+          `--unified=${full ? FULL_CONTEXT : DIFF_CONTEXT}`,
+          'HEAD',
+          '--',
+          ...paths.map(topPathspec),
+        ],
+        env,
+      )
+    const patch = await diff([top], false)
+    if (patch === null) return (await runGit(root, ['rev-parse', '--verify', '--quiet', 'HEAD'])) === null ? '' : null
+    if (!/^new file mode /m.test(patch)) return patch
+    const from = await this.renamedFrom(root, top, env)
+    if (from === null) return patch
+    const renamed = await diff([from, top], true)
+    // Changed too much since: git sees a deleted and a new file, both in the patch. Then as new.
+    if (renamed === null || renamed.match(/^diff --git /gm)?.length !== 1 || !/^rename from /m.test(renamed)) return patch
+    return renamed
+  }
+
+  /** Where the file at `top` was at HEAD, if a rename of it is staged (`git mv`); null else. */
+  private async renamedFrom(root: string, top: string, env: Record<string, string>): Promise<string | null> {
+    const out = await runGit(root, ['--no-optional-locks', 'diff', '--cached', '--no-relative', '--find-renames', '--name-status', '-z', 'HEAD'], env)
+    // `R<score>`, the old and the new path; `M`, `A`, `D` … with one path.
+    const tokens = out?.split('\0') ?? []
+    for (let i = 0; i < tokens.length; i++) {
+      const status = tokens[i]!
+      if (!status.startsWith('R') && !status.startsWith('C')) {
+        i++
+        continue
+      }
+      if (status.startsWith('R') && tokens[i + 2] === top) return tokens[i + 1] ?? null
+      i += 2
+    }
+    return null
   }
 
   /** The files of the commit at HEAD of the repository `cwd` lies in, if it was just made. */
@@ -549,6 +586,11 @@ export class FileTreeService extends TypedEmitter<Events> {
     }
     return guard
   }
+}
+
+/** A path from the top of the repository, as it is (no wildcards), wherever git runs in it. */
+function topPathspec(path: string): string {
+  return `:(top,literal)${path}`
 }
 
 /**
