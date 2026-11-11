@@ -1,4 +1,4 @@
-import type { Account, AccountUsage } from './types'
+import type { Account, AccountUsage, UsageWindow } from './types'
 import { canLendCredentials, sameLogin } from './utils'
 
 /** An account known to be at a limit, e.g. because a tab stopped there; until `resetsAt` (null: not known). */
@@ -51,13 +51,23 @@ function standing(account: Account, context: AccountChoiceContext): AccountStand
   if (account.kind === 'apiKey') return { kind: 'pay-per-use' }
 
   const usage = context.usage(account.id)
+  // No credentials, or a long-lived token Anthropic refused (revoked): a session with it wouldn't start.
+  if (usage?.status === 'no-credentials' || (account.kind === 'token' && usage?.status === 'unauthorized')) return { kind: 'logged-out' }
+  // Also the numbers of the last query that worked, when the latest failed (offline, the usage API
+  // busy): a window that was full stays full until it resets.
   const windows = [
-    { label: '5 Std.', window: usage?.fiveHour },
-    { label: 'Woche', window: usage?.sevenDay },
-  ].filter((w) => w.window)
-  if (usage?.status !== 'ok' || windows.length === 0) return { kind: 'unknown' }
-  const top = windows.reduce((a, b) => (b.window!.percent > a.window!.percent ? b : a))
-  return { kind: 'usage', label: top.label, percent: Math.max(0, Math.min(100, Math.round(top.window!.percent))) }
+    { label: '5 Std.', percent: percentNow(usage?.fiveHour, context.now) },
+    { label: 'Woche', percent: percentNow(usage?.sevenDay, context.now) },
+  ].filter((w): w is { label: string; percent: number } => w.percent !== null)
+  if (windows.length === 0) return { kind: 'unknown' }
+  const top = windows.reduce((a, b) => (b.percent > a.percent ? b : a))
+  return { kind: 'usage', label: top.label, percent: Math.max(0, Math.min(100, Math.round(top.percent))) }
+}
+
+/** How full a window is now: one that has reset since is empty. */
+function percentNow(window: UsageWindow | null | undefined, now: number): number | null {
+  if (!window) return null
+  return window.resetsAt && Date.parse(window.resetsAt) <= now ? 0 : window.percent
 }
 
 /**
