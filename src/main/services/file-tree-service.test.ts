@@ -1,8 +1,9 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { FileTreeService, isTreePath, parseGitStatus } from './file-tree-service'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { FileTreeService, filterGuard, isTreePath, parseGitStatus } from './file-tree-service'
 
 describe('isTreePath', () => {
   it('takes paths inside the root, joined with /', () => {
@@ -77,6 +78,100 @@ describe('parseGitStatus', () => {
     const status = parseGitStatus(z('1 .M N... 1 1 1 a b app/src/x.ts', '? other/y.ts', '! app/out/'), z('1\t2\tapp/src/x.ts'), 'app/')
     expect(status.files).toEqual({ 'src/x.ts': { status: 'modified', staged: false, added: 1, removed: 2 } })
     expect(status.ignored).toEqual(['out/'])
+  })
+})
+
+describe('filterGuard', () => {
+  it('switches off the filters of the repository, not those of the user', () => {
+    const out = ['global\tfilter.lfs.process', 'local\tfilter.evil.clean', 'worktree\tfilter.a=b.c.process\r', 'command\tfilter.mine.clean', ''].join('\n')
+    expect(filterGuard(out)).toEqual({
+      GIT_CONFIG_KEY_0: 'filter.evil.clean',
+      GIT_CONFIG_VALUE_0: '',
+      GIT_CONFIG_KEY_1: 'filter.evil.process',
+      GIT_CONFIG_VALUE_1: '',
+      GIT_CONFIG_KEY_2: 'filter.evil.required',
+      GIT_CONFIG_VALUE_2: 'false',
+      GIT_CONFIG_KEY_3: 'filter.a=b.c.clean',
+      GIT_CONFIG_VALUE_3: '',
+      GIT_CONFIG_KEY_4: 'filter.a=b.c.process',
+      GIT_CONFIG_VALUE_4: '',
+      GIT_CONFIG_KEY_5: 'filter.a=b.c.required',
+      GIT_CONFIG_VALUE_5: 'false',
+      GIT_CONFIG_COUNT: '6',
+    })
+  })
+
+  it('adds to settings the environment gives git already, and is empty without filters', () => {
+    expect(filterGuard('local\tfilter.x.clean', '2')).toMatchObject({ GIT_CONFIG_KEY_2: 'filter.x.clean', GIT_CONFIG_COUNT: '5' })
+    expect(filterGuard(null)).toEqual({})
+    expect(filterGuard('global\tfilter.lfs.clean')).toEqual({})
+  })
+})
+
+describe('FileTreeService and the config of a repository', () => {
+  let dir: string
+  const service = new FileTreeService()
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'file-tree-git-'))
+    // git as the service runs it: without the user's configuration, no repository above the temp folder.
+    vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
+    vi.stubEnv('GIT_CONFIG_GLOBAL', join(dir, 'no-gitconfig'))
+    vi.stubEnv('GIT_CEILING_DIRECTORIES', tmpdir())
+    vi.stubEnv('GIT_DIR', undefined)
+    vi.stubEnv('GIT_WORK_TREE', undefined)
+  })
+  afterEach(async () => {
+    vi.unstubAllEnvs()
+    service.dispose()
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'init.defaultBranch=main', ...args], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+
+  it('runs none of the programs the repository configures', async () => {
+    const repo = join(dir, 'repo')
+    await mkdir(repo)
+    git(repo, 'init', '-q')
+    await writeFile(join(repo, 'a.txt'), 'hello\n')
+    await writeFile(join(repo, '.gitattributes'), '*.txt filter=evil diff=evil\n')
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-qm', 'init')
+    // A program that notes that it ran; git starts it through its shell.
+    const ran = join(dir, 'ran.txt').replaceAll('\\', '/')
+    const mark = join(dir, 'mark.sh').replaceAll('\\', '/')
+    await writeFile(mark, `echo "$1" >> '${ran}'\ncat > /dev/null\n`)
+    for (const [key, what] of [
+      ['core.fsmonitor', 'fsmonitor'],
+      ['filter.evil.clean', 'clean'],
+      ['diff.evil.textconv', 'textconv'],
+      ['diff.external', 'external'],
+    ]) {
+      git(repo, 'config', key!, `sh '${mark}' ${what}`)
+    }
+    // Same size, another time: git has to compare the content and runs the filter for it.
+    await writeFile(join(repo, 'a.txt'), 'HELLO\n')
+    await utimes(join(repo, 'a.txt'), new Date('2001-01-01'), new Date('2001-01-01'))
+    const programs = () => readFile(ran, 'utf8').then((text) => text.split(/\s+/).filter(Boolean).sort(), () => [])
+
+    // Without the guard git runs them; else this test would prove nothing.
+    git(repo, '--no-optional-locks', 'diff', 'HEAD')
+    git(repo, '--no-optional-locks', 'diff', '--no-ext-diff', 'HEAD')
+    expect(new Set(await programs())).toEqual(new Set(['fsmonitor', 'clean', 'textconv', 'external']))
+    await rm(ran)
+
+    const status = await service.status(repo)
+    expect(status?.files['a.txt']).toMatchObject({ status: 'modified', added: 1, removed: 1 })
+    const diff = await service.diff(repo, 'a.txt', false)
+    expect(diff.patch).toContain('-hello')
+    expect(diff.patch).toContain('+HELLO')
+    expect((await service.searchList(repo)).paths).toContain('a.txt')
+    expect(await programs()).toEqual([])
   })
 })
 

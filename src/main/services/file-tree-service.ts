@@ -131,6 +131,8 @@ export class FileTreeService extends TypedEmitter<Events> {
   /** Where each folder lies in its repository (`git rev-parse --show-prefix`); only hits are kept. */
   private readonly prefixes = new Map<string, string>()
   private readonly gitDirs = new Map<string, string>()
+  /** By folder: the environment that switches off the filters its repository defines (see `filterGuard`). */
+  private readonly guards = new Map<string, Promise<Record<string, string>>>()
 
   async list(dir: string): Promise<FileListing> {
     const dirents = await readdir(dir, { withFileTypes: true })
@@ -154,10 +156,15 @@ export class FileTreeService extends TypedEmitter<Events> {
   async status(root: string): Promise<GitTreeStatus | null> {
     const prefix = await this.prefix(root)
     if (prefix === null) return null
+    const env = await this.guard(root)
     const [status, numstat] = await Promise.all([
-      runGit(root, ['--no-optional-locks', 'status', '--porcelain=v2', '-z', '--branch', '--ignored=matching', '--untracked-files=normal', '--', '.']),
+      runGit(
+        root,
+        ['--no-optional-locks', 'status', '--porcelain=v2', '-z', '--branch', '--ignored=matching', '--untracked-files=normal', '--', '.'],
+        env,
+      ),
       // Fails before the first commit; the line counts are missing then.
-      runGit(root, ['--no-optional-locks', 'diff', '--numstat', '-z', 'HEAD', '--', '.']),
+      runGit(root, ['--no-optional-locks', 'diff', '--numstat', '--no-textconv', '--no-ext-diff', '-z', 'HEAD', '--', '.'], env),
     ])
     if (status === null) return null
     return parseGitStatus(status, numstat ?? '', prefix)
@@ -175,18 +182,23 @@ export class FileTreeService extends TypedEmitter<Events> {
     if (info && !info.isFile()) throw new Error('Das ist keine Datei.')
     result.missing = info === null
     if ((await this.prefix(root)) !== null) {
-      const patch = await runGit(root, [
-        '--no-optional-locks',
-        '--literal-pathspecs',
-        'diff',
-        '--no-color',
-        '--no-ext-diff',
-        '--no-renames',
-        `--unified=${full ? FULL_CONTEXT : DIFF_CONTEXT}`,
-        'HEAD',
-        '--',
-        path,
-      ])
+      const patch = await runGit(
+        root,
+        [
+          '--no-optional-locks',
+          '--literal-pathspecs',
+          'diff',
+          '--no-color',
+          '--no-ext-diff',
+          '--no-textconv',
+          '--no-renames',
+          `--unified=${full ? FULL_CONTEXT : DIFF_CONTEXT}`,
+          'HEAD',
+          '--',
+          path,
+        ],
+        await this.guard(root),
+      )
       // Fails before the first commit: there is nothing to compare with yet.
       if (patch !== null) {
         result.repo = true
@@ -301,7 +313,7 @@ export class FileTreeService extends TypedEmitter<Events> {
   private async committedFiles(cwd: string): Promise<string[]> {
     const [top, time, names] = await Promise.all([
       runGit(cwd, ['rev-parse', '--show-toplevel']),
-      runGit(cwd, ['--no-optional-locks', 'log', '-1', '--format=%ct', 'HEAD']),
+      runGit(cwd, ['--no-optional-locks', 'log', '-1', '--no-show-signature', '--format=%ct', 'HEAD']),
       // --root: the first commit has no parent to compare with.
       runGit(cwd, ['--no-optional-locks', 'diff-tree', '--root', '--no-commit-id', '--name-only', '-r', '-z', 'HEAD']),
     ])
@@ -315,7 +327,7 @@ export class FileTreeService extends TypedEmitter<Events> {
   /** The files of `root` for the search: what git knows and doesn't ignore, else a walk through the folder. */
   async searchList(root: string): Promise<FileSearchList> {
     if ((await this.prefix(root)) !== null) {
-      const out = await runGit(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '.'])
+      const out = await runGit(root, ['--no-optional-locks', 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '.'])
       if (out !== null) {
         const paths = [...new Set(out.split('\0').filter(Boolean))]
         return { paths: paths.slice(0, MAX_SEARCH_FILES), truncated: paths.length > MAX_SEARCH_FILES }
@@ -450,6 +462,8 @@ export class FileTreeService extends TypedEmitter<Events> {
       const watcher = watch(gitDir, (_event, file) => {
         const name = file?.toString()
         if (name === 'index' || name === 'HEAD') this.note(key, null, true)
+        // Filters added to its config are switched off too (see `guard`).
+        if (name === 'config' || name === 'config.worktree') for (const root of watched.roots) this.guards.delete(root)
       })
       watcher.on('error', () => {
         watcher.close()
@@ -523,15 +537,73 @@ export class FileTreeService extends TypedEmitter<Events> {
     if (gitDir) this.gitDirs.set(root, gitDir)
     return gitDir
   }
+
+  /** The environment for git commands in `root` that read changed files (see `filterGuard`). */
+  private guard(root: string): Promise<Record<string, string>> {
+    let guard = this.guards.get(root)
+    if (!guard) {
+      guard = runGit(root, ['config', '--show-scope', '--name-only', '--includes', '--get-regexp', '^filter\\.']).then((out) =>
+        filterGuard(out, process.env.GIT_CONFIG_COUNT),
+      )
+      this.guards.set(root, guard)
+    }
+    return guard
+  }
+}
+
+/**
+ * The tree only looks at a folder, perhaps one just unpacked from elsewhere with its `.git` folder:
+ * nothing its repository configures may run then. git would start its fsmonitor program for every
+ * command that reads the index; diff programs and textconv are switched off where the tree diffs.
+ */
+const GUARD = ['-c', 'core.fsmonitor=false']
+
+/**
+ * The filters (`filter.<name>.clean`/`process`) the repository's own config defines, from
+ * `git config --show-scope --name-only --get-regexp ^filter\.`, switched off by environment
+ * (`GIT_CONFIG_COUNT`, after the `existing` ones; a `-c` would break on a name with `=`): git runs
+ * them on every changed file it compares. Those of the user's own config (global, system) stay.
+ */
+export function filterGuard(out: string | null, existing?: string): Record<string, string> {
+  const names = new Set<string>()
+  for (const line of (out ?? '').split('\n')) {
+    const [scope, key] = line.replace(/\r$/, '').split('\t')
+    if ((scope !== 'local' && scope !== 'worktree') || !key) continue
+    const match = /^filter\.(.+)\.[^.]+$/s.exec(key)
+    if (match) names.add(match[1]!)
+  }
+  const env: Record<string, string> = {}
+  const first = Number(existing) || 0
+  let count = first
+  for (const name of names) {
+    for (const [key, value] of [
+      ['clean', ''],
+      ['process', ''],
+      ['required', 'false'],
+    ]) {
+      env[`GIT_CONFIG_KEY_${count}`] = `filter.${name}.${key}`
+      env[`GIT_CONFIG_VALUE_${count}`] = value!
+      count++
+    }
+  }
+  if (count > first) env.GIT_CONFIG_COUNT = String(count)
+  return env
 }
 
 /** git's output, untouched (with `-z` a trim could cut a name); null when it failed or is missing. */
-function runGit(cwd: string, args: string[]): Promise<string | null> {
+function runGit(cwd: string, args: string[], env?: Record<string, string>): Promise<string | null> {
   return new Promise((resolve) => {
     execFile(
       'git',
-      args,
-      { cwd, windowsHide: true, timeout: 15_000, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
+      [...GUARD, ...args],
+      {
+        cwd,
+        windowsHide: true,
+        timeout: 15_000,
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
+        env: env && Object.keys(env).length > 0 ? { ...process.env, ...env } : undefined,
+      },
       (error, stdout) => resolve(error ? null : stdout),
     )
   })
