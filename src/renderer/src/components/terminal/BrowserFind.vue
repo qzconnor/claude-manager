@@ -4,11 +4,13 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
 
 /**
- * The search in a browser page (Ctrl+F), like the terminal's. The page searches by itself and
- * reports its matches later (`matches`), so the pane runs it: `search` with the text, from the start
- * (`again` false) or to the next match.
+ * The search in a browser page (Ctrl+F), like the terminal's, also in a session's history. The page
+ * searches by itself and reports its matches later (`matches`), so the pane runs it: `search` with the
+ * text, from the start (`again` false) or to the next match. `label`: what it searches.
  */
-const props = defineProps<{ matches: { active: number; total: number } | null }>()
+const props = withDefaults(defineProps<{ matches: { active: number; total: number } | null; label?: string }>(), {
+  label: 'Auf der Seite suchen',
+})
 const emit = defineEmits<{ search: [query: string, forward: boolean, again: boolean]; close: [] }>()
 
 const query = ref('')
@@ -53,8 +55,8 @@ defineExpose({ focus, step, query })
     <InputGroup>
       <InputGroupInput
         v-model="query"
-        placeholder="Auf der Seite suchen"
-        aria-label="Auf der Seite suchen"
+        :placeholder="label"
+        :aria-label="label"
         spellcheck="false"
         :aria-invalid="notFound || undefined"
         @keydown="onKeydown"

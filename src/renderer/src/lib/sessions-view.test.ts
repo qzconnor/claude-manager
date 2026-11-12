@@ -7,7 +7,7 @@ afterEach(() => vi.unstubAllGlobals())
 
 describe('parseSessionsView', () => {
   it('gives back what was kept', () => {
-    const view = { sort: 'size', account: 'acc-1', age: 'older-30', size: 'over-1m', showStandard: true }
+    const view = { sort: 'size', account: 'acc-1', age: 'older-30', size: 'over-1m', showStandard: true, tag: '#Bug' }
     expect(parseSessionsView(JSON.stringify(view), choices)).toEqual(view)
   })
 
@@ -18,7 +18,7 @@ describe('parseSessionsView', () => {
   })
 
   it('leaves what it doesn’t know at its default, the rest as kept', () => {
-    const raw = JSON.stringify({ sort: 'color', account: '', age: 'older-5', size: 'over-1m', showStandard: 'yes' })
+    const raw = JSON.stringify({ sort: 'color', account: '', age: 'older-5', size: 'over-1m', showStandard: 'yes', tag: 'Bug' })
     expect(parseSessionsView(raw, choices)).toEqual({ ...DEFAULT_SESSIONS_VIEW, size: 'over-1m' })
   })
 })
@@ -30,7 +30,7 @@ describe('readSessionsView and saveSessionsView', () => {
       getItem: (key: string) => storage.get(key) ?? null,
       setItem: (key: string, value: string) => void storage.set(key, value),
     })
-    const view = { sort: 'name' as const, account: 'all', age: 'within-7', size: 'all', showStandard: false }
+    const view = { sort: 'name' as const, account: 'all', age: 'within-7', size: 'all', showStandard: false, tag: 'all' }
     saveSessionsView(view)
     expect(JSON.parse(storage.get(SESSIONS_VIEW_KEY)!)).toEqual(view)
     expect(readSessionsView(choices)).toEqual(view)

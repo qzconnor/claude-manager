@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'vue-sonner'
 import type { SessionRef, SessionRemoveResult, SessionSummary, TerminalInfo } from '@shared/types'
 
-vi.mock('vue-sonner', () => ({ toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() } }))
+vi.mock('vue-sonner', () => ({ toast: Object.assign(vi.fn(), { info: vi.fn(), success: vi.fn(), error: vi.fn() }) }))
 
 function session(id: string, accountId = 'a', sizeBytes = 1024): SessionSummary {
   return {
@@ -14,6 +14,8 @@ function session(id: string, accountId = 'a', sizeBytes = 1024): SessionSummary 
     worktree: null,
     title: `Titel ${id}`,
     name: null,
+    pinned: false,
+    tags: [],
     firstPrompt: null,
     lastPrompt: null,
     gitBranch: null,
@@ -77,6 +79,8 @@ const outcome = (result: Partial<SessionRemoveResult>): SessionRemoveResult => (
 })
 
 let open: TerminalInfo[]
+/** What main lists per account. */
+let stored: Record<string, SessionSummary[]>
 const api = {
   platform: 'win32',
   settings: { onChanged: () => () => {} },
@@ -89,22 +93,49 @@ const api = {
   },
   sessions: {
     onChanged: () => () => {},
+    list: vi.fn(async (accountId?: string) =>
+      Object.entries(stored)
+        .filter(([id]) => accountId === undefined || id === accountId)
+        .map(([id, sessions]) => ({ accountId: id, sessions, error: null })),
+    ),
     // Unless a test says otherwise, everything asked for is removed.
     remove: vi.fn(async (asked: SessionRef[]) => outcome({ removed: asked, removedBytes: asked.length * 1024 })),
   },
 }
 
-/** The removal with these tabs open, and a counted question answered with `answer`. */
-async function setup(tabs: TerminalInfo[] = [], answer = true) {
+type ToastOptions = {
+  description?: string
+  duration?: number
+  action: { label: string; onClick: () => void }
+  onAutoClose: () => void
+  onDismiss: () => void
+}
+
+/** The toast that offers „Rückgängig“, the latest one. */
+function undoToast(): { title: string; options: ToastOptions } {
+  const call = vi.mocked(toast).mock.calls.at(-1)!
+  return { title: call[0] as string, options: call[1] as unknown as ToastOptions }
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+/** The removal with these tabs open and these sessions listed, and a counted question answered with `answer`. */
+async function setup(tabs: TerminalInfo[] = [], answer = true, listed: SessionSummary[] = []) {
   open = tabs
+  stored = {}
+  for (const s of listed) stored[s.accountId] = [...(stored[s.accountId] ?? []), s]
   const { useTerminalsStore } = await import('@/stores/terminals')
   const { useSessionsStore } = await import('@/stores/sessions')
   const { useUiStore } = await import('@/stores/ui')
   const { useSessionRemoval } = await import('./useSessionRemoval')
   await useTerminalsStore().load()
+  const sessions = useSessionsStore()
+  await sessions.load()
   const confirm = vi.spyOn(useUiStore(), 'confirm').mockResolvedValue(answer)
-  return { confirm, sessions: useSessionsStore(), removal: useSessionRemoval() }
+  return { confirm, sessions, removal: useSessionRemoval() }
 }
+
+const ids = (sessions: { groups: { sessions: SessionSummary[] }[] }) => sessions.groups.flatMap((g) => g.sessions.map((s) => s.id))
 
 beforeEach(() => {
   vi.stubGlobal('window', { api })
@@ -118,39 +149,76 @@ afterEach(() => {
 })
 
 describe('removing sessions', () => {
-  it('asks before moving a session to the recycle bin, naming it and its size', async () => {
-    const { confirm, removal } = await setup()
+  it('takes one session out of the lists at once, without asking, and to the recycle bin once its toast is gone', async () => {
     const one = session('x', 'a', 2048)
-    api.sessions.remove.mockResolvedValueOnce(outcome({ removed: refs(one), removedBytes: 2048 }))
+    const { confirm, sessions, removal } = await setup([], true, [one, session('y')])
     await expect(removal.remove([one])).resolves.toBe(true)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(ids(sessions)).toEqual(['y'])
+    const { title, options } = undoToast()
+    expect(title).toBe('Session gelöscht')
+    expect(options).toMatchObject({
+      description: '„Titel x“ kommt in den Papierkorb (2 KB).',
+      duration: 8000,
+      action: { label: 'Rückgängig' },
+    })
+    expect(api.sessions.remove).not.toHaveBeenCalled()
+    // Main lists it until it is gone: the list doesn't take it back meanwhile.
+    await sessions.reloadAccount('a')
+    expect(ids(sessions)).toEqual(['y'])
+    options.onAutoClose()
+    // Closed, the toast is dismissed too: once is enough.
+    options.onDismiss()
+    await settle()
+    expect(api.sessions.remove).toHaveBeenCalledExactlyOnceWith(refs(one))
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(toast.info).not.toHaveBeenCalled()
+  })
+
+  it('also deletes when the toast is closed early', async () => {
+    const { removal } = await setup([], true, [session('x')])
+    await removal.remove([session('x')])
+    undoToast().options.onDismiss()
+    await settle()
+    expect(api.sessions.remove).toHaveBeenCalledExactlyOnceWith(refs(session('x')))
+  })
+
+  it('brings the sessions back with „Rückgängig“ and deletes nothing', async () => {
+    const { sessions, removal } = await setup([], true, [session('x'), session('y')])
+    await removal.remove([session('x'), session('y')])
+    expect(ids(sessions)).toEqual([])
+    const { options } = undoToast()
+    options.action.onClick()
+    options.onDismiss()
+    await settle()
+    expect(ids(sessions)).toEqual(['x', 'y'])
+    expect(api.sessions.remove).not.toHaveBeenCalled()
+  })
+
+  it('asks once for several sessions with their total size', async () => {
+    const list = [session('x', 'a', 1024), session('y', 'b', 2048)]
+    const { confirm, removal } = await setup([], true, list)
+    await expect(removal.remove(list)).resolves.toBe(true)
     expect(confirm).toHaveBeenCalledWith({
-      title: 'Session löschen?',
-      description:
-        '„Titel x“ kommt mit Verlauf, Subagents und /rewind-Ständen in den Papierkorb (2 KB). Fortsetzen lässt sich eine Session erst wieder, wenn du sie dort wiederherstellst.',
+      title: '2 Sessions löschen?',
+      description: 'Die Verläufe kommen mit Subagents und /rewind-Ständen in den Papierkorb (3 KB).',
       confirmText: 'In den Papierkorb',
       destructive: true,
     })
-    expect(api.sessions.remove).toHaveBeenCalledWith(refs(one))
-    expect(toast.success).toHaveBeenCalledWith('Session gelöscht', { description: '2 KB im Papierkorb' })
-    expect(toast.error).not.toHaveBeenCalled()
-  })
-
-  it('asks once for several sessions with their total size, and counts those deleted', async () => {
-    const { confirm, removal } = await setup()
-    const list = [session('x', 'a', 1024), session('y', 'b', 2048)]
-    await expect(removal.remove(list)).resolves.toBe(true)
-    expect(confirm).toHaveBeenCalledOnce()
-    expect(confirm.mock.calls[0][0].title).toBe('2 Sessions löschen?')
-    expect(confirm.mock.calls[0][0].description).toContain('Die Verläufe kommen mit Subagents und /rewind-Ständen in den Papierkorb (3 KB).')
+    const { title, options } = undoToast()
+    expect(title).toBe('2 Sessions gelöscht')
+    expect(options.description).toBe('3 KB kommen in den Papierkorb.')
+    options.onAutoClose()
+    await settle()
     expect(api.sessions.remove).toHaveBeenCalledWith(refs(...list))
-    expect(toast.success).toHaveBeenCalledWith('2 Sessions gelöscht', { description: '2 KB im Papierkorb' })
   })
 
   it('deletes nothing when the question is declined', async () => {
-    const { removal } = await setup([], false)
-    await expect(removal.remove([session('x')])).resolves.toBe(false)
+    const { sessions, removal } = await setup([], false, [session('x'), session('y')])
+    await expect(removal.remove([session('x'), session('y')])).resolves.toBe(false)
+    expect(ids(sessions)).toEqual(['x', 'y'])
+    expect(toast).not.toHaveBeenCalled()
     expect(api.sessions.remove).not.toHaveBeenCalled()
-    expect(toast.success).not.toHaveBeenCalled()
   })
 
   it('leaves sessions open in a tab, also those a tab can resume, and says they stay', async () => {
@@ -162,6 +230,9 @@ describe('removing sessions', () => {
     // The size counts only those that go.
     expect(confirm.mock.calls[0][0].description).toContain('in den Papierkorb (2 KB).')
     expect(confirm.mock.calls[0][0].description).toContain('2 Sessions sind in einem Tab offen und bleiben.')
+    expect(undoToast().options.description).toBe('2 KB kommen in den Papierkorb. 2 Sessions sind in einem Tab offen und bleiben.')
+    undoToast().options.onAutoClose()
+    await settle()
     expect(api.sessions.remove).toHaveBeenCalledWith(refs(session('z'), session('x', 'b')))
   })
 
@@ -171,7 +242,7 @@ describe('removing sessions', () => {
     expect(confirm.mock.calls[0][0].title).toBe('Session löschen?')
     expect(confirm.mock.calls[0][0].description).toContain('„Titel z“')
     expect(confirm.mock.calls[0][0].description).toContain('1 Session ist in einem Tab offen und bleibt.')
-    expect(api.sessions.remove).toHaveBeenCalledWith(refs(session('z')))
+    expect(undoToast().title).toBe('Session gelöscht')
   })
 
   it('asks nothing when every session is open in a tab, and says why', async () => {
@@ -182,69 +253,64 @@ describe('removing sessions', () => {
     await expect(removal.remove([session('x'), session('y')])).resolves.toBe(false)
     expect(toast.info).toHaveBeenLastCalledWith('Die Sessions sind in Tabs offen', why)
     expect(confirm).not.toHaveBeenCalled()
-    expect(api.sessions.remove).not.toHaveBeenCalled()
+    expect(toast).not.toHaveBeenCalled()
   })
 
-  it('does nothing without sessions, nor while sessions are being removed', async () => {
-    const { confirm, sessions, removal } = await setup()
+  it('does nothing without sessions', async () => {
+    const { confirm, removal } = await setup()
     await expect(removal.remove([])).resolves.toBe(false)
-    sessions.removing = true
-    await expect(removal.remove([session('x')])).resolves.toBe(false)
     expect(confirm).not.toHaveBeenCalled()
-    expect(api.sessions.remove).not.toHaveBeenCalled()
+    expect(toast).not.toHaveBeenCalled()
     expect(toast.info).not.toHaveBeenCalled()
   })
 })
 
-describe('what removing sessions reports', () => {
-  it('names the sessions still running in Claude Code beside those deleted', async () => {
-    const { removal } = await setup()
-    const [x, y, z] = [session('x'), session('y'), session('z')]
-    api.sessions.remove.mockResolvedValueOnce(outcome({ removed: refs(x), removedBytes: 1024, inUse: refs(y, z) }))
-    await expect(removal.remove([x, y, z])).resolves.toBe(true)
-    expect(toast.success).toHaveBeenCalledWith('Session gelöscht', {
-      description: '1 KB im Papierkorb · 2 Sessions laufen gerade in Claude Code und bleiben',
-    })
-    expect(toast.info).not.toHaveBeenCalled()
-  })
+describe('what deleting sessions reports', () => {
+  async function deleted(list: SessionSummary[], result: SessionRemoveResult | Error) {
+    const setupResult = await setup([], true, list)
+    if (result instanceof Error) api.sessions.remove.mockRejectedValueOnce(result)
+    else api.sessions.remove.mockResolvedValueOnce(result)
+    await setupResult.removal.remove(list)
+    // Main lists what it deleted no more.
+    const gone = new Set(result instanceof Error ? [] : result.removed.map((r) => r.sessionId))
+    stored = Object.fromEntries(Object.entries(stored).map(([id, sessions]) => [id, sessions.filter((s) => !gone.has(s.id))]))
+    undoToast().options.onAutoClose()
+    await settle()
+    return setupResult
+  }
 
-  it('says so when every session still runs in Claude Code, and nothing was deleted', async () => {
-    const { removal } = await setup()
-    const [x, y] = [session('x'), session('y')]
-    api.sessions.remove.mockResolvedValueOnce(outcome({ inUse: refs(x, y) }))
-    await expect(removal.remove([x, y])).resolves.toBe(false)
-    expect(toast.info).toHaveBeenCalledWith('Die Sessions laufen gerade in Claude Code', {
+  it('brings back the sessions still running in Claude Code and says so', async () => {
+    const [x, y, z] = [session('x'), session('y'), session('z')]
+    const { sessions } = await deleted([x, y, z], outcome({ removed: refs(x), removedBytes: 1024, inUse: refs(y, z) }))
+    expect(toast.info).toHaveBeenCalledWith('2 Sessions laufen gerade in Claude Code und bleiben', {
       description: 'Beende Claude Code dort, dann lässt sie sich löschen.',
     })
-    api.sessions.remove.mockResolvedValueOnce(outcome({ inUse: refs(x) }))
-    await expect(removal.remove([x])).resolves.toBe(false)
-    expect(toast.info).toHaveBeenLastCalledWith('Die Session läuft gerade in Claude Code', expect.anything())
-    expect(toast.success).not.toHaveBeenCalled()
+    expect(ids(sessions)).toEqual(['y', 'z'])
   })
 
-  it('names the sessions that could not be moved and why, beside those deleted', async () => {
-    const { removal } = await setup()
+  it('names one session still running in Claude Code', async () => {
+    await deleted([session('x')], outcome({ inUse: refs(session('x')) }))
+    expect(toast.info).toHaveBeenCalledWith('Eine Session läuft gerade in Claude Code und bleibt', expect.anything())
+  })
+
+  it('names the sessions that could not be moved and why, and brings them back', async () => {
     const [x, y, z] = [session('x'), session('y'), session('z')]
-    api.sessions.remove.mockResolvedValueOnce(outcome({ removed: refs(x), removedBytes: 1024, failed: refs(y, z), error: 'Datei gesperrt' }))
-    await expect(removal.remove([x, y, z])).resolves.toBe(true)
-    expect(toast.success).toHaveBeenCalledWith('Session gelöscht', { description: '1 KB im Papierkorb' })
+    const { sessions } = await deleted(
+      [x, y, z],
+      outcome({ removed: refs(x), removedBytes: 1024, failed: refs(y, z), error: 'Datei gesperrt' }),
+    )
     expect(toast.error).toHaveBeenCalledWith('2 Sessions nicht gelöscht', { description: 'Datei gesperrt' })
+    expect(ids(sessions)).toEqual(['y', 'z'])
   })
 
-  it('is no success when none could be moved, also without a reason', async () => {
-    const { removal } = await setup()
-    api.sessions.remove.mockResolvedValueOnce(outcome({ failed: refs(session('x')) }))
-    await expect(removal.remove([session('x')])).resolves.toBe(false)
-    expect(toast.error).toHaveBeenCalledWith('1 Session nicht gelöscht', { description: undefined })
-    expect(toast.success).not.toHaveBeenCalled()
-  })
-
-  it('shows why main could not remove them, without Electron’s prefix, and is ready for the next try', async () => {
-    const { sessions, removal } = await setup()
-    api.sessions.remove.mockRejectedValueOnce(new Error("Error invoking remote method 'sessions:remove': Error: Kein Zugriff"))
-    await expect(removal.remove([session('x')])).resolves.toBe(false)
+  it('shows why main could not remove them, without Electron’s prefix, brings them back and is ready for the next try', async () => {
+    const { sessions, removal } = await deleted(
+      [session('x')],
+      new Error("Error invoking remote method 'sessions:remove': Error: Kein Zugriff"),
+    )
     expect(toast.error).toHaveBeenCalledWith('Sessions konnten nicht gelöscht werden', { description: 'Kein Zugriff' })
     expect(sessions.removing).toBe(false)
+    expect(ids(sessions)).toEqual(['x'])
     await expect(removal.remove([session('x')])).resolves.toBe(true)
   })
 })

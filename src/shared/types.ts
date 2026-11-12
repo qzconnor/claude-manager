@@ -613,6 +613,10 @@ export interface SessionSummary {
    * without one. It counts over Claude Code's title, also one it generates again later.
    */
   name: string | null
+  /** Pinned in the app: the session list shows it on top, under „Angeheftet“. */
+  pinned: boolean
+  /** The user's tags for the session in the app, e.g. „Bug“ or „Release“, to find and filter it by. */
+  tags: string[]
   firstPrompt: string | null
   lastPrompt: string | null
   gitBranch: string | null

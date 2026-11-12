@@ -1,10 +1,12 @@
 import { existsSync } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, join } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { inFolder } from '@shared/folders'
 import { IpcEvent, IpcInvoke, IpcSend } from '@shared/ipc'
 import { parsePaneNode } from '@shared/panes'
+import { markdownFileName } from '@shared/session-markdown'
+import { MAX_SESSION_TAGS } from '@shared/session-marks'
 import { parseThemeFile } from '@shared/themes/file'
 import type { ThemeContent } from '@shared/themes/types'
 import type {
@@ -59,6 +61,13 @@ function senderWindow(event: IpcMainInvokeEvent): BrowserWindow {
 function requireString(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.length === 0) throw new Error(`Ungültiger Parameter: ${name}`)
   return value
+}
+
+/** A session's id (a UUID): also part of file names, so nothing else. */
+function requireSessionId(value: unknown): string {
+  const id = requireString(value, 'sessionId')
+  if (!SESSION_ID_RE.test(id)) throw new Error('Ungültige Session-ID.')
+  return id
 }
 
 /** The number of a pasted image (`[Image #N]`). */
@@ -473,6 +482,28 @@ export function registerIpc(ctx: AppContext): void {
     const id = requireString(sessionId, 'sessionId')
     if (!SESSION_ID_RE.test(id)) throw new Error('Ungültige Session-ID.')
     ctx.sessions.rename(id, name)
+  })
+  handle(IpcInvoke.sessionsPin, (_e, sessionId: unknown, pinned: unknown) => {
+    if (typeof pinned !== 'boolean') throw new Error('Ungültiger Parameter: pinned')
+    ctx.sessions.pin(requireSessionId(sessionId), pinned)
+  })
+  handle(IpcInvoke.sessionsTag, (_e, sessionId: unknown, tags: unknown) => {
+    // Some more than a session keeps: the same one twice, in two spellings, counts once.
+    if (!Array.isArray(tags) || tags.length > MAX_SESSION_TAGS * 4) throw new Error('Ungültiger Parameter: tags')
+    ctx.sessions.tag(requireSessionId(sessionId), tags)
+  })
+  handle(IpcInvoke.sessionsExportMarkdown, async (event, accountId: unknown, sessionId: unknown) => {
+    const account = ctx.accounts.get(requireString(accountId, 'accountId')).id
+    const id = requireSessionId(sessionId)
+    const summary = await ctx.sessions.summary(account, id)
+    const { canceled, filePath } = await dialog.showSaveDialog(senderWindow(event), {
+      title: 'Verlauf als Markdown exportieren',
+      defaultPath: join(app.getPath('documents'), markdownFileName(summary.title)),
+      filters: [{ name: 'Markdown', extensions: ['md'] }],
+    })
+    if (canceled || !filePath) return null
+    await writeFile(filePath, await ctx.sessions.markdown(account, id), 'utf8')
+    return filePath
   })
   handle(IpcInvoke.sessionsMove, (_e, accountId: unknown, sessionId: unknown, to: unknown) => {
     const id = requireString(sessionId, 'sessionId')

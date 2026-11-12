@@ -158,6 +158,15 @@
   color: var(--primary);
 }
 
+/* Find in a session's history (useDomFind): every match, the current one stronger. */
+::highlight(find-match) {
+  background-color: color-mix(in oklch, var(--primary) 28%, transparent);
+}
+::highlight(find-current) {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
 /* Claude's click in a browser page: a soft ripple that widens from the pointer's tip and fades. */
 @keyframes browser-click {
   from {

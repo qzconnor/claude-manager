@@ -11,11 +11,20 @@ export interface SessionsView {
   size: string
   /** With several accounts: the standard account's sessions show too. */
   showStandard: boolean
+  /** A tag after a `#` (tags never start with one), or `all`. */
+  tag: string
 }
 
 export const SESSIONS_VIEW_KEY = 'claude-manager.sessions-view'
 
-export const DEFAULT_SESSIONS_VIEW: SessionsView = { sort: 'recent', account: 'all', age: 'all', size: 'all', showStandard: false }
+export const DEFAULT_SESSIONS_VIEW: SessionsView = {
+  sort: 'recent',
+  account: 'all',
+  age: 'all',
+  size: 'all',
+  showStandard: false,
+  tag: 'all',
+}
 
 /** The values the page knows; anything else (an older version, a filter that went) counts as not set. */
 export interface SessionsViewChoices {
@@ -42,6 +51,7 @@ export function parseSessionsView(raw: string | null, choices: SessionsViewChoic
   view.age = pick('age', choices.ages)
   view.size = pick('size', choices.sizes)
   view.showStandard = kept.showStandard === true
+  if (typeof kept.tag === 'string' && kept.tag.length > 1 && kept.tag.startsWith('#')) view.tag = kept.tag
   return view
 }
 

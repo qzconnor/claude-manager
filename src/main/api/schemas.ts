@@ -194,6 +194,8 @@ export const schemas: Record<string, Schema> = {
     },
     title: { type: 'string', description: 'Was die App zeigt: name, sonst der Titel, den Claude Code der Session gab' },
     name: { ...nullable(str), description: 'Name, den die Session in der App bekam (Tab oder Session umbenannt); gilt vor dem Titel von Claude Code' },
+    pinned: { ...bool, description: 'In der App angeheftet: steht in der Session-Liste oben' },
+    tags: { ...arrayOf(str), description: 'Tags, die die Session in der App bekam' },
     firstPrompt: nullable(str),
     lastPrompt: nullable(str),
     gitBranch: nullable(str),

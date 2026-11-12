@@ -57,6 +57,19 @@ export function matchSpans(text: string, terms: string[]): [number, number][] {
   return spans
 }
 
+/**
+ * Each place `query` occurs in `text` as `[start, end)`, one after the other as a find in a page goes
+ * through them; case and accents don't count, as in `matchSpans`. Spaces in `query` count.
+ */
+export function findSpans(text: string, query: string): [number, number][] {
+  const needle = foldAccents(query)
+  if (!needle) return []
+  const folded = foldAccents(text)
+  const spans: [number, number][] = []
+  for (let at = folded.indexOf(needle); at !== -1; at = folded.indexOf(needle, at + needle.length)) spans.push([at, at + needle.length])
+  return spans
+}
+
 /** Splits `text` where the terms occur, to highlight them; case and accents don't count, as in `matchSpans`. */
 export function highlightParts(text: string, terms: string[]): TextPart[] {
   const spans = matchSpans(text, terms)
@@ -70,4 +83,16 @@ export function highlightParts(text: string, terms: string[]): TextPart[] {
   }
   if (at < text.length) parts.push({ text: text.slice(at), match: false })
   return parts
+}
+
+/** The text node and offset at `position` of the nodes' joined text; an end prefers the node it ends in. */
+export function locate(nodes: Text[], position: number, end: boolean): { node: Text; offset: number } {
+  let rest = position
+  for (const node of nodes) {
+    const length = node.data.length
+    if (rest < length || (end && rest === length)) return { node, offset: rest }
+    rest -= length
+  }
+  const last = nodes[nodes.length - 1]
+  return { node: last, offset: last.data.length }
 }

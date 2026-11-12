@@ -3,13 +3,18 @@ import {
   ArrowRightLeftIcon,
   CheckIcon,
   CopyIcon,
+  FileDownIcon,
   FolderGit2Icon,
+  FolderIcon,
   FolderOpenIcon,
   GitBranchIcon,
   GitForkIcon,
   ListChecksIcon,
   PencilIcon,
+  PinIcon,
+  PinOffIcon,
   PlayIcon,
+  TagIcon,
   Trash2Icon,
 } from '@lucide/vue'
 import { computed, ref } from 'vue'
@@ -24,6 +29,7 @@ import {
   ContextMenuGroup,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuShortcut,
   ContextMenuSub,
   ContextMenuSubContent,
   ContextMenuSubTrigger,
@@ -32,8 +38,10 @@ import {
 import { Item, ItemContent, ItemDescription, ItemTitle } from '@/components/ui/item'
 import { useAccountSwitch } from '@/composables/useAccountSwitch'
 import { useLauncher } from '@/composables/useLauncher'
+import { useSessionActions } from '@/composables/useSessionActions'
 import { useSessionRemoval } from '@/composables/useSessionRemoval'
 import { attempt } from '@/lib/errors'
+import { folderName } from '@/lib/file-tree'
 import { formatBytes, formatRelative } from '@/lib/format'
 import { sessionFolder } from '@/lib/session-tree'
 import { tabKeyAction } from '@/lib/tab-keys'
@@ -52,6 +60,8 @@ const props = defineProps<{
   /** The list is in selection mode: a click checks the session instead of showing it. */
   selecting?: boolean
   checked?: boolean
+  /** Out of its folder (under „Angeheftet“): the row names the folder instead of the branch. */
+  showFolder?: boolean
 }>()
 const emit = defineEmits<{
   select: []
@@ -65,8 +75,15 @@ const accountSwitch = useAccountSwitch()
 /** A folder holds the sessions of all accounts: the dot before the title tells whose, as in the tabs. */
 const account = computed(() => accounts.get(props.session.accountId))
 const removal = useSessionRemoval()
+const actions = useSessionActions()
 const ui = useUiStore()
 const menuOpen = ref(false)
+
+/** A row has room for a few tags; the others are counted. */
+const MAX_SHOWN_TAGS = 3
+const shownTags = computed(() => props.session.tags.slice(0, MAX_SHOWN_TAGS))
+const moreTags = computed(() => props.session.tags.length - shownTags.value.length)
+const folder = computed(() => (props.showFolder ? sessionFolder(props.session) : null))
 
 /** In selection mode the checked sessions stand out, otherwise the one shown on the right. */
 const highlighted = computed(() => (props.selecting ? props.checked : props.selected))
@@ -97,8 +114,22 @@ function rename() {
   ui.sessionRenameRequest = { sessionId: props.session.id, title: props.session.title, name: props.session.name }
 }
 
-/** Delete asks whether to delete the session, F2 renames it, as in the tabs and the Explorer. */
+/**
+ * Delete asks whether to delete the session, F2 renames it, as in the tabs and the Explorer; Ctrl+Enter
+ * goes on with it like a double click.
+ */
 function onKeydown(event: KeyboardEvent) {
+  if (
+    event.key === 'Enter' &&
+    (event.ctrlKey || event.metaKey) &&
+    !event.shiftKey &&
+    !event.altKey &&
+    event.target === event.currentTarget
+  ) {
+    event.preventDefault()
+    if (!props.selecting) void launcher.resume(props.session)
+    return
+  }
   const action = tabKeyAction(event)
   if (action === 'close') void removal.remove([props.session])
   else if (action === 'rename') rename()
@@ -126,7 +157,8 @@ async function copyId() {
         :aria-checked="selecting ? checked : undefined"
         :class="
           cn(
-            'px-2.5 py-2 text-left',
+            // Rows out of view are laid out only once scrolled to: long lists stay quick.
+            'px-2.5 py-2 text-left [contain-intrinsic-size:auto_3.25rem] [content-visibility:auto]',
             !highlighted && 'hover:bg-muted/60',
             highlighted && 'ring-1 ring-foreground/10',
             selecting && 'flex-nowrap',
@@ -158,14 +190,35 @@ async function copyId() {
               </span>
               <span class="truncate"><HighlightText :text="session.title" :terms="terms ?? []" /></span>
             </ItemTitle>
-            <span class="shrink-0 text-xs text-muted-foreground tabular-nums">
+            <span class="flex shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
+              <PinIcon v-if="session.pinned" class="size-3 text-primary" aria-label="Angeheftet" />
               {{ formatRelative(session.updatedAt, now) }}
             </span>
           </div>
           <!-- The folder is the node above in the list. -->
           <ItemDescription class="flex min-w-0 items-center gap-2 text-xs">
+            <span
+              v-if="session.tags.length"
+              class="flex min-w-0 shrink items-center gap-1 overflow-hidden"
+              :aria-label="`Tags: ${session.tags.join(', ')}`"
+            >
+              <span
+                v-for="tag in shownTags"
+                :key="tag"
+                class="max-w-24 shrink-0 truncate rounded-full bg-muted px-1.5 leading-4 text-foreground/80"
+              >
+                <HighlightText :text="tag" :terms="terms ?? []" />
+              </span>
+              <span v-if="moreTags > 0" v-tooltip="session.tags.slice(MAX_SHOWN_TAGS).join(', ')" class="shrink-0 tabular-nums">
+                +{{ moreTags }}
+              </span>
+            </span>
+            <span v-if="folder" class="flex min-w-0 items-center gap-1" v-tooltip="folder">
+              <FolderIcon class="size-3 shrink-0" />
+              <span class="truncate">{{ folderName(folder) }}</span>
+            </span>
             <!-- A worktree has a branch of its own: the name says enough, the rest is in the tooltip. -->
-            <span v-if="session.worktree" class="flex min-w-0 items-center gap-1" v-tooltip="worktreeTitle">
+            <span v-else-if="session.worktree" class="flex min-w-0 items-center gap-1" v-tooltip="worktreeTitle">
               <FolderGit2Icon class="size-3 shrink-0" />
               <span class="truncate">{{ session.worktree.name }}</span>
             </span>
@@ -185,11 +238,12 @@ async function copyId() {
         </ItemContent>
       </Item>
     </ContextMenuTrigger>
-    <ContextMenuContent class="w-64">
+    <ContextMenuContent class="w-72">
       <ContextMenuGroup>
         <ContextMenuItem @select="launcher.resume(session)">
           <PlayIcon />
           Fortsetzen
+          <ContextMenuShortcut>Strg+Enter</ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuSub>
           <ContextMenuSubTrigger>
@@ -215,6 +269,16 @@ async function copyId() {
         <ContextMenuItem @select="rename">
           <PencilIcon />
           Umbenennen…
+          <ContextMenuShortcut>F2</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem @select="actions.togglePin(session)">
+          <PinOffIcon v-if="session.pinned" />
+          <PinIcon v-else />
+          {{ session.pinned ? 'Nicht mehr anheften' : 'Anheften' }}
+        </ContextMenuItem>
+        <ContextMenuItem @select="actions.editTags(session)">
+          <TagIcon />
+          Tags bearbeiten…
         </ContextMenuItem>
         <ContextMenuItem :disabled="!sessionFolder(session)" @select="openFolder">
           <FolderOpenIcon />
@@ -224,6 +288,10 @@ async function copyId() {
         <ContextMenuItem @select="copyId">
           <CopyIcon />
           Session-ID kopieren
+        </ContextMenuItem>
+        <ContextMenuItem @select="actions.exportMarkdown(session)">
+          <FileDownIcon />
+          Als Markdown exportieren…
         </ContextMenuItem>
       </ContextMenuGroup>
       <ContextMenuSeparator />
@@ -235,6 +303,7 @@ async function copyId() {
         <ContextMenuItem variant="destructive" @select="removal.remove([session])">
           <Trash2Icon />
           Löschen…
+          <ContextMenuShortcut>Entf</ContextMenuShortcut>
         </ContextMenuItem>
       </ContextMenuGroup>
     </ContextMenuContent>

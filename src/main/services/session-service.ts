@@ -17,12 +17,14 @@ import type {
 } from '@shared/types'
 import { CONVERSATION_PAGE_MESSAGES } from '@shared/defaults'
 import { folderKey, windowsPath } from '@shared/folders'
+import { sessionMarkdown } from '@shared/session-markdown'
 import { liveSessionIds, sessionFiles } from '../lib/session-files'
 import { moveSession, moveSessions } from '../lib/session-move'
 import { TypedEmitter } from '../lib/typed-emitter'
 import type { ConversationResult, FileEditHit, IndexedSession, TranscriptSearchHit } from '../workers/indexer-protocol'
 import type { AccountService } from './account-service'
 import type { IndexerClient } from './indexer-client'
+import type { SessionMarks } from './session-marks'
 import type { SessionNames } from './session-names'
 import type { TerminalService } from './terminal-service'
 
@@ -63,6 +65,7 @@ export class SessionService extends TypedEmitter<Events> {
     private readonly indexer: IndexerClient,
     private readonly terminals: TerminalService,
     private readonly names: SessionNames,
+    private readonly marks: SessionMarks,
   ) {
     super()
     accounts.on('changed', () => {
@@ -70,14 +73,28 @@ export class SessionService extends TypedEmitter<Events> {
       this.reportMovedAccounts()
     })
     // A session named or renamed: the lists show it at once. Which account has it doesn't matter, it is cheap.
-    names.on('changed', () => {
-      for (const account of this.accounts.list()) this.emit('changed', account.id)
-    })
+    names.on('changed', () => this.changedEverywhere())
+    // Pinned or tagged: the same.
+    marks.on('changed', () => this.changedEverywhere())
+  }
+
+  private changedEverywhere(): void {
+    for (const account of this.accounts.list()) this.emit('changed', account.id)
   }
 
   /** Names the session (empty: it shows Claude Code's title again); also its tabs and the API show it. */
   rename(sessionId: string, name: string): void {
     this.names.set(sessionId, name)
+  }
+
+  /** Pins the session to the top of the list, or takes the pin away. */
+  pin(sessionId: string, pinned: boolean): void {
+    this.marks.setPinned(sessionId, pinned)
+  }
+
+  /** Gives the session these tags (none: no tags). */
+  tag(sessionId: string, tags: readonly unknown[]): void {
+    this.marks.setTags(sessionId, tags)
   }
 
   init(): void {
@@ -114,17 +131,30 @@ export class SessionService extends TypedEmitter<Events> {
 
   /** The session with the newest `limit` messages of its history. */
   async get(accountId: string, sessionId: string, limit = CONVERSATION_PAGE_MESSAGES): Promise<SessionDetail> {
-    // Re-scan first (cheap thanks to the worker cache) so the summary and file path are current.
-    const [group] = await this.list(accountId)
-    const summary = group?.sessions.find((s) => s.id === sessionId)
+    const summary = await this.summary(accountId, sessionId)
     const filePath = this.filePaths.get(`${accountId}:${sessionId}`)
-    if (!summary || !filePath) throw new Error('Session nicht gefunden.')
+    if (!filePath) throw new Error('Session nicht gefunden.')
     const conversation = await this.indexer.request<ConversationResult>({
       method: 'readConversation',
       filePath,
       maxMessages: Math.max(1, Math.min(Math.floor(limit), MAX_CONVERSATION_MESSAGES)),
     })
     return { summary, messages: conversation.messages, truncated: conversation.truncated, total: conversation.total }
+  }
+
+  /** The session as the list has it now. */
+  async summary(accountId: string, sessionId: string): Promise<SessionSummary> {
+    // Re-scan first (cheap thanks to the worker cache) so the summary and file path are current.
+    const [group] = await this.list(accountId)
+    const summary = group?.sessions.find((s) => s.id === sessionId)
+    if (!summary) throw new Error('Session nicht gefunden.')
+    return summary
+  }
+
+  /** The session's history as a Markdown document (see `sessionMarkdown`), as much of it as the window gets at most. */
+  async markdown(accountId: string, sessionId: string): Promise<string> {
+    const detail = await this.get(accountId, sessionId, MAX_CONVERSATION_MESSAGES)
+    return sessionMarkdown(detail.summary, detail.messages, { omitted: detail.total - detail.messages.length })
   }
 
   /** Full-text search through the conversations of all accounts (see the indexer's search index). */
@@ -331,6 +361,7 @@ export class SessionService extends TypedEmitter<Events> {
   private toSummary(accountId: string, s: IndexedSession): SessionSummary {
     this.filePaths.set(`${accountId}:${s.id}`, s.filePath)
     const name = this.names.get(s.id)
+    const { pinned, tags } = this.marks.get(s.id)
     return {
       id: s.id,
       accountId,
@@ -339,6 +370,8 @@ export class SessionService extends TypedEmitter<Events> {
       worktree: s.worktree ? { ...s.worktree, path: localPath(s.worktree.path), originalCwd: localPath(s.worktree.originalCwd) } : null,
       title: name ?? s.title,
       name,
+      pinned,
+      tags: [...tags],
       firstPrompt: s.firstPrompt,
       lastPrompt: s.lastPrompt,
       gitBranch: s.gitBranch,

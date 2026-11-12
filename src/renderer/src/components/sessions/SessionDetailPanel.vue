@@ -6,6 +6,7 @@ import {
   CpuIcon,
   EllipsisIcon,
   FileDiffIcon,
+  FileDownIcon,
   FolderGit2Icon,
   FolderIcon,
   FolderOpenIcon,
@@ -14,8 +15,11 @@ import {
   HardDriveIcon,
   MessagesSquareIcon,
   PencilIcon,
+  PinIcon,
+  PinOffIcon,
   PlayIcon,
   SquareTerminalIcon,
+  TagIcon,
   Trash2Icon,
   TriangleAlertIcon,
 } from '@lucide/vue'
@@ -43,11 +47,13 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Spinner } from '@/components/ui/spinner'
 import { useAccountSwitch } from '@/composables/useAccountSwitch'
 import { useLauncher } from '@/composables/useLauncher'
+import { useSessionActions } from '@/composables/useSessionActions'
 import { useSessionRemoval } from '@/composables/useSessionRemoval'
 import { modelName } from '@/lib/context'
 import { attempt } from '@/lib/errors'
 import { formatBytes, formatPeriod, shortenPath } from '@/lib/format'
 import { sessionFolder } from '@/lib/session-tree'
+import { cn } from '@/lib/utils'
 import { useAppStore } from '@/stores/app'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
@@ -69,6 +75,7 @@ const terminals = useTerminalsStore()
 const launcher = useLauncher()
 const accountSwitch = useAccountSwitch()
 const removal = useSessionRemoval()
+const actions = useSessionActions()
 const choicesOpen = ref(false)
 /** The conversation, or what Claude changed in the files; stays when another session is shown. */
 const pane = ref<'messages' | 'changes'>('messages')
@@ -130,6 +137,23 @@ async function copyId() {
           >
             <PencilIcon />
           </Button>
+          <!-- Pinned it stays to be seen, otherwise it comes with the pencil. -->
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            :aria-label="summary.pinned ? 'Nicht mehr anheften' : 'Anheften'"
+            :aria-pressed="summary.pinned"
+            v-tooltip="summary.pinned ? 'Angeheftet · Nicht mehr anheften' : 'Oben in der Liste anheften'"
+            :class="
+              cn(
+                'mt-[2px] size-[24px] shrink-0',
+                summary.pinned ? 'text-primary' : 'text-muted-foreground opacity-0 group-hover/title:opacity-100 focus-visible:opacity-100',
+              )
+            "
+            @click="actions.togglePin(summary)"
+          >
+            <PinIcon />
+          </Button>
         </div>
 
         <!-- Going on with the session first, what else can be done with it behind „…“. -->
@@ -176,6 +200,18 @@ async function copyId() {
                   <PencilIcon />
                   Umbenennen…
                 </DropdownMenuItem>
+                <DropdownMenuItem @select="actions.togglePin(summary)">
+                  <PinOffIcon v-if="summary.pinned" />
+                  <PinIcon v-else />
+                  {{ summary.pinned ? 'Nicht mehr anheften' : 'Anheften' }}
+                </DropdownMenuItem>
+                <DropdownMenuItem @select="actions.editTags(summary)">
+                  <TagIcon />
+                  Tags bearbeiten…
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
                 <DropdownMenuItem :disabled="!folder" @select="openFolder">
                   <FolderOpenIcon />
                   Projektordner öffnen
@@ -183,6 +219,10 @@ async function copyId() {
                 <DropdownMenuItem @select="copyId">
                   <CopyIcon />
                   Session-ID kopieren
+                </DropdownMenuItem>
+                <DropdownMenuItem @select="actions.exportMarkdown(summary)">
+                  <FileDownIcon />
+                  Als Markdown exportieren…
                 </DropdownMenuItem>
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
@@ -240,6 +280,18 @@ async function copyId() {
             <CalendarIcon class="size-3.5 shrink-0" />
             {{ formatPeriod(summary.createdAt, summary.updatedAt) }}
           </span>
+          <!-- The tags open their editor; without any, the menu adds them. -->
+          <button
+            v-if="summary.tags.length"
+            type="button"
+            class="flex min-w-0 flex-wrap items-center gap-1 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+            v-tooltip="'Tags bearbeiten'"
+            :aria-label="`Tags: ${summary.tags.join(', ')} · bearbeiten`"
+            @click="actions.editTags(summary)"
+          >
+            <TagIcon class="size-3.5 shrink-0" />
+            <Badge v-for="tag in summary.tags" :key="tag" variant="secondary" class="font-normal">{{ tag }}</Badge>
+          </button>
         </div>
       </div>
 

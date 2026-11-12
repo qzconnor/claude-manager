@@ -8,6 +8,7 @@ vi.mock('electron', () => ({ shell: { trashItem: vi.fn() } }))
 
 import type { AccountService } from './account-service'
 import type { IndexerClient } from './indexer-client'
+import type { SessionMarks } from './session-marks'
 import type { SessionNames } from './session-names'
 import { SessionService } from './session-service'
 import type { TerminalService } from './terminal-service'
@@ -24,6 +25,9 @@ class FakeAccounts extends EventEmitter {
   }
 }
 
+/** No session pinned or tagged. */
+const unmarked = () => Object.assign(new EventEmitter(), { get: () => ({ pinned: false, tags: [] }) }) as unknown as SessionMarks
+
 let root: string
 let accounts: FakeAccounts
 let service: SessionService
@@ -39,6 +43,7 @@ beforeEach(() => {
     {} as IndexerClient,
     {} as TerminalService,
     new EventEmitter() as unknown as SessionNames,
+    unmarked(),
   )
   service.init()
   reported = []
@@ -111,6 +116,7 @@ describe('SessionService: sessions that changed a file', () => {
       indexer as unknown as IndexerClient,
       {} as TerminalService,
       names as unknown as SessionNames,
+      unmarked(),
     )
 
     const edits = await files.editedBy('F:\Projekte\App\a.ts')
@@ -136,6 +142,7 @@ describe('SessionService: sessions that changed a file', () => {
       { request: async () => many } as unknown as IndexerClient,
       {} as TerminalService,
       Object.assign(new EventEmitter(), { get: () => undefined }) as unknown as SessionNames,
+      unmarked(),
     )
     const edits = await files.editedBy('/x/a.ts')
     expect(edits).toHaveLength(50)

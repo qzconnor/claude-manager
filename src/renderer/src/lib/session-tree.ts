@@ -83,10 +83,12 @@ export interface Placement {
 
 /** The section of the folders in no workspace. */
 export const FOLDERS_SECTION_ID = 'folders'
+/** The pinned sessions on top of the list. */
+export const PINNED_SECTION_ID = 'pinned'
 
-/** Workspaces and the other folders start open, start folders and folders closed (for an overview). */
+/** The pinned sessions, workspaces and the other folders start open, start folders and folders closed (for an overview). */
 export function opensByDefault(id: string): boolean {
-  return id === FOLDERS_SECTION_ID || id.startsWith('workspace\n')
+  return id === PINNED_SECTION_ID || id === FOLDERS_SECTION_ID || id.startsWith('workspace\n')
 }
 
 /**

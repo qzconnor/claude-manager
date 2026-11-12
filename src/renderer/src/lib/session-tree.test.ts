@@ -3,6 +3,9 @@ import type { SessionSummary } from '@shared/types'
 import {
   allFolders,
   buildSessionTree,
+  FOLDERS_SECTION_ID,
+  opensByDefault,
+  PINNED_SECTION_ID,
   PAGE_SIZE,
   pageOf,
   placeFolder,
@@ -24,6 +27,8 @@ function session(id: string, patch: Partial<SessionSummary> = {}): SessionSummar
     worktree: null,
     title: id,
     name: null,
+    pinned: false,
+    tags: [],
     firstPrompt: null,
     lastPrompt: null,
     gitBranch: null,
@@ -292,5 +297,15 @@ describe('sessionsInView', () => {
   it('shows a page of a section’s own sessions too', () => {
     expect(pageOf(['a', 'b', 'c'], 'x', new Map([['x', 2]]))).toEqual(['a', 'b'])
     expect(pageOf(ids(many), 'x', new Map())).toHaveLength(PAGE_SIZE)
+  })
+})
+
+describe('opensByDefault', () => {
+  it('opens the pinned sessions, the workspaces and the other folders, not the start folders and folders', () => {
+    expect(opensByDefault(PINNED_SECTION_ID)).toBe(true)
+    expect(opensByDefault(FOLDERS_SECTION_ID)).toBe(true)
+    expect(opensByDefault('workspace\nC:\\dev')).toBe(true)
+    expect(opensByDefault('start\nC:\\dev')).toBe(false)
+    expect(opensByDefault('C--dev')).toBe(false)
   })
 })

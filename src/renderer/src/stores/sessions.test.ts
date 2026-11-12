@@ -12,6 +12,8 @@ function session(id: string, accountId: string): SessionSummary {
     worktree: null,
     title: id,
     name: null,
+    pinned: false,
+    tags: [],
     firstPrompt: null,
     lastPrompt: null,
     gitBranch: null,
@@ -43,6 +45,15 @@ const api = {
           answers.push({ accountId, resolve })
         }),
     ),
+    remove: vi.fn(async (refs: { accountId: string; sessionId: string }[]) => ({
+      removed: refs,
+      removedBytes: refs.length,
+      inUse: [],
+      failed: [],
+      error: null,
+    })),
+    pin: vi.fn(async () => undefined),
+    tag: vi.fn(async () => undefined),
     onChanged: (callback: (accountId: string) => void) => {
       changed = callback
       return () => {}
@@ -136,5 +147,73 @@ describe('sessions store', () => {
     await flush()
 
     expect(store.groups.map((g) => g.accountId)).toEqual(['a', 'b'])
+  })
+})
+
+describe('pins and tags', () => {
+  const marks = (store: ReturnType<typeof useSessionsStore>) =>
+    store.groups.flatMap((g) => g.sessions.map((s) => `${g.accountId}:${s.id}:${s.pinned}:${s.tags.join('+')}`))
+
+  beforeEach(() => {
+    api.sessions.pin.mockClear()
+    api.sessions.tag.mockClear()
+  })
+
+  it('shows a pin or tags at once, with every account that has the session, and tells main', async () => {
+    const store = await loaded(group('a', 'x', 'y'), group('b', 'x'))
+    const pinning = store.mark('x', { pinned: true })
+    expect(marks(store)).toEqual(['a:x:true:', 'a:y:false:', 'b:x:true:'])
+    await pinning
+    expect(api.sessions.pin).toHaveBeenCalledExactlyOnceWith('x', true)
+    expect(api.sessions.tag).not.toHaveBeenCalled()
+
+    // Cleaned as main keeps them.
+    await store.mark('y', { tags: [' #Bug', 'bug', 'Release'] })
+    expect(marks(store)).toEqual(['a:x:true:', 'a:y:false:Bug+Release', 'b:x:true:'])
+    expect(api.sessions.tag).toHaveBeenCalledExactlyOnceWith('y', ['Bug', 'Release'])
+    expect(api.sessions.pin).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads the lists again when main could not keep it', async () => {
+    const store = await loaded(group('a', 'x'))
+    api.sessions.pin.mockRejectedValueOnce(new Error('kaputt'))
+    const failed = expect(store.mark('x', { pinned: true })).rejects.toThrow('kaputt')
+    expect(marks(store)).toEqual(['a:x:true:'])
+    await flush()
+    answers.shift()?.resolve([group('a', 'x')])
+    await failed
+    await flush()
+    expect(marks(store)).toEqual(['a:x:false:'])
+  })
+})
+
+describe('sessions on their way to the recycle bin', () => {
+  const ids = (store: ReturnType<typeof useSessionsStore>) => store.groups.flatMap((g) => g.sessions.map((s) => `${g.accountId}:${s.id}`))
+  const x = { accountId: 'a', sessionId: 'x' }
+
+  it('stay out of the lists, also after a full load, until they are brought back', async () => {
+    const store = await loaded(group('a', 'x', 'y'))
+    store.hide([x])
+    expect(ids(store)).toEqual(['a:y'])
+    const load = store.load()
+    answers.shift()?.resolve([group('a', 'x', 'y')])
+    await load
+    expect(ids(store)).toEqual(['a:y'])
+
+    const back = store.bringBack([x])
+    answers.shift()?.resolve([group('a', 'x', 'y')])
+    await back
+    expect(ids(store)).toEqual(['a:x', 'a:y'])
+  })
+
+  it('show a deleted session again once it is back, e.g. restored from the recycle bin', async () => {
+    const store = await loaded(group('a', 'x'))
+    store.hide([x])
+    await store.remove([x])
+    expect(ids(store)).toEqual([])
+    changed('a')
+    answers.shift()?.resolve([group('a', 'x')])
+    await flush()
+    expect(ids(store)).toEqual(['a:x'])
   })
 })

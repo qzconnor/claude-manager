@@ -150,6 +150,9 @@ export const IpcInvoke = {
   sessionsRemove: 'sessions:remove',
   sessionsRename: 'sessions:rename',
   sessionsMove: 'sessions:move',
+  sessionsPin: 'sessions:pin',
+  sessionsTag: 'sessions:tag',
+  sessionsExportMarkdown: 'sessions:export-markdown',
 
   workspacesList: 'workspaces:list',
   workspacesCreate: 'workspaces:create',
@@ -536,6 +539,12 @@ export interface ManagerApi {
      * that folder's project folder. Fails while a Claude Code has it open; there `/cd` does it.
      */
     move(accountId: string, sessionId: string, to: string): Promise<void>
+    /** Pins the session to the top of the session list (with every account), or takes the pin away. */
+    pin(sessionId: string, pinned: boolean): Promise<void>
+    /** Gives the session these tags, cleaned and each once (see `cleanTags`); none takes them all away. */
+    tag(sessionId: string, tags: string[]): Promise<void>
+    /** Asks where to and saves the whole history as a Markdown file; resolves to its path, null when cancelled. */
+    exportMarkdown(accountId: string, sessionId: string): Promise<string | null>
     onChanged(cb: (accountId: string) => void): Unsubscribe
   }
   /** Folders whose projects (subfolders) share a system prompt, `cm_prompts.md` in the folder. */

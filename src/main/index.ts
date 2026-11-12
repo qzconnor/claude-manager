@@ -33,6 +33,7 @@ import { AutoSwitch } from './services/auto-switch'
 import { SessionHandoff } from './services/session-handoff'
 import { SessionHooks } from './services/session-hooks'
 import { SessionServer } from './services/session-server'
+import { SessionMarks } from './services/session-marks'
 import { SessionNames } from './services/session-names'
 import { SessionService } from './services/session-service'
 import { SettingsService } from './services/settings-service'
@@ -134,7 +135,9 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   })
   sessionHooks.init()
   terminals.addSessionArgs(sessionHooks)
-  const sessions = new SessionService(accounts, indexer, terminals, sessionNames)
+  const sessionMarks = new SessionMarks(userDataDir)
+  sessionMarks.init()
+  const sessions = new SessionService(accounts, indexer, terminals, sessionNames, sessionMarks)
   sessions.init()
   const handoff = new SessionHandoff(accounts, sessions, terminals, settings)
   const usage = new UsageService(accounts, settings, indexer, userDataDir, userAgent)
