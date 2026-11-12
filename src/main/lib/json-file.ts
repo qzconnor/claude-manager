@@ -1,6 +1,9 @@
 import { randomBytes } from 'node:crypto'
 import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { copyFile, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
+// The waits between attempts run in real time, also under a test's fake clock: on that one a write
+// whose target Windows locked for a moment never went on, and every later write waited behind it.
+import { setTimeout as sleep } from 'node:timers/promises'
 import { basename, dirname } from 'node:path'
 
 /** Reads and parses a JSON file. Returns `null` when the file is missing or invalid. */
@@ -103,7 +106,7 @@ async function writeNow(file: string, content: string, options: WriteJsonOptions
         await rm(tmp, { force: true })
         throw error
       }
-      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)))
+      await sleep(50 * (attempt + 1))
     }
   }
 }
@@ -138,7 +141,7 @@ export async function readJsonGuarded<T>(file: string): Promise<T | null> {
     } catch (error) {
       if (isMissing(error)) return null
       if (attempt >= READ_ATTEMPTS) return markUnread(file, error)
-      await new Promise((resolve) => setTimeout(resolve, 100 * attempt))
+      await sleep(100 * attempt)
       continue
     }
     return parseGuarded<T>(file, text)
