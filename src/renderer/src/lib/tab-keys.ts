@@ -12,7 +12,7 @@ type Keys = Pick<KeyboardEvent, 'key' | 'shiftKey' | 'altKey' | 'ctrlKey' | 'met
  */
 export function tabKeyAction(event: Keys): TabKeyAction | null {
   if (event.target !== event.currentTarget || event.altKey || event.ctrlKey || event.metaKey) return null
-  if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) return 'menu'
+  if (isMenuKey(event)) return 'menu'
   if (event.shiftKey) return null
   switch (event.key) {
     case 'Enter':
@@ -27,6 +27,12 @@ export function tabKeyAction(event: Keys): TabKeyAction | null {
     default:
       return null
   }
+}
+
+/** The menu key or Shift+F10, which open a context menu from the keyboard. */
+export function isMenuKey(event: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'altKey' | 'ctrlKey' | 'metaKey'>): boolean {
+  if (event.altKey || event.ctrlKey || event.metaKey) return false
+  return event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)
 }
 
 /**

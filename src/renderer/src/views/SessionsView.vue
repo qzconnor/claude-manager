@@ -45,6 +45,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useClock } from '@/composables/useClock'
+import { useListKeys } from '@/composables/useListKeys'
 import { useSectionDrag } from '@/composables/useSectionDrag'
 import { useSessionDetail, type SessionRef } from '@/composables/useSessionDetail'
 import { provideSessionPages } from '@/composables/useSessionPages'
@@ -494,6 +495,13 @@ function select(session: SessionSummary) {
 }
 
 const list = ref<HTMLElement | null>(null)
+// Arrows, Home, End and the menu key in the list, as in a tree.
+const listKeys = useListKeys(list)
+
+/** ↓ in the search field goes on to the first row of the list. */
+function onSearchDown(event: KeyboardEvent) {
+  if (listKeys.focusFirst()) event.preventDefault()
+}
 
 // Workspaces are dragged by their header; the order is saved (`workspaces.json`).
 useSectionDrag(list, { onDrop: moveWorkspace })
@@ -625,6 +633,7 @@ onActivated(() => {
               placeholder="Sessions durchsuchen…"
               spellcheck="false"
               @keydown.esc="onSearchEscape"
+              @keydown.down="onSearchDown"
             />
             <InputGroupAddon v-if="search" align="inline-end">
               <InputGroupButton size="icon-xs" class="size-[24px]" aria-label="Suche leeren" @click="search = ''">

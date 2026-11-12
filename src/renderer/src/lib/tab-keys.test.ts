@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { rovingIndex, tabKeyAction } from './tab-keys'
+import { isMenuKey, rovingIndex, tabKeyAction } from './tab-keys'
 
 const tab = {}
 const press = (key: string, mods: Partial<{ shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }> = {}, target: object = tab) =>
@@ -28,6 +28,19 @@ describe('tabKeyAction', () => {
     expect(press('F10', { shiftKey: true, ctrlKey: true })).toBeNull()
     // The rename field inside the tab.
     expect(press('Enter', {}, {})).toBeNull()
+  })
+})
+
+describe('isMenuKey', () => {
+  const key = (k: string, mods: Partial<{ shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }> = {}) =>
+    isMenuKey({ key: k, shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, ...mods })
+
+  it('is the menu key or Shift+F10, without other modifiers', () => {
+    expect(key('ContextMenu')).toBe(true)
+    expect(key('F10', { shiftKey: true })).toBe(true)
+    expect(key('F10')).toBe(false)
+    expect(key('F10', { shiftKey: true, altKey: true })).toBe(false)
+    expect(key('ContextMenu', { ctrlKey: true })).toBe(false)
   })
 })
 

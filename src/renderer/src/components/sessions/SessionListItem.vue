@@ -36,6 +36,7 @@ import { useSessionRemoval } from '@/composables/useSessionRemoval'
 import { attempt } from '@/lib/errors'
 import { formatBytes, formatRelative } from '@/lib/format'
 import { sessionFolder } from '@/lib/session-tree'
+import { tabKeyAction } from '@/lib/tab-keys'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
 import { useUiStore } from '@/stores/ui'
@@ -96,6 +97,15 @@ function rename() {
   ui.sessionRenameRequest = { sessionId: props.session.id, title: props.session.title, name: props.session.name }
 }
 
+/** Delete asks whether to delete the session, F2 renames it, as in the tabs and the Explorer. */
+function onKeydown(event: KeyboardEvent) {
+  const action = tabKeyAction(event)
+  if (action === 'close') void removal.remove([props.session])
+  else if (action === 'rename') rename()
+  else return
+  event.preventDefault()
+}
+
 async function copyId() {
   await navigator.clipboard.writeText(props.session.id)
   toast.success('Session-ID kopiert')
@@ -108,6 +118,7 @@ async function copyId() {
       <Item
         as="button"
         type="button"
+        data-list-row
         size="sm"
         :variant="highlighted ? 'muted' : 'default'"
         :aria-current="selected || undefined"
@@ -123,6 +134,7 @@ async function copyId() {
         "
         @click="onClick"
         @dblclick="onDoubleClick"
+        @keydown="onKeydown"
       >
         <!-- Only a picture of a checkbox: a real one can't sit inside the button. -->
         <span

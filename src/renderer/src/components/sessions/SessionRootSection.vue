@@ -170,6 +170,7 @@ async function removeWorkspace() {
 <template>
   <Collapsible
     :open="open"
+    data-list-group
     :data-drag-id="sortable && root ? root.path : undefined"
     class="flex flex-col gap-0.5 transition-opacity data-dragging:opacity-40"
     @update:open="emit('update:open', $event)"
@@ -189,6 +190,7 @@ async function removeWorkspace() {
           <!-- A plain row like the folders below: a ghost button would keep a background while open. -->
           <CollapsibleTrigger
             v-tooltip="details"
+            data-list-row
             :data-drag-grip="sortable ? '' : undefined"
             class="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-sm font-medium outline-none transition-colors hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50"
           >
@@ -307,6 +309,7 @@ async function removeWorkspace() {
         v-if="hidden > 0"
         variant="ghost"
         size="sm"
+        data-list-row
         class="self-start text-muted-foreground"
         @click="showMore"
       >
@@ -316,6 +319,7 @@ async function removeWorkspace() {
         <!-- Like a folder of the tree: its chevron turns, the folders appear below it. -->
         <button
           type="button"
+          data-list-row
           :aria-expanded="showEmpty"
           class="flex h-8 items-center gap-1.5 rounded-md px-2 text-left text-xs text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
           @click="showEmpty = !showEmpty"

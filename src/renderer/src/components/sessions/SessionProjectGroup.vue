@@ -178,7 +178,7 @@ async function copyPath() {
 </script>
 
 <template>
-  <Collapsible :open="open" class="flex flex-col" @update:open="emit('update:open', $event)">
+  <Collapsible :open="open" data-list-group class="flex flex-col" @update:open="emit('update:open', $event)">
     <ContextMenu @update:open="menuOpen = $event">
       <ContextMenuTrigger as-child>
         <div
@@ -205,6 +205,7 @@ async function copyPath() {
           </Checkbox>
           <CollapsibleTrigger
             v-tooltip="details"
+            data-list-row
             :disabled="empty"
             class="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-default"
           >
@@ -356,6 +357,7 @@ async function copyPath() {
         v-if="hidden > 0"
         variant="ghost"
         size="sm"
+        data-list-row
         class="self-start text-muted-foreground"
         @click="showMore"
       >
