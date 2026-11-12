@@ -58,7 +58,8 @@ const ui = useUiStore()
 const launcher = useLauncher()
 const { closeTerminal } = useTerminalActions()
 const listbox = injectListboxRootContext()
-const now = useClock(60_000)
+// Every 30 seconds: `formatRelative` takes a time up to 45 seconds ahead of it as just now.
+const now = useClock(30_000)
 
 /** Titles are filtered on every key, the conversations shortly after typing stops. */
 const terms = computed(() => searchTerms(query.value))

@@ -97,7 +97,8 @@ const settings = useSettingsStore()
 const app = useAppStore()
 const ui = useUiStore()
 const removal = useSessionRemoval()
-const now = useClock(60_000)
+// Every 30 seconds: `formatRelative` takes a time up to 45 seconds ahead of it as just now.
+const now = useClock(30_000)
 
 const DAY_MS = 86_400_000
 /** By the last activity. `older`: not touched for that long, e.g. to clean up. */
