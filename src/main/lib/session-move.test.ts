@@ -1,8 +1,31 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { moveSession, moveSessions, projectFolderName } from './session-move'
+
+/** Steps that fail: renaming this path (a virus scanner holds it), appending (a full disk, after a few bytes). */
+const failing = vi.hoisted(() => ({ rename: null as string | null, append: false }))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    rename: async (from: string, to: string) => {
+      if (from === failing.rename) throw Object.assign(new Error(`EBUSY: resource busy or locked, rename '${from}'`), { code: 'EBUSY' })
+      return actual.rename(from, to)
+    },
+    appendFile: async (file: string, data: string, options: BufferEncoding) => {
+      if (!failing.append) return actual.appendFile(file, data, options)
+      await actual.appendFile(file, data.slice(0, 5), options)
+      throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' })
+    },
+  }
+})
+
+afterEach(() => {
+  failing.rename = null
+  failing.append = false
+})
 
 const S1 = '11111111-1111-4111-8111-111111111111'
 const S2 = '22222222-2222-4222-8222-222222222222'
@@ -164,5 +187,46 @@ describe('moveSession', () => {
 
     expect(lines(file)).toEqual([{ type: 'user' }])
     expect(lines(copy)).toEqual([{ type: 'assistant' }])
+  })
+
+  it('moves everything back when the transcript can’t move: no session without its subagents', async () => {
+    const file = transcript('F:\\Downloads', S1)
+    mkdirSync(join(projects, 'F--Downloads', S1, 'subagents'), { recursive: true })
+    failing.rename = file
+
+    await expect(moveSession(projects, { id: S1, cwd: 'F:\\Downloads', filePath: file }, 'F:\\Kunden\\shop')).rejects.toThrow(
+      'Die Session bleibt im alten Ordner: EBUSY',
+    )
+
+    expect(lines(file)).toEqual([{ type: 'user' }])
+    expect(existsSync(join(projects, 'F--Downloads', S1, 'subagents'))).toBe(true)
+    expect(existsSync(join(projects, 'F--Kunden-shop'))).toBe(false)
+  })
+
+  it('moves the transcript back, as it was, when the note of the move can’t be written', async () => {
+    const file = transcript('F:\\Downloads', S1, '{"type":"user"}')
+    mkdirSync(join(projects, 'F--Downloads', S1, 'subagents'), { recursive: true })
+    failing.append = true
+
+    await expect(moveSession(projects, { id: S1, cwd: 'F:\\Downloads', filePath: file }, 'F:\\Kunden\\shop')).rejects.toThrow(
+      'Die Session bleibt im alten Ordner: ENOSPC',
+    )
+
+    // Not even the start of the line it began to write.
+    expect(readFileSync(file, 'utf8')).toBe('{"type":"user"}')
+    expect(existsSync(join(projects, 'F--Downloads', S1, 'subagents'))).toBe(true)
+    expect(existsSync(join(projects, 'F--Kunden-shop'))).toBe(false)
+  })
+
+  it('says so when something stays in the new place', async () => {
+    const file = transcript('F:\\Downloads', S1)
+    mkdirSync(join(projects, 'F--Downloads', S1, 'subagents'), { recursive: true })
+    failing.append = true
+    // Moving back fails too: the transcript stays in the new folder.
+    failing.rename = join(projects, 'F--Kunden-shop', `${S1}.jsonl`)
+
+    await expect(moveSession(projects, { id: S1, cwd: 'F:\\Downloads', filePath: file }, 'F:\\Kunden\\shop')).rejects.toThrow(
+      'Die Session ist nur zum Teil verschoben',
+    )
   })
 })

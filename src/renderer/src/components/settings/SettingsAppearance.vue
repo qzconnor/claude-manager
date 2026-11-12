@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import type { FileTreeSide, TabPosition, WindowMaterial } from '@shared/types'
 import { Switch } from '@/components/ui/switch'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import ThemeToolbar from '@/components/themes/ThemeToolbar.vue'
 import { useSetting } from '@/composables/useSetting'
 import { supportsMaterial } from '@/lib/platform'
+import { FILE_TREE_SIDES, MATERIALS, TAB_POSITIONS } from '@/lib/setting-choices'
 import SettingField from './SettingField.vue'
 import SettingsSection from './SettingsSection.vue'
 import SliderControl from './SliderControl.vue'
@@ -48,24 +48,6 @@ const fileTreeSide = useSetting(
   (fileTreeSide) => ({ appearance: { fileTreeSide } }),
 )
 
-const FILE_TREE_SIDES: { value: FileTreeSide; label: string }[] = [
-  { value: 'left', label: 'Links' },
-  { value: 'right', label: 'Rechts' },
-]
-
-const TAB_POSITIONS: { value: TabPosition; label: string }[] = [
-  { value: 'top', label: 'Oben' },
-  { value: 'sidebar', label: 'Seitenleiste' },
-  { value: 'groups', label: 'Gruppen (wie VS Code)' },
-]
-
-const MATERIALS: { value: WindowMaterial; label: string }[] = [
-  { value: 'acrylic', label: 'Acryl' },
-  { value: 'mica', label: 'Mica' },
-  { value: 'tabbed', label: 'Mica Alt' },
-  { value: 'none', label: 'Aus' },
-]
-
 function onMaterial(value: unknown) {
   const match = MATERIALS.find((m) => m.value === value)
   if (match) material.value = match.value
@@ -103,7 +85,7 @@ function onMaterial(value: unknown) {
       anchor="appearance.window"
       title="Fenster"
       :description="supportsMaterial ? 'Windows-11-Material hinter der App.' : 'Schrift und Ecken der Oberfläche.'"
-      reset-section="appearance"
+      :reset="{ appearance: ['material', 'keepMaterialWhenInactive', 'surfaceOpacity', 'uiFontSize', 'radius'] }"
     >
       <!-- Acrylic and Mica only exist on Windows 11; elsewhere the window is opaque. -->
       <SettingField v-if="supportsMaterial" anchor="appearance.material" label="Material" description="Acryl ist am stärksten transparent, Mica übernimmt dezent die Farbe des Desktops.">

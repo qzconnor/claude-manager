@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GitBranch } from '@shared/types'
-import { claudeWorktrees, GitService, repoWebUrl } from './git-service'
+import { claudeWorktrees, GitService, pullRequestUrl, repoWebUrl } from './git-service'
 
 const HASH = '0123456789abcdef0123456789abcdef01234567'
 
@@ -66,6 +66,20 @@ describe('GitService.branch', () => {
     const path = await repo()
     await writeFile(join(path, '.git', 'HEAD'), `${HASH}\n`)
     expect(await service.branch(path)).toEqual({ name: '0123456', detached: true })
+  })
+
+  it('asks git for the branch with reftable refs, whose HEAD only stands in', async () => {
+    const path = join(dir, 'reftable')
+    await mkdir(path)
+    try {
+      git(path, 'init', '-q', '--ref-format=reftable')
+    } catch {
+      // git before 2.45 has no reftable.
+      return
+    }
+    expect(await service.branch(path)).toEqual({ name: 'main', detached: false })
+    git(path, 'symbolic-ref', 'HEAD', 'refs/heads/feature')
+    expect(await service.branch(path)).toEqual({ name: 'feature', detached: false })
   })
 
   it('follows a .git file to the repository elsewhere', async () => {
@@ -156,6 +170,20 @@ describe('GitService.branch', () => {
     await new Promise((resolve) => setTimeout(resolve, 400))
     expect(changes.map(([cwd]) => cwd)).not.toContain(dropped)
   })
+
+  it('picks up a folder that becomes a repository (git init)', async () => {
+    const path = join(dir, 'later')
+    await mkdir(path)
+    const changes: [string, GitBranch | null][] = []
+    service.on('changed', (cwd, branch) => changes.push([cwd, branch]))
+    await service.watch([path])
+    git(path, 'init', '-q')
+    await expect.poll(() => changes[0], { timeout: 5000 }).toEqual([path, { name: 'main', detached: false }])
+    // From now on its checkouts are reported too, once it is watched.
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    await writeFile(join(path, '.git', 'HEAD'), 'ref: refs/heads/next\n')
+    await expect.poll(() => changes.at(-1), { timeout: 3000 }).toEqual([path, { name: 'next', detached: false }])
+  }, 10_000)
 
   it('stops reporting after dispose', async () => {
     const path = await repo()
@@ -281,5 +309,33 @@ describe('claudeWorktrees', () => {
       'worktree F:/Code/other',
     ].join('\n')
     expect(claudeWorktrees(porcelain)).toEqual(['login-fix'])
+  })
+})
+
+describe('pullRequestUrl', () => {
+  it('opens a pull request of the branch on its host', () => {
+    expect(pullRequestUrl('https://github.com/me/app', 'master', 'feat/app-review')).toBe(
+      'https://github.com/me/app/compare/master...feat/app-review?expand=1',
+    )
+    expect(pullRequestUrl('https://github.example.com/me/app', 'main', 'fix/ä#1')).toBe(
+      'https://github.example.com/me/app/compare/main...fix/%C3%A4%231?expand=1',
+    )
+    expect(pullRequestUrl('https://gitlab.com/group/sub/app', 'main', 'feat/x')).toBe(
+      'https://gitlab.com/group/sub/app/-/merge_requests/new?merge_request%5Bsource_branch%5D=feat%2Fx&merge_request%5Btarget_branch%5D=main',
+    )
+    expect(pullRequestUrl('https://gitlab.example.com/app', 'main', 'x')).toBe(
+      'https://gitlab.example.com/app/-/merge_requests/new?merge_request%5Bsource_branch%5D=x&merge_request%5Btarget_branch%5D=main',
+    )
+    expect(pullRequestUrl('https://bitbucket.org/team/app', 'main', 'feat/x')).toBe(
+      'https://bitbucket.org/team/app/pull-requests/new?source=feat%2Fx&dest=main',
+    )
+    expect(pullRequestUrl('https://dev.azure.com/org/project/_git/app', 'main', 'feat/x')).toBe(
+      'https://dev.azure.com/org/project/_git/app/pullrequestcreate?sourceRef=feat%2Fx&targetRef=main',
+    )
+  })
+
+  it('knows no other host', () => {
+    expect(pullRequestUrl('https://git.example.com/me/app', 'main', 'feat/x')).toBeNull()
+    expect(pullRequestUrl('not a url', 'main', 'feat/x')).toBeNull()
   })
 })

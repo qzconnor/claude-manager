@@ -50,8 +50,19 @@ export type AuthState =
   | 'ok'
   /** OAuth credentials present, but the access token expired (Claude Code refreshes it on next start) */
   | 'expired'
+  /**
+   * OAuth: the access token expired and can't be renewed (no refresh token, it expired or Anthropic
+   * refused it): only signing in again helps.
+   */
+  | 'dead'
   /** no usable credentials found */
   | 'missing'
+
+/**
+ * What "Jetzt erneuern" did: `renewed` (a new access token is saved), `busy` (Claude Code renews it
+ * right now), `rejected` (only signing in again helps) or `failed` (network or server, try again).
+ */
+export type LoginRenewResult = 'renewed' | 'busy' | 'rejected' | 'failed'
 
 export interface Account {
   id: string
@@ -76,6 +87,12 @@ export interface Account {
   identity: AccountIdentity
   /** ISO timestamp the access token expires (OAuth/system accounts only). */
   tokenExpiresAt: string | null
+  /** When the browser login itself ends (its refresh token expires): then only signing in again helps. */
+  loginEndsAt: string | null
+  /** When Claude Code or the app last saved the tokens of the browser login (signed in or renewed). */
+  tokenSavedAt: string | null
+  /** The browser login has a refresh token that may still work (see `AuthState` `dead`). */
+  renewable: boolean
   /** Who should log in here, e.g. after an import from cswap; `null` when nobody in particular. */
   expectedLogin: ExpectedLogin | null
 }
@@ -144,7 +161,8 @@ export interface CswapImportInput {
 // Terminals
 // ---------------------------------------------------------------------------
 
-export type TerminalStatus = 'running' | 'exited'
+/** `asleep`: a tab of the last run that starts once it is shown (see `TerminalInfo.sleep`). */
+export type TerminalStatus = 'running' | 'exited' | 'asleep'
 
 /** `row`: the parts lie side by side (split vertically), `column`: one above the other (split horizontally). */
 export type SplitDirection = 'row' | 'column'
@@ -188,6 +206,8 @@ export interface TerminalCreateOptions {
   split?: { terminalId: string; direction: SplitDirection } | null
   /** Takes the place of this terminal, in the tab order and in its tab; the old one stays open until it is closed. */
   replaces?: string | null
+  /** See `TerminalInfo.restoredFrom`. */
+  restoredFrom?: string | null
   cols?: number
   rows?: number
 }
@@ -236,6 +256,8 @@ export interface BrowserOpenOptions {
   title?: string | null
   /** Opens in the tab of `terminalId`, next to it: to the right (`row`) or below (`column`). */
   split?: { terminalId: string; direction: SplitDirection } | null
+  /** See `TerminalInfo.restoredFrom`. */
+  restoredFrom?: string | null
 }
 
 /** What a browser shows, as its page reports it. */
@@ -265,6 +287,10 @@ export interface BrowserDownload {
   totalBytes: number
   /** ISO time. */
   startedAt: string
+  /** Opening it runs it (a program, installer or script): the list asks first. */
+  executable: boolean
+  /** The browser refused it, e.g. one of too many a page started at once. */
+  refused: boolean
 }
 
 /** What the user can do with a download in the list. */
@@ -304,6 +330,11 @@ export interface BrowserActivity {
   /** In words, e.g. „Klickt auf „Anmelden““. */
   label: string
   status: BrowserActivityStatus
+  /**
+   * Claude reached beyond what the page shows: uploaded files, the site's cookies or storage, the
+   * contents of a request, a script, its data deleted. The log keeps these lines longest.
+   */
+  sensitive: boolean
   /** The error, or what came out of it. */
   detail: string | null
   durationMs: number | null
@@ -411,6 +442,19 @@ export interface PastedImage {
   sent: boolean
 }
 
+/** What a view of a tab starts with (see `terminals.attach`). */
+export interface TerminalAttach {
+  /** The output so far. */
+  data: string
+  /** The stream offset after `data`. */
+  end: number
+  /** An earlier view already answered the queries in `data`. */
+  answered: boolean
+  /** The terminal's size now: the output was last written for it. */
+  cols: number
+  rows: number
+}
+
 export interface TerminalInfo {
   id: string
   /** Account whose config dir holds the session. */
@@ -421,6 +465,12 @@ export interface TerminalInfo {
   sessionId: string | null
   /** Set while the session is stopped by a usage limit. */
   limit: SessionLimit | null
+  /**
+   * The session stands at a usage limit and goes on by itself (see AutoSwitch): at the reset, or with
+   * the automatic switch as soon as another account is free. Stays a little past the reset, when `limit`
+   * is gone already, until the session goes on. Null otherwise.
+   */
+  resume: LimitResume | null
   /** How full the session's context is, from its start (tokens from the first answer on); null for shells, logins and browsers. */
   context: SessionContext | null
   /** Claude Code works on a turn, as its window title shows (also when started in a shell tab). */
@@ -444,7 +494,16 @@ export interface TerminalInfo {
   /** The page a browser shows; null for terminals. */
   url: string | null
   resumeSessionId: string | null
+  /**
+   * Claude Code arguments given for this tab (`cm -- …`, a worktree), without those from the settings
+   * and the account. Starting it again keeps those that hold for every start (see `lastingArgs`).
+   */
+  args: string[]
+  /** Opened again at the start: the id it had in the last run, so the window finds its place in the groups. */
+  restoredFrom?: string | null
   status: TerminalStatus
+  /** While it is `asleep`: whether it is starting and why it didn't the last time; null otherwise. */
+  sleep: TerminalSleep | null
   exitCode: number | null
   pid: number
   createdAt: string
@@ -467,6 +526,40 @@ export interface TerminalInfo {
   subagents: number
   /** Claude Code compacts the conversation (`/compact` or by itself). */
   compacting: boolean
+  /**
+   * How the session's last turn ended: done, waiting for the user, or stopped at a limit. Stays until
+   * the next turn starts, also while the tab is shown (unlike `attention`). Null before the first end.
+   */
+  turn: TerminalTurn | null
+  /** The beginning of the last prompt, on one line; only with `hooks`, null before the first one. */
+  prompt: string | null
+}
+
+/** A tab of the last run that waits to be shown before it starts (see `TerminalInfo.sleep`). */
+export interface TerminalSleep {
+  /** It is starting: its folder is looked at first, which takes a few seconds for a network drive that is gone. */
+  waking: boolean
+  /** Why it didn't start the last time, e.g. its folder is gone; null before it was tried. */
+  error: string | null
+}
+
+/** How a tab at a usage limit goes on by itself (see `TerminalInfo.resume`). */
+export interface LimitResume {
+  /** Asked for in the tab („Am Reset fortsetzen“); otherwise the automatic switch waits for a free account. */
+  byUser: boolean
+  /** When the session goes on with its own account: a minute after the reset. Null when the reset isn't known. */
+  at: string | null
+}
+
+/** The end of a session's turn, as the tab keeps it (see `TerminalInfo.turn`). */
+export interface TerminalTurn {
+  kind: AttentionKind
+  /** `input`: what waits, e.g. `Bash`, `AskUserQuestion`, `ExitPlanMode`. */
+  tool: string | null
+  /** The beginning of the answer as plain text, the command or question that waits, or the limit message. */
+  detail: string | null
+  /** When it ended (ISO). */
+  at: string
 }
 
 /** A tool Claude runs in a session, as Claude Code's hooks tell it (see `TerminalInfo.hooks`). */
@@ -520,6 +613,10 @@ export interface SessionSummary {
    * without one. It counts over Claude Code's title, also one it generates again later.
    */
   name: string | null
+  /** Pinned in the app: the session list shows it on top, under „Angeheftet“. */
+  pinned: boolean
+  /** The user's tags for the session in the app, e.g. „Bug“ or „Release“, to find and filter it by. */
+  tags: string[]
   firstPrompt: string | null
   lastPrompt: string | null
   gitBranch: string | null
@@ -559,6 +656,59 @@ export interface SessionRemoveResult {
 }
 
 /** A session whose conversation contains every word of a search. */
+/** A page or document Claude published on claude.ai (the Artifact tool), as the account's login lists it. */
+export interface Artifact {
+  /** The id in its link `https://claude.ai/code/artifact/<id>`. */
+  id: string
+  url: string
+  title: string
+  description: string | null
+  /** The short name of the version last published. */
+  label: string | null
+  kind: 'page' | 'document'
+  /** Made by the account's login (`mine`) or shared with it. Only own ones can be renamed and deleted. */
+  mine: boolean
+  /** Whether the login may give it another title. */
+  renamable: boolean
+  /** Who made it, for one shared with the login. */
+  ownerEmail: string | null
+  /** Shared from another organization. */
+  external: boolean
+  /** Who may open it: only its owner, the people it is shared with, the organization or anyone with the link. */
+  audience: ArtifactAudience | null
+  createdAt: string | null
+  updatedAt: string | null
+  lastViewedAt: string | null
+  /** How often it was opened; null where the list doesn't say. */
+  views: number | null
+  /** Pinned in the sidebar of claude.ai. */
+  pinned: boolean
+}
+
+export type ArtifactAudience = 'owner' | 'users' | 'org' | 'public'
+
+export type ArtifactListStatus =
+  /** Listed. */
+  | 'ok'
+  /** The login can't list artifacts: an API key, a token without access, or not offered for the account. */
+  | 'unavailable'
+  /** The login has expired or was signed out: signing in again helps. */
+  | 'signed-out'
+  | 'error'
+
+export interface ArtifactList {
+  accountId: string
+  status: ArtifactListStatus
+  message: string | null
+  /** Most recently viewed first. */
+  artifacts: Artifact[]
+  /** Whether pinning is offered for the login. */
+  pinsEnabled: boolean
+  /** There were more than the app lists. */
+  truncated: boolean
+  fetchedAt: string
+}
+
 export interface SessionSearchHit {
   accountId: string
   sessionId: string
@@ -570,11 +720,72 @@ export interface SessionSearchHit {
   matches: number
 }
 
+/** What became of a file: there since, changed, or gone. */
+export type FileChangeKind = 'added' | 'modified' | 'deleted'
+
+/**
+ * Why lines aren't counted: a binary file, one too big to compare, or a version of it that Claude Code
+ * no longer keeps (it drops old backups).
+ */
+export type FileChangeNote = 'binary' | 'tooLarge' | 'unavailable'
+
+/** A file that changed, with how many lines it gained and lost. */
+export interface SessionFileChange {
+  /** Absolute path. */
+  path: string
+  kind: FileChangeKind
+  /** Null with a `note`. */
+  added: number | null
+  removed: number | null
+  note: FileChangeNote | null
+}
+
+/** What changed while Claude worked on a prompt: from the prompt to the next one (or to now). */
+export interface SessionTurnChanges {
+  /** The prompt's message id, the point `/rewind` goes back to. */
+  id: string
+  /** When the prompt was sent. */
+  at: string | null
+  prompt: string | null
+  /** The latest prompt: its changes reach up to the files as they are now. */
+  latest: boolean
+  files: SessionFileChange[]
+}
+
+/** The changes of a session prompt by prompt, from Claude Code's file history; oldest first. */
+export interface SessionChanges {
+  /** Only prompts during which files changed. */
+  turns: SessionTurnChanges[]
+  /** Files the session changed altogether. */
+  files: number
+}
+
+/** Both versions of a file to compare; null for a side where the file isn't there. */
+export interface SessionChangeTexts {
+  before: string | null
+  after: string | null
+  note: FileChangeNote | null
+}
+
+/** A session that changed a file with Claude's Edit or Write. */
+export interface SessionFileEdit {
+  session: SessionSummary
+  /** When it changed the file last. */
+  changedAt: string
+}
+
 export interface TranscriptToolCall {
   /** `tool_use` id: loads the complete call with `sessions.toolCall`. */
   id: string | null
   name: string
+  /** One line about the call: its command, file, pattern, URL… */
   summary: string
+  /** More about it in a few words, e.g. which lines a Read took or where a Grep searched; null without. */
+  detail: string | null
+  /** What Claude said the call is for (`description` of Bash, Agent …); null without one. */
+  description: string | null
+  /** The command of a shell tool (Bash, PowerShell), whole up to 4000 characters; null for other tools. */
+  command: string | null
   /** Outcome of the matching tool result; null when none was recorded (yet). */
   status: 'ok' | 'error' | null
 }
@@ -592,19 +803,37 @@ export interface TranscriptToolDetail {
   truncated: boolean
 }
 
+/**
+ * What an entry of the history is. From the user: `prompt` (typed or pasted, pasted text stays in
+ * `<pasted_content>` tags), `command` (a slash command such as `/model`), `shell` (a command typed
+ * after `!`), `task` (a background task Claude started reporting back: `text` is its summary) and
+ * `summary` (what a compaction kept of the conversation before). `answer` is Claude's, `compact` the
+ * compaction itself.
+ */
+export type TranscriptMessageKind = 'prompt' | 'command' | 'shell' | 'task' | 'summary' | 'answer' | 'compact'
+
 export interface TranscriptMessage {
   uuid: string
   role: 'user' | 'assistant' | 'system'
+  kind: TranscriptMessageKind
   timestamp: string | null
   text: string
+  /** What a command printed or a task's result, without terminal colours; null when nothing was recorded. */
+  output: string | null
+  /** A command printed errors, a task failed or was stopped. */
+  failed: boolean
   tools: TranscriptToolCall[]
   model: string | null
 }
 
 export interface SessionDetail {
   summary: SessionSummary
+  /** The newest messages, up to the number asked for. */
   messages: TranscriptMessage[]
+  /** Older messages weren't sent along. */
   truncated: boolean
+  /** All messages of the history. */
+  total: number
 }
 
 // ---------------------------------------------------------------------------
@@ -632,6 +861,18 @@ export interface UsageForecast {
   ratePerHour: number
   /** The pace of the last while (`recent`), or the average since the window began (`window`). */
   basis: 'recent' | 'window'
+}
+
+/** A reading of a usage window: when, how full, and when its window resets (times in ms). */
+export type UsageReading = [time: number, percent: number, resetsAt: number]
+
+/** How full the limits of an account were over the last days (see `src/shared/usage-history.ts`). */
+export interface UsageHistory {
+  accountId: string
+  /** The five-hour window of the last two days, oldest first. */
+  fiveHour: UsageReading[]
+  /** The weekly window of the last fifteen days, oldest first. */
+  sevenDay: UsageReading[]
 }
 
 export interface ExtraUsage {
@@ -675,6 +916,11 @@ export interface TokenCounts {
   cacheCreation: number
   cacheRead: number
   messages: number
+  /**
+   * What the answers cost in US dollars at the prices of Anthropic's API (see `answerCost`), without
+   * those of models the app has no price for. With a subscription nobody pays it.
+   */
+  cost: number
 }
 
 export interface DailyTokenStats extends TokenCounts {
@@ -695,14 +941,30 @@ export interface FolderTokenStats extends TokenCounts {
   sessionCount: number
 }
 
+/** One session with the usage of its subagents. */
+export interface SessionTokenStats extends TokenCounts {
+  sessionId: string
+  /** Claude Code's project folder name. */
+  projectKey: string
+  /** The folder it ran in, null when its transcript doesn't record it (any more). */
+  path: string | null
+  title: string | null
+  /** The model of its last answer. */
+  model: string | null
+}
+
 export interface AccountTokenStats {
   accountId: string
   days: DailyTokenStats[]
   models: ModelTokenStats[]
-  /** Largest first (by `weightedTokens`). */
+  /** Most expensive first, at the same cost largest (by `weightedTokens`). */
   folders: FolderTokenStats[]
+  /** The most expensive sessions, at most 20. */
+  sessions: SessionTokenStats[]
   totals: TokenCounts
   sessionCount: number
+  /** Answers of models without a known price: no `cost` includes them. */
+  unpriced: number
   computedAt: string
 }
 
@@ -714,6 +976,8 @@ export type WindowMaterial = 'acrylic' | 'mica' | 'tabbed' | 'none'
 export type CursorStyle = 'block' | 'bar' | 'underline'
 export type TerminalRenderer = 'webgl' | 'dom'
 export type UnicodeMode = 'graphemes' | 'unicode11'
+/** Whether the terminals are readable for screen readers: while the system reports one (`auto`), always or never. */
+export type ScreenReaderMode = 'auto' | 'on' | 'off'
 /**
  * Background of Claude Code's side panels such as /diff and of the bars behind the user's own
  * messages in the transcript. `theme`: a see-through tint of the terminal theme's text color,
@@ -777,6 +1041,10 @@ export interface TerminalSettings {
   unicode: UnicodeMode
   copyOnSelect: boolean
   rightClickPaste: boolean
+  /** xterm's screen reader mode: the output as text a screen reader reads (NVDA, JAWS, Narrator, Orca). */
+  screenReader: ScreenReaderMode
+  /** Asks before pasted text with line breaks goes to a program that would run each line at once. */
+  multiLinePasteWarning: boolean
   /** Use a terminal color scheme different from the app theme (theme id) or `null` to follow the app theme. */
   colorSchemeId: string | null
   minimumContrastRatio: number
@@ -805,10 +1073,21 @@ export interface ClaudeSettings {
   continuePrompt: string
   /** A session that hits a limit continues by itself with the next free account. */
   autoSwitch: boolean
+  /**
+   * A token or API key the app gives a session stays out of the commands Claude runs (Bash, hooks, MCP
+   * servers): Claude Code removes it there (`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`). Claude Code then
+   * always starts in the default permission mode, whatever `--permission-mode` says.
+   */
+  hideSecretsFromCommands: boolean
   /** Sessions the app starts get its browser as a tool (an MCP server of the app, `--mcp-config`). */
   browserTools: boolean
   /** Claude Code uses the browser without asking before every action (`--allowedTools`). */
   browserToolsAllowed: boolean
+  /**
+   * Also the browser tools that reach beyond the page (uploads, cookies and storage, request contents,
+   * scripts, deleting site data) without asking; only with `browserToolsAllowed`.
+   */
+  browserSensitiveAllowed: boolean
   /**
    * Sessions the app starts with its browser run without Claude in Chrome (`--no-chrome`), so Claude
    * takes the app's browser instead of the user's Chrome. Claude Code's own setting stays as it is.
@@ -871,6 +1150,8 @@ export interface GeneralSettings {
   defaultAccountId: string
   /** Remember the open tabs (folder and session) and open them again on the next start. */
   restoreTerminals: boolean
+  /** Tabs opened again at the start begin to run only once they are shown; until then they wait without a process. */
+  restoreAsleep: boolean
   /** `cm` shows a running tab in the same folder instead of opening another one (`cm -n` always opens one). */
   cmReuseTab: boolean
   /** Closing the window only hides it; the app keeps running in the notification area (tray). */
@@ -901,6 +1182,8 @@ export interface NotificationSettings {
   onNearLimit: boolean
   /** Usage of a limit window (%) from which `onNearLimit` warns. */
   nearLimitPercent: number
+  /** An account's browser login ended and can't be renewed: once per login, only as a system notification. */
+  onLoginLost: boolean
   when: NotifyWhen
   /** System notification (Windows: in the notification center). */
   toast: boolean
@@ -928,11 +1211,35 @@ export interface AppSettings {
   api: ApiSettings
 }
 
-/** Outcome of importing settings from a file. */
-export interface SettingsImportResult {
-  settings: AppSettings
+/**
+ * What the settings of a file would change, read before anything is taken over: the user picks the
+ * changes, which then come as an ordinary update.
+ */
+export interface SettingsImportPreview {
+  /** The file's name, without its folder. */
+  fileName: string
+  /** The version of the app that exported the file, and when; null for a plain settings.json. */
+  appVersion: string | null
+  exportedAt: string | null
+  /** Each setting the file changes, in the order of the settings. Settings it lacks or keeps as they are aren't in it. */
+  changes: SettingChange[]
   /** Settings of the file left as they were: paths that don't exist on this computer. */
   skipped: string[]
+}
+
+/** One setting an import would change. */
+export interface SettingChange {
+  /** Section and key, e.g. `terminal.fontSize` or `terminal.padding.top`. */
+  path: string
+  /** The value now, and the one from the file cleaned up like any change. */
+  from: unknown
+  to: unknown
+  /**
+   * The setting decides what runs or what Claude may do without asking (the program, its options,
+   * the shells, the API …). A file from someone else could run anything with it, so it is only taken
+   * over when the user picks it.
+   */
+  sensitive: boolean
 }
 
 export type DeepPartial<T> = {
@@ -983,6 +1290,62 @@ export interface WorkspaceCreateInput {
   name: string
   /** Text for `cm_prompts.md`; empty leaves it empty. */
   prompt: string
+}
+
+// ---------------------------------------------------------------------------
+// Tab sets
+// ---------------------------------------------------------------------------
+
+/** Tabs saved under a name, to open them all again with one click (see TabSetService). */
+export interface TabSet {
+  id: string
+  name: string
+  tabs: TabSetTab[]
+  /** When it was saved last (ISO). */
+  savedAt: string
+}
+
+export type TabSetTab = TabSetTerminal | TabSetBrowser
+
+/** A session or shell of a tab set. */
+export interface TabSetTerminal {
+  mode: 'session' | 'shell'
+  accountId: string
+  cwd: string
+  /** The tab's own name; null follows its session, or shows its folder. */
+  title: string | null
+  muted: boolean
+  /** Claude Code arguments that hold for every start (see `lastingArgs`). */
+  args: string[]
+  /** A session goes on with this one while it is there; null starts a new one. Null for shells. */
+  sessionId: string | null
+  /** A shell runs this right after it started, e.g. `npm run dev`; null for none and for sessions. */
+  command: string | null
+  /** On the first tab of a split tab: how its parts share its space, by their index in `TabSet.tabs`. */
+  layout?: PaneNode
+}
+
+/** A page of a tab set, in the app's browser. */
+export interface TabSetBrowser {
+  mode: 'browser'
+  url: string
+  title: string | null
+  layout?: PaneNode
+}
+
+/** What saving a tab set takes: without `id` a new one, otherwise the one it replaces. */
+export interface TabSetInput {
+  id?: string | null
+  name: string
+  tabs: TabSetTab[]
+}
+
+/** How opening a tab set went. */
+export interface TabSetOpenResult {
+  /** The tab to show: the first one that opened (or ran already). */
+  firstId: string | null
+  /** Tabs that didn't open, with why: a folder or account that is gone, a start that failed. */
+  failed: { title: string; reason: string }[]
 }
 
 // ---------------------------------------------------------------------------
@@ -1064,6 +1427,31 @@ export interface FileSearchList {
   truncated: boolean
 }
 
+/** A line of a file that holds what the tree's content search looks for. */
+export interface ContentMatch {
+  /** Its number in the file, from 1. */
+  line: number
+  /** The line without its indent; of a long one the part around its first hit, `…` where cut. */
+  text: string
+  /** Where the hits are in `text` (characters, the end excluded). */
+  ranges: [number, number][]
+}
+
+/** The lines of a file the content search found, by their number. */
+export interface ContentFile {
+  /** Relative to the tree's folder, `/`-separated. */
+  path: string
+  matches: ContentMatch[]
+}
+
+export interface ContentSearchResult {
+  files: ContentFile[]
+  /** Lines found, in all files. */
+  matches: number
+  /** More lines than were read hold it, or the search took too long. */
+  truncated: boolean
+}
+
 /** How git sees a file of the tree. */
 export type GitFileStatus = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflict'
 
@@ -1074,6 +1462,39 @@ export interface GitFileState {
   /** Lines added and removed since the last commit; null for binary and untracked files and before the first commit. */
   added: number | null
   removed: number | null
+}
+
+/** A commit of a review (see `ReviewBase`). */
+export interface ReviewCommit {
+  sha: string
+  short: string
+  subject: string
+  author: string
+  /** ISO date of the commit's author. */
+  date: string
+}
+
+/**
+ * Where the work of a folder's branch started: its changes since then, committed or not, as a review
+ * of the whole branch shows them.
+ */
+export interface ReviewBase {
+  /** The branch compared with, as git names it (`origin/main`); on the main branch its upstream. */
+  base: string
+  /** The commit the branch started from (`git merge-base`). */
+  mergeBase: string
+  /** The checked-out branch; null with a detached HEAD. */
+  branch: string | null
+  /** Commits since, the latest first. */
+  commits: ReviewCommit[]
+  /** There were more commits than were sent. */
+  commitsTruncated: boolean
+  /** The folder's files changed since, by their path relative to it; files git doesn't know yet aren't in it. */
+  files: Record<string, GitFileState>
+  /** More files than were sent. */
+  truncated: boolean
+  /** Where to open a pull request of the branch; null on an unknown host, on the main branch and before it is pushed. */
+  pullRequestUrl: string | null
 }
 
 /** Git's view of a tree's folder: the branch and the changed and ignored files in it. */
@@ -1108,6 +1529,11 @@ export interface FileDiff {
   tooLarge: boolean
   /** The file isn't there (deleted, or not yet written). */
   missing: boolean
+  /**
+   * An image (PNG, JPEG, GIF, WebP, AVIF, BMP, ICO) as data URLs: as at the last commit, if it changed
+   * since, and as it is now. Null for a side that isn't there or is too big to show.
+   */
+  image?: { before: string | null; after: string | null }
 }
 
 /** What Claude does with a file: reads it, searches it (or a search found it), writes it, or commits it. */

@@ -1,13 +1,13 @@
 import { mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
-import type { ClaudeSettings } from '@shared/types'
+import type { ClaudeSettings, DialogOptions } from '@shared/types'
 import { BodyTooLarge, readBody, sendJson, sendPlain, type SessionServer } from '../services/session-server'
 import type { SettingsService } from '../services/settings-service'
 import type { SessionArgsProvider } from '../services/terminal-service'
 import { allowedAppToolNames, appInstructions, appToolGroup, enabledAppGroups, type AppTools } from './app-tools'
 import type { BrowserTools } from './browser-tools'
-import { BROWSER_INSTRUCTIONS } from './browser-tools'
+import { BROWSER_INSTRUCTIONS, SENSITIVE_BROWSER_TOOLS } from './browser-tools'
 import { handleRpc, isRequest, PARSE_ERROR, rpcError, type McpServerSpec } from './mcp-protocol'
 
 /** The name Claude Code knows the server by; its tools are `mcp__claude-manager__browser_…`, `mcp__claude-manager__limits` … */
@@ -32,15 +32,26 @@ export function mcpLaunchArgs(configFile: string, allowedTools: string[], noChro
 }
 
 /**
- * The tools a session may use without asking: the browser's when the settings allow it, the app's
- * reading tools whenever they are on, its shell tools only when allowed too; the theme tools that
- * change something always ask.
+ * The tools a session may use without asking: the browser's when the settings allow it (those that
+ * reach beyond the page, like uploads and cookies, only when allowed too), the app's reading tools
+ * whenever they are on, its shell tools only when allowed too; the theme tools that change something
+ * always ask.
  */
 export function allowedToolNames(claude: ClaudeSettings, browserToolNames: string[], appTools: boolean): string[] {
+  const browser = claude.browserTools && claude.browserToolsAllowed ? browserToolNames : []
   return [
-    ...(claude.browserTools && claude.browserToolsAllowed ? browserToolNames : []),
+    ...browser.filter((name) => claude.browserSensitiveAllowed || !SENSITIVE_BROWSER_TOOLS.has(name)),
     ...(appTools ? allowedAppToolNames(claude) : []),
   ]
+}
+
+/**
+ * Whether the user has to be asked for a tool before it runs: the session may use it without asking
+ * (`--allowedTools` at its start, which can't be taken back while it runs), but the settings don't
+ * allow that any more. Claude Code doesn't ask then, so the app does.
+ */
+export function askedAgain(name: string, allowedAtStart: ReadonlySet<string>, allowedNow: readonly string[]): boolean {
+  return allowedAtStart.has(name) && !allowedNow.includes(name)
 }
 
 /** The `--mcp-config` file of one session. */
@@ -56,10 +67,12 @@ export function mcpConfig(url: string, token: string): unknown {
  */
 export class BrowserMcpServer implements SessionArgsProvider {
   /** Token and config file by session terminal. */
-  private readonly grants = new Map<string, { token: string; file: string }>()
+  private readonly grants = new Map<string, { token: string; file: string; allowed: ReadonlySet<string> }>()
   private readonly dir: string
   /** The tools for the app itself; they need services that start after the server. */
   private appTools: AppTools | null = null
+  /** Asks the user in the window; null when there is no window to ask in. */
+  private ask: ((options: DialogOptions) => Promise<boolean | null>) | null = null
 
   constructor(
     private readonly server: SessionServer,
@@ -82,6 +95,10 @@ export class BrowserMcpServer implements SessionArgsProvider {
     this.appTools = tools
   }
 
+  setAsk(ask: (options: DialogOptions) => Promise<boolean | null>): void {
+    this.ask = ask
+  }
+
   /** The options for a new session, given the settings; nothing when all of the server's tools are off. */
   args(terminalId: string): string[] {
     const claude = this.settings.get().claude
@@ -97,13 +114,32 @@ export class BrowserMcpServer implements SessionArgsProvider {
       this.server.revoke(token)
       return []
     }
-    this.grants.set(terminalId, { token, file })
-    const allowed = allowedToolNames(
+    const allowed = this.allowedNow(claude)
+    this.grants.set(terminalId, { token, file, allowed: new Set(allowed) })
+    return mcpLaunchArgs(file, allowed, claude.browserTools && claude.noClaudeInChrome)
+  }
+
+  private allowedNow(claude: ClaudeSettings): string[] {
+    return allowedToolNames(
       claude,
       this.tools.list().map((tool) => tool.name),
       this.appTools !== null,
     )
-    return mcpLaunchArgs(file, allowed, claude.browserTools && claude.noClaudeInChrome)
+  }
+
+  /** Asks before a tool the session may still use without asking, though the settings say to ask now. */
+  private async confirmTool(terminalId: string, name: string): Promise<void> {
+    const grant = this.grants.get(terminalId)
+    if (!grant || !askedAgain(name, grant.allowed, this.allowedNow(this.settings.get().claude))) return
+    const answer = await this.ask?.({
+      title: 'Darf Claude dieses Werkzeug benutzen?',
+      description:
+        'Die Session lief schon, als du „ohne Nachfrage“ ausgeschaltet hast. Claude Code fragt deshalb nicht selbst, bis die Session neu startet: Die App fragt für jede Aktion.',
+      code: name,
+      confirmText: 'Erlauben',
+      cancelText: 'Ablehnen',
+    })
+    if (answer !== true) throw new Error(`The user did not allow ${name} in Claude Manager.`)
   }
 
   /** The session ended: its token stops working. */
@@ -151,7 +187,8 @@ export class BrowserMcpServer implements SessionArgsProvider {
       instructions: instructions.length ? instructions.join('\n\n') : undefined,
       tools: [...(claude.browserTools ? browserTools : []), ...(appTools ? appTools.list(appGroups) : [])],
       knowsTool: (name) => browserTools.some((tool) => tool.name === name) || (appTools !== null && appToolGroup(name) !== null),
-      callTool: (name, args) => {
+      callTool: async (name, args) => {
+        await this.confirmTool(sessionId, name)
         if (appTools && appToolGroup(name) !== null) return appTools.call(sessionId, name, args)
         if (!this.settings.get().claude.browserTools) {
           throw new Error('The user turned the browser off for Claude sessions in the settings of Claude Manager.')

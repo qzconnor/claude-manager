@@ -50,9 +50,16 @@ export const schemas: Record<string, Schema> = {
     createdAt: dateTime,
     hasSecret: bool,
     secretHint: { ...nullable(str), description: 'Maskierte Vorschau, nie das Secret selbst' },
-    authState: { type: 'string', enum: ['ok', 'expired', 'missing'] },
+    authState: {
+      type: 'string',
+      enum: ['ok', 'expired', 'dead', 'missing'],
+      description: '`expired`: Access-Token abgelaufen, wird erneuert. `dead`: abgelaufen und nicht erneuerbar, nur neu anmelden hilft',
+    },
     identity: ref('AccountIdentity'),
     tokenExpiresAt: nullable(dateTime),
+    loginEndsAt: { ...nullable(dateTime), description: 'Ende des Browser-Logins (Ablauf des Refresh-Tokens)' },
+    tokenSavedAt: { ...nullable(dateTime), description: 'Wann Claude Code oder die App die Tokens zuletzt gespeichert hat' },
+    renewable: { ...bool, description: 'Der Browser-Login hat einen Refresh-Token, der noch gehen kann' },
     expectedLogin: {
       ...nullable(ref('ExpectedLogin')),
       description: 'Wer sich hier anmelden soll, z. B. nach dem Import aus cswap',
@@ -85,6 +92,18 @@ export const schemas: Record<string, Schema> = {
       description: 'recent = Tempo der letzten Zeit (5-Stunden-Fenster: 1 Stunde, Woche: 1 Tag), window = Schnitt seit Beginn des Fensters',
     },
   }),
+  UsageReading: {
+    type: 'array',
+    description: '[Zeit, Prozent, Reset des Fensters], Zeiten in Millisekunden seit 1970',
+    prefixItems: [int, { type: 'number', minimum: 0, maximum: 100 }, int],
+    minItems: 3,
+    maxItems: 3,
+  },
+  UsageHistory: object({
+    accountId: str,
+    fiveHour: { ...arrayOf(ref('UsageReading')), description: '5-Stunden-Limit der letzten zwei Tage, älteste zuerst' },
+    sevenDay: { ...arrayOf(ref('UsageReading')), description: 'Wochenlimit der letzten 15 Tage, älteste zuerst' },
+  }),
   ExtraUsage: object({
     enabled: bool,
     usedCredits: nullable(num),
@@ -108,7 +127,17 @@ export const schemas: Record<string, Schema> = {
     breakdown: arrayOf(object({ key: str, label: str, percent: num })),
     nextRefreshAt: nullable(dateTime),
   }),
-  TokenCounts: object({ input: int, output: int, cacheCreation: int, cacheRead: int, messages: int }),
+  TokenCounts: object({
+    input: int,
+    output: int,
+    cacheCreation: int,
+    cacheRead: int,
+    messages: int,
+    cost: {
+      ...num,
+      description: 'US-Dollar zu API-Preisen, ohne Antworten von Modellen ohne bekannten Preis. Mit einem Abo zahlt man sie nicht.',
+    },
+  }),
   AccountTokenStats: object({
     accountId: str,
     days: arrayOf({
@@ -126,10 +155,26 @@ export const schemas: Record<string, Schema> = {
           }),
         ],
       }),
-      description: 'Nach Ordner, der größte Verbrauch zuerst (Tokens nach API-Preisen gewichtet)',
+      description: 'Nach Ordner, die höchsten Kosten zuerst, bei gleichen Kosten die meisten Tokens (nach API-Preisen gewichtet)',
+    },
+    sessions: {
+      ...arrayOf({
+        allOf: [
+          ref('TokenCounts'),
+          object({
+            sessionId: str,
+            projectKey: str,
+            path: { ...nullable(str), description: 'Ordner, in dem die Session lief' },
+            title: nullable(str),
+            model: { ...nullable(str), description: 'Modell der letzten Antwort' },
+          }),
+        ],
+      }),
+      description: 'Die teuersten 20 Sessions, mit ihren Subagents',
     },
     totals: ref('TokenCounts'),
     sessionCount: int,
+    unpriced: { ...int, description: 'Antworten von Modellen ohne bekannten Preis, in keinen Kosten enthalten' },
     computedAt: dateTime,
   }),
   SessionWorktree: object({
@@ -149,6 +194,8 @@ export const schemas: Record<string, Schema> = {
     },
     title: { type: 'string', description: 'Was die App zeigt: name, sonst der Titel, den Claude Code der Session gab' },
     name: { ...nullable(str), description: 'Name, den die Session in der App bekam (Tab oder Session umbenannt); gilt vor dem Titel von Claude Code' },
+    pinned: { ...bool, description: 'In der App angeheftet: steht in der Session-Liste oben' },
+    tags: { ...arrayOf(str), description: 'Tags, die die Session in der App bekam' },
     firstPrompt: nullable(str),
     lastPrompt: nullable(str),
     gitBranch: nullable(str),
@@ -168,13 +215,24 @@ export const schemas: Record<string, Schema> = {
   TranscriptMessage: object({
     uuid: str,
     role: { type: 'string', enum: ['user', 'assistant', 'system'] },
+    kind: {
+      type: 'string',
+      enum: ['prompt', 'command', 'shell', 'task', 'summary', 'answer', 'compact'],
+      description:
+        'prompt: Eingabe (eingefügter Text in <pasted_content>), command: Slash-Befehl, shell: Befehl nach „!“, task: Meldung einer Hintergrundaufgabe, summary: Zusammenfassung einer Komprimierung, answer: Antwort von Claude, compact: Komprimierung',
+    },
     timestamp: nullable(dateTime),
     text: { type: 'string', description: 'Markdown' },
+    output: { ...nullable(str), description: 'Ausgabe eines Befehls oder Ergebnis einer Hintergrundaufgabe, ohne Terminalfarben' },
+    failed: { type: 'boolean', description: 'Der Befehl meldete Fehler oder die Aufgabe ist gescheitert' },
     tools: arrayOf(
       object({
         id: nullable(str),
         name: str,
         summary: str,
+        detail: { ...nullable(str), description: 'z. B. „Zeilen 10–59“ bei Read' },
+        description: { ...nullable(str), description: 'Wofür Claude den Aufruf macht' },
+        command: { ...nullable(str), description: 'Befehl von Bash und PowerShell, bis 4000 Zeichen' },
         status: { anyOf: [{ type: 'string', enum: ['ok', 'error'] }, { type: 'null' }] },
       }),
     ),
@@ -184,6 +242,7 @@ export const schemas: Record<string, Schema> = {
     summary: ref('SessionSummary'),
     messages: arrayOf(ref('TranscriptMessage')),
     truncated: { type: 'boolean', description: 'true, wenn nur die neuesten Nachrichten enthalten sind' },
+    total: { type: 'integer', minimum: 0, description: 'Alle Nachrichten der Session, auch die nicht enthaltenen' },
   }),
   SessionLimit: object({
     type: { ...nullable(str), description: 'z. B. five_hour, seven_day' },
@@ -209,6 +268,12 @@ export const schemas: Record<string, Schema> = {
     authAccountId: { type: 'string', description: 'Account, dessen Login, Token oder API-Key der Prozess verwendet' },
     sessionId: { ...nullable(str), description: 'Claude-Code-Session, die gerade im Tab läuft' },
     limit: { ...nullable(ref('SessionLimit')), description: 'Gesetzt, solange die Session an einem Nutzungslimit steht' },
+    resume: {
+      ...nullable(ref('LimitResume')),
+      description:
+        'Die Session steht an einem Limit und geht von selbst weiter: am Reset oder mit dem automatischen Wechsel, sobald ein ' +
+        'anderer Account frei ist. Bleibt nach dem Reset, bis sie weitergeht, auch wenn limit schon null ist',
+    },
     context: {
       ...nullable(ref('SessionContext')),
       description: 'Wie voll der Kontext der Session ist, ab ihrem Start; null bei Shells, Logins und Browsern',
@@ -226,6 +291,11 @@ export const schemas: Record<string, Schema> = {
     },
     subagents: { type: 'integer', minimum: 0, description: 'Laufende Subagents der Session (nur mit hooks)' },
     compacting: { type: 'boolean', description: 'Claude Code fasst gerade den Verlauf zusammen (nur mit hooks)' },
+    turn: {
+      ...nullable(ref('TerminalTurn')),
+      description: 'Wie der letzte Turn der Session endete. Bleibt, bis der nächste beginnt, auch wenn der Tab angezeigt wird',
+    },
+    prompt: { ...nullable(str), description: 'Anfang des letzten Prompts auf einer Zeile (nur mit hooks)' },
     attention: {
       ...nullable({ type: 'string', enum: ['done', 'input', 'limit'] }),
       description:
@@ -243,7 +313,20 @@ export const schemas: Record<string, Schema> = {
     mode: { type: 'string', enum: ['session', 'login', 'shell', 'browser'], description: 'browser = Webseite im Browser der App, ohne Prozess' },
     url: { ...nullable(str), description: 'Seite, die ein Browser-Tab zeigt; null bei Terminals' },
     resumeSessionId: nullable(str),
-    status: { type: 'string', enum: ['running', 'exited'] },
+    args: {
+      ...arrayOf(str),
+      description: 'Eigene Argumente für claude, mit denen der Tab gestartet wurde (ohne die aus Einstellungen und Account)',
+    },
+    restoredFrom: { ...nullable(str), description: 'Beim Start wieder geöffnet: die ID, die der Tab im letzten Lauf hatte' },
+    status: {
+      type: 'string',
+      enum: ['running', 'exited', 'asleep'],
+      description: 'asleep = Tab vom letzten Start, der erst startet, wenn die App ihn zeigt (siehe sleep)',
+    },
+    sleep: {
+      ...nullable(ref('TerminalSleep')),
+      description: 'Nur bei status asleep: ob er gerade startet und warum er zuletzt nicht startete',
+    },
     exitCode: nullable(int),
     pid: int,
     createdAt: dateTime,
@@ -252,6 +335,30 @@ export const schemas: Record<string, Schema> = {
       ...nullable(ref('SessionWorktree')),
       description: 'Git-Worktree, in dem die Session arbeitet (claude --worktree); cwd bleibt der Startordner',
     },
+  }),
+  LimitResume: object({
+    byUser: { type: 'boolean', description: 'Im Tab gewählt („Am Reset fortsetzen“); sonst wartet der automatische Wechsel' },
+    at: {
+      ...nullable(dateTime),
+      description: 'Wann die Session mit ihrem Account weitergeht: eine Minute nach dem Reset; null, wenn er unbekannt ist',
+    },
+  }),
+  TerminalSleep: object({
+    waking: { type: 'boolean', description: 'Er startet gerade; der Ordner wird zuerst geprüft' },
+    error: { ...nullable(str), description: 'Warum er zuletzt nicht startete, z. B. weil sein Ordner fehlt; null, bevor er es versuchte' },
+  }),
+  TerminalTurn: object({
+    kind: {
+      type: 'string',
+      enum: ['done', 'input', 'limit'],
+      description: 'done = Antwort fertig, input = wartet auf Erlaubnis, Antwort oder Freigabe, limit = Nutzungslimit',
+    },
+    tool: { ...nullable(str), description: 'Bei input, worauf Claude wartet, z. B. Bash, AskUserQuestion, ExitPlanMode' },
+    detail: {
+      ...nullable(str),
+      description: 'Anfang der Antwort als Text, der wartende Befehl oder die Frage, oder die Meldung zum Limit',
+    },
+    at: { ...dateTime, description: 'Wann der Turn endete' },
   }),
   TerminalActivity: object({
     tool: { type: 'string', description: 'z. B. Bash, Edit oder mcp__claude-manager__browser_click' },

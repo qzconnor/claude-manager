@@ -38,6 +38,9 @@ function account(id: string, name: string, email: string | null = null): Account
       rateLimitTier: null,
     },
     tokenExpiresAt: null,
+    loginEndsAt: null,
+    tokenSavedAt: null,
+    renewable: false,
     expectedLogin: null,
   }
 }
@@ -56,6 +59,7 @@ function terminal(overrides: Partial<TerminalInfo>): TerminalInfo {
     authAccountId: 'system',
     sessionId: null,
     limit: null,
+    resume: null,
     context: null,
     busy: false,
     attention: null,
@@ -67,7 +71,9 @@ function terminal(overrides: Partial<TerminalInfo>): TerminalInfo {
     mode: 'session',
     url: null,
     resumeSessionId: null,
+    args: [],
     status: 'running',
+    sleep: null,
     exitCode: null,
     pid: 1,
     createdAt: '2026-11-06T12:00:00.000Z',
@@ -77,6 +83,8 @@ function terminal(overrides: Partial<TerminalInfo>): TerminalInfo {
     activity: null,
     subagents: 0,
     compacting: false,
+    turn: null,
+    prompt: null,
     ...overrides,
   }
 }
@@ -302,6 +310,13 @@ describe('resolveLaunch', () => {
 
     it.each([[['-n']], [['-c']], [['-r']], [['--', '--model', 'opus']]])('opens a new tab for %o', (args) => {
       expect(launch(args, { open }).existing).toBeNull()
+    })
+
+    it('selects a tab of the last run that waits to start, unless it did not start', () => {
+      const waiting = terminal({ id: 'waiting', cwd: WORK, status: 'asleep', sleep: { waking: false, error: null } })
+      expect(launch([], { open: [waiting] }).existing?.id).toBe('waiting')
+      const failed = { ...waiting, sleep: { waking: false, error: 'Den Ordner gibt es nicht.' } }
+      expect(launch([], { open: [failed] }).existing).toBeNull()
     })
 
     it('ignores exited tabs and tabs in other folders', () => {

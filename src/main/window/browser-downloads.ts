@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { app, shell, type DownloadItem, type WebContents } from 'electron'
+import { runsWhenOpened } from '@shared/executables'
 import type { BrowserDownload, BrowserDownloadAction } from '@shared/types'
 import { TypedEmitter } from '../lib/typed-emitter'
 import { uniqueFileName } from './browser-policy'
@@ -10,6 +11,12 @@ import { uniqueFileName } from './browser-policy'
 const PROGRESS_MS = 250
 /** Downloads the list keeps; older finished ones drop off. */
 const MAX_DOWNLOADS = 50
+/**
+ * How many downloads a page may start in `BURST_MS`: enough for Claude fetching a list of files, the
+ * rest of a page that starts them without end (to fill the disk) the browser refuses.
+ */
+const MAX_BURST = 20
+const BURST_MS = 60_000
 
 interface Entry {
   download: BrowserDownload
@@ -31,14 +38,29 @@ type Events = {
  * (a dialog would also stop Claude), under a name no file there has yet. One list for all browser
  * tabs, the pane a download came from shows it first.
  */
-class BrowserDownloads extends TypedEmitter<Events> {
+export class BrowserDownloads extends TypedEmitter<Events> {
   private readonly entries = new Map<string, Entry>()
   /** Paths of running downloads, so two of the same name don't get the same file. */
   private readonly reserved = new Set<string>()
+  /** When each page (id of its contents) started its last downloads, and whether one was refused since. */
+  private readonly bursts = new Map<number, { starts: number[]; refused: boolean }>()
   private emitTimer: NodeJS.Timeout | null = null
 
-  /** From the browser profile's `will-download`: decides where the file goes, before Electron would ask. */
-  add(item: DownloadItem, contents: WebContents | null): BrowserDownload {
+  constructor(private readonly now: () => number = Date.now) {
+    super()
+  }
+
+  /**
+   * From the browser profile's `will-download`: decides where the file goes, before Electron would
+   * ask, or refuses it (`refuse`: the event's preventDefault) when the page started too many at once.
+   * Null for a refused one the list already shows another of.
+   */
+  add(item: DownloadItem, contents: WebContents | null, refuse: () => void = () => item.cancel()): BrowserDownload | null {
+    const contentsId = contents && !contents.isDestroyed() ? contents.id : 0
+    if (!this.admit(contentsId)) {
+      refuse()
+      return this.addRefused(item, contentsId)
+    }
     const folder = app.getPath('downloads')
     try {
       mkdirSync(folder, { recursive: true })
@@ -55,7 +77,7 @@ class BrowserDownloads extends TypedEmitter<Events> {
 
     const download: BrowserDownload = {
       id: randomUUID(),
-      contentsId: contents && !contents.isDestroyed() ? contents.id : 0,
+      contentsId,
       filename,
       path,
       url: item.getURL(),
@@ -63,6 +85,8 @@ class BrowserDownloads extends TypedEmitter<Events> {
       receivedBytes: item.getReceivedBytes(),
       totalBytes: item.getTotalBytes(),
       startedAt: new Date().toISOString(),
+      executable: runsWhenOpened(filename, process.platform),
+      refused: false,
     }
     const entry: Entry = { download, item }
     this.entries.set(download.id, entry)
@@ -85,6 +109,43 @@ class BrowserDownloads extends TypedEmitter<Events> {
     })
     this.emitNow()
     this.emit('started', { ...download })
+    return download
+  }
+
+  /** Whether the page may start another download now; counts it if so. */
+  private admit(contentsId: number): boolean {
+    const now = this.now()
+    const burst = this.bursts.get(contentsId) ?? { starts: [], refused: false }
+    burst.starts = burst.starts.filter((at) => now - at < BURST_MS)
+    if (burst.starts.length === 0) burst.refused = false
+    this.bursts.set(contentsId, burst)
+    if (burst.starts.length >= MAX_BURST) return false
+    burst.starts.push(now)
+    return true
+  }
+
+  /** The first download of a burst the browser refused shows in the list; the others don't. */
+  private addRefused(item: DownloadItem, contentsId: number): BrowserDownload | null {
+    const burst = this.bursts.get(contentsId)!
+    if (burst.refused) return null
+    burst.refused = true
+    const filename = uniqueFileName(item.getFilename(), () => false)
+    const download: BrowserDownload = {
+      id: randomUUID(),
+      contentsId,
+      filename,
+      path: join(app.getPath('downloads'), filename),
+      url: item.getURL(),
+      state: 'cancelled',
+      receivedBytes: 0,
+      totalBytes: 0,
+      startedAt: new Date().toISOString(),
+      executable: runsWhenOpened(filename, process.platform),
+      refused: true,
+    }
+    this.entries.set(download.id, { download, item: null })
+    this.trim()
+    this.emitNow()
     return download
   }
 

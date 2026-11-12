@@ -16,6 +16,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useLauncher } from '@/composables/useLauncher'
+import { useOverflowFade } from '@/composables/useOverflowFade'
+import { useRovingTabs } from '@/composables/useRovingTabs'
 import { useTabDrag } from '@/composables/useTabDrag'
 import { useTerminalActions } from '@/composables/useTerminalActions'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
@@ -47,6 +49,8 @@ const launcher = useLauncher()
 const { closeGroup } = useTerminalActions()
 const bar = ref<HTMLElement | null>(null)
 const strip = ref<HTMLElement | null>(null)
+// The arrows go from tab to tab; Tab stops at the one in front (the tabs set that).
+useRovingTabs(strip)
 
 // The selected tab stacks the same layers as the content below it, so it has exactly its colour.
 const { containerBackground } = useTerminalAppearance()
@@ -147,6 +151,9 @@ onBeforeUnmount(() => {
   if (dragging.value) ui.draggingTab = null
 })
 
+// Tabs cut by an edge fade out there, as in the title bar; the bar's line below them stays.
+const fade = useOverflowFade(strip, 1)
+
 // A vertical mouse wheel scrolls the tabs horizontally.
 useEventListener(
   strip,
@@ -195,7 +202,10 @@ const iconButton =
     <div
       ref="strip"
       role="tablist"
+      aria-label="Tabs der Gruppe"
+      data-terminal-tabs
       class="no-scrollbar flex min-w-0 gap-[3px] overflow-x-auto *:not-last:after:absolute *:not-last:after:-bottom-px *:not-last:after:left-[calc(100%+1px)] *:not-last:after:h-px *:not-last:after:w-[3px] *:not-last:after:bg-border"
+      :style="fade.style.value"
     >
       <template v-for="tab in group.tabs" :key="tab.id">
         <GroupTerminalTab

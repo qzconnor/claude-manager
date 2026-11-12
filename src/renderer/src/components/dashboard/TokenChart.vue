@@ -13,9 +13,10 @@ import {
 import { formatTokens } from '@/lib/format'
 import TokenChartTooltip from './TokenChartTooltip.vue'
 
-const props = defineProps<{ days: DailyTokenStats[]; includeCacheRead: boolean }>()
+/** The tokens of each day by kind, or with `cost` what they cost at the API's prices. */
+const props = defineProps<{ days: DailyTokenStats[]; includeCacheRead: boolean; cost?: boolean }>()
 
-type SeriesKey = 'output' | 'input' | 'cacheCreation' | 'cacheRead'
+type SeriesKey = 'output' | 'input' | 'cacheCreation' | 'cacheRead' | 'cost'
 interface Row extends Record<SeriesKey, number> {
   index: number
   date: Date
@@ -30,14 +31,19 @@ const fullConfig = {
   ...baseConfig,
   cacheRead: { label: 'Cache-Read', color: 'var(--chart-4)' },
 } satisfies ChartConfig
+const costConfig = { cost: { label: 'Kosten', color: 'var(--chart-1)' } } satisfies ChartConfig
 
-// componentToString uses useId(), so both variants are created during setup.
+// componentToString uses useId(), so all variants are created during setup.
 const baseTooltip = componentToString(baseConfig, TokenChartTooltip)
 const fullTooltip = componentToString(fullConfig, TokenChartTooltip)
+const costTooltip = componentToString(costConfig, TokenChartTooltip, { cost: true })
 
-const config = computed<ChartConfig>(() => (props.includeCacheRead ? fullConfig : baseConfig))
+const config = computed<ChartConfig>(() => (props.cost ? costConfig : props.includeCacheRead ? fullConfig : baseConfig))
 const keys = computed(() => Object.keys(config.value) as SeriesKey[])
-const tooltip = computed(() => (props.includeCacheRead ? fullTooltip : baseTooltip))
+const tooltip = computed(() => (props.cost ? costTooltip : props.includeCacheRead ? fullTooltip : baseTooltip))
+// Axis ticks without needless zeros: 5 $, 2,5 $.
+const dollarTick = new Intl.NumberFormat('de', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 2 })
+const formatY = (value: number) => (props.cost ? dollarTick.format(value) : formatTokens(value))
 
 const rows = computed<Row[]>(() =>
   props.days.map((d, index) => {
@@ -49,6 +55,7 @@ const rows = computed<Row[]>(() =>
       input: d.input,
       cacheCreation: d.cacheCreation,
       cacheRead: d.cacheRead,
+      cost: d.cost,
     }
   }),
 )
@@ -90,7 +97,7 @@ const formatX = (index: number) => {
       <VisAxis
         type="y"
         :num-ticks="4"
-        :tick-format="(v: number) => formatTokens(v)"
+        :tick-format="formatY"
         :tick-line="false"
         :domain-line="false"
       />
@@ -98,6 +105,6 @@ const formatX = (index: number) => {
       <!-- VisCrosshair forwards raw attrs without camelizing them, so `yStacked` must stay camelCase. -->
       <ChartCrosshair :x="(d: Row) => d.index" :yStacked="y" :template="tooltip" color="#0000" />
     </VisXYContainer>
-    <ChartLegendContent />
+    <ChartLegendContent v-if="!cost" />
   </ChartContainer>
 </template>

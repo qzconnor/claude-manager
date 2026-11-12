@@ -8,6 +8,9 @@ import type { DropSide } from '@/lib/workspace'
 
 export type ConfirmOptions = DialogOptions
 
+/** Between two questions of the confirmation dialog: the first fades out (100 ms), the next one comes. */
+const NEXT_CONFIRM_MS = 150
+
 /** A tab dragged over the page: dropped now, it goes on `side` of the terminal `targetId`. */
 export interface TabDock {
   tabId: string
@@ -28,9 +31,12 @@ export interface GroupDock {
  */
 export type WorkspaceRequest =
   /** `move`: a folder that moves into the new workspace once it is made, with how many sessions the list shows in it. */
-  | { mode: 'create'; parent?: string | null; move?: { path: string; sessions: number } }
+  | { mode: 'create'; parent?: string | null; move?: { path: string } }
   | { mode: 'adopt'; path: string }
   | { mode: 'edit'; path: string }
+
+/** What `TabSetDialog` asks for: the open tabs saved as a new set, or the set `id` changed. */
+export type TabSetRequest = { mode: 'create' } | { mode: 'edit'; id: string }
 
 /** What `ThemeEditorDialog` edits: a theme of the user (`id`), or a new one that starts with the colors of `from`. */
 export type ThemeEditorRequest = { mode: 'edit'; id: string } | { mode: 'create'; from: ThemeContent }
@@ -59,6 +65,8 @@ export const useUiStore = defineStore('ui', () => {
   const settingsSearchRequest = ref(0)
   /** Incremented to give the keyboard back to the active terminal, e.g. after a popup closed. */
   const focusTerminalRequest = ref(0)
+  /** The command palette closes and gives the keyboard to the tab in front instead of the terminal. */
+  const focusTabsRequest = ref(false)
   /** A session the sessions page should select, with the search that found it. */
   const sessionToShow = ref<(SessionRef & { query: string }) | null>(null)
   /**
@@ -71,9 +79,14 @@ export const useUiStore = defineStore('ui', () => {
   const projectRequest = ref<{ workspace: string; name: string } | null>(null)
   /** Asks for a session's name (`SessionRenameDialog`): `name` is the one it has, null without one. */
   const sessionRenameRequest = ref<{ sessionId: string; title: string; name: string | null } | null>(null)
+  /** Asks for a session's tags (`SessionTagsDialog`), starting from those it has. */
+  const sessionTagsRequest = ref<{ sessionId: string; title: string; tags: string[] } | null>(null)
+  /** The tab of this terminal opens its name for editing, as from its menu (e.g. from the command palette). */
+  const tabRenameRequest = ref<string | null>(null)
   /** Asks for a worktree name before a session starts in one (`WorktreeDialog`); `cwd` null asks for the folder too. */
   const worktreeRequest = ref<{ accountId: string; cwd: string | null } | null>(null)
   const themeEditorRequest = ref<ThemeEditorRequest | null>(null)
+  const tabSetRequest = ref<TabSetRequest | null>(null)
   /**
    * Left and right edge (viewport px) of the selected tab in the title bar, as far as it is visible.
    * The page below opens its top border there, so the tab merges into it.
@@ -89,20 +102,36 @@ export const useUiStore = defineStore('ui', () => {
   const groupDock = ref<GroupDock | null>(null)
 
   const confirmState = ref<(ConfirmOptions & { open: boolean }) | null>(null)
-  let confirmResolve: ((value: boolean) => void) | null = null
+  /** The question shown, and those that wait for it: one never answers another one with No. */
+  let shownConfirm: ((value: boolean) => void) | null = null
+  const waitingConfirms: { options: ConfirmOptions; resolve: (value: boolean) => void }[] = []
 
+  function showNextConfirm(): void {
+    const next = waitingConfirms.shift()
+    if (!next) return
+    shownConfirm = next.resolve
+    confirmState.value = { ...next.options, open: true }
+  }
+
+  /**
+   * Asks in the confirmation dialog. While it asks something else (e.g. a question of the main process
+   * comes while „Session löschen?“ is open), this one waits its turn.
+   */
   function confirm(options: ConfirmOptions): Promise<boolean> {
-    confirmResolve?.(false)
-    confirmState.value = { ...options, open: true }
     return new Promise((resolve) => {
-      confirmResolve = resolve
+      waitingConfirms.push({ options, resolve })
+      if (!shownConfirm) showNextConfirm()
     })
   }
 
   function settleConfirm(result: boolean): void {
-    confirmResolve?.(result)
-    confirmResolve = null
+    const resolve = shownConfirm
+    if (!resolve) return
+    shownConfirm = null
     if (confirmState.value) confirmState.value = { ...confirmState.value, open: false }
+    resolve(result)
+    // Once the dialog has gone, so the next one is seen to be another question.
+    if (waitingConfirms.length > 0) setTimeout(() => shownConfirm ?? showNextConfirm(), NEXT_CONFIRM_MS)
   }
 
   return {
@@ -112,13 +141,17 @@ export const useUiStore = defineStore('ui', () => {
     searchRequest,
     settingsSearchRequest,
     focusTerminalRequest,
+    focusTabsRequest,
     sessionToShow,
     folderToShow,
     worktreeRequest,
     workspaceRequest,
     projectRequest,
     sessionRenameRequest,
+    sessionTagsRequest,
+    tabRenameRequest,
     themeEditorRequest,
+    tabSetRequest,
     selectedTabEdges,
     hoveredTab,
     draggingTab,

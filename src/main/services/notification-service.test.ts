@@ -43,7 +43,7 @@ vi.mock('../window/tray', () => ({ resourceIcon: (name: string) => `icon:${name}
 
 import { writeJsonAtomic } from '../lib/json-file'
 import type { AccountService } from './account-service'
-import { NotificationService, plainText } from './notification-service'
+import { NotificationService } from './notification-service'
 import type { SettingsService } from './settings-service'
 import type { TerminalService, TurnEnd } from './terminal-service'
 import type { UsageService } from './usage-service'
@@ -98,6 +98,9 @@ function account(id: string, name: string, kind: AccountKind = 'oauth', email: s
       rateLimitTier: null,
     },
     tokenExpiresAt: null,
+    loginEndsAt: null,
+    tokenSavedAt: null,
+    renewable: false,
     expectedLogin: null,
   }
 }
@@ -129,6 +132,7 @@ function terminal(overrides: Partial<TerminalInfo> = {}): TerminalInfo {
     authAccountId: 'a',
     sessionId: null,
     limit: null,
+    resume: null,
     context: null,
     busy: false,
     attention: null,
@@ -140,7 +144,9 @@ function terminal(overrides: Partial<TerminalInfo> = {}): TerminalInfo {
     mode: 'session',
     url: null,
     resumeSessionId: null,
+    args: [],
     status: 'running',
+    sleep: null,
     exitCode: null,
     pid: 1,
     createdAt: '2026-11-06T12:00:00.000Z',
@@ -150,6 +156,8 @@ function terminal(overrides: Partial<TerminalInfo> = {}): TerminalInfo {
     activity: null,
     subagents: 0,
     compacting: false,
+    turn: null,
+    prompt: null,
     ...overrides,
   }
 }
@@ -168,8 +176,9 @@ let settingsValue: { notifications: NotificationSettings }
 let terminalEvents: Emitter
 let usageEvents: Emitter
 let settingsEvents: Emitter
+let accountEvents: Emitter
 const setAttention = vi.fn<(id: string, kind: string | null) => void>()
-const open = { terminal: vi.fn<(id: string) => void>(), usage: vi.fn<() => void>() }
+const open = { terminal: vi.fn<(id: string) => void>(), usage: vi.fn<() => void>(), accounts: vi.fn<() => void>() }
 
 interface FakeWindow {
   isDestroyed(): boolean
@@ -193,7 +202,10 @@ function create(): NotificationService {
     },
     setAttention,
   } as unknown as TerminalService
-  const accounts = { list: () => accountList } as unknown as AccountService
+  const accounts = {
+    list: () => accountList,
+    on: (event: string, listener: Listener) => accountEvents.on(event, listener),
+  } as unknown as AccountService
   const usageService = {
     getAll: () => usageList,
     on: (event: string, listener: Listener) => usageEvents.on(event, listener),
@@ -232,6 +244,7 @@ beforeEach(async () => {
   terminalEvents = new Emitter()
   usageEvents = new Emitter()
   settingsEvents = new Emitter()
+  accountEvents = new Emitter()
   FakeNotification.created = []
   FakeNotification.supported = true
   win = { isDestroyed: () => false, isVisible: () => true, isMinimized: () => false, isFocused: () => false, flashFrame: vi.fn() }
@@ -243,6 +256,75 @@ afterEach(async () => {
   // Writes to one file are queued: this one ends after any the service started.
   await writeJsonAtomic(warnedFile(), null)
   await rm(dir, { recursive: true, force: true, maxRetries: 3 })
+})
+
+// --- logins that ended ---------------------------------------------------------
+
+describe('logins that ended', () => {
+  const dead = (id: string, name: string, savedAt = '2026-11-01T10:00:00.000Z'): Account => ({
+    ...account(id, name),
+    authState: 'dead',
+    tokenSavedAt: savedAt,
+  })
+
+  it('tells once about a login that can no longer be renewed, a click shows the accounts page', async () => {
+    accountList = [dead('a', 'Alpha'), account('b', 'Beta')]
+    await start()
+    expect(created().map((n) => n.options)).toMatchObject([
+      { title: 'Login abgelaufen', body: 'Alpha\nClaude Code kann den Login nicht mehr erneuern. Melde dich neu an.' },
+    ])
+    expect(created()[0].shown).toBe(true)
+    created()[0].handlers.get('click')!()
+    expect(open.accounts).toHaveBeenCalledOnce()
+
+    accountEvents.fire('changed')
+    expect(created()).toHaveLength(1)
+
+    // Signed in again: the notification goes.
+    accountList = [account('a', 'Alpha'), account('b', 'Beta')]
+    accountEvents.fire('changed')
+    expect(created()[0].closed).toBe(true)
+  })
+
+  it('remembers it across a restart, and tells again when the next login ends', async () => {
+    accountList = [dead('a', 'Alpha')]
+    await start()
+    await vi.waitFor(async () => expect(JSON.parse(await readFile(warnedFile(), 'utf8')).logins).toEqual({ a: '2026-11-01T10:00:00.000Z' }))
+    // The app starts again: only the new service hears of changes.
+    accountEvents = new Emitter()
+    await start()
+    expect(created()).toHaveLength(1)
+
+    // Signed in again, the end of the new login tells again.
+    accountList = [account('a', 'Alpha')]
+    accountEvents.fire('changed')
+    accountList = [dead('a', 'Alpha', '2026-11-05T10:00:00.000Z')]
+    accountEvents.fire('changed')
+    expect(titles()).toEqual(['Login abgelaufen', 'Login abgelaufen'])
+  })
+
+  it('tells only while wanted, and once switched on about a login that ended meanwhile', async () => {
+    settingsValue.notifications.onLoginLost = false
+    accountList = [dead('a', 'Alpha')]
+    await start()
+    expect(created()).toEqual([])
+    changeSettings({ onLoginLost: true })
+    expect(titles()).toEqual(['Login abgelaufen'])
+
+    accountList = [dead('a', 'Alpha'), dead('b', 'Beta')]
+    changeSettings({ toast: false })
+    accountEvents.fire('changed')
+    expect(created()).toHaveLength(1)
+  })
+
+  it('skips the standard account when another account has the same login', async () => {
+    accountList = [
+      { ...dead('system', 'Standard'), kind: 'system', identity: { ...account('x', 'x', 'system', 'me@example.com', 'org-1').identity } },
+      { ...dead('twin', 'Ich'), identity: { ...account('x', 'x', 'oauth', 'me@example.com', 'org-1').identity } },
+    ]
+    await start()
+    expect(created().map((n) => n.options.body.split('\n')[0])).toEqual(['Ich'])
+  })
 })
 
 // --- limit warnings ------------------------------------------------------------
@@ -390,7 +472,7 @@ describe('limit warnings', () => {
     usageList = [usage('a', { fiveHour: window('five_hour', '5h', 85) })]
     await start()
     await vi.waitFor(async () => {
-      expect(JSON.parse(await readFile(warnedFile(), 'utf8'))).toEqual({ version: 1, warned: { 'a\nfive_hour': RESET_TODAY } })
+      expect(JSON.parse(await readFile(warnedFile(), 'utf8'))).toEqual({ version: 1, warned: { 'a\nfive_hour': RESET_TODAY }, logins: {} })
     })
   })
 
@@ -412,7 +494,7 @@ describe('limit warnings', () => {
     await start()
     expect(created()).toEqual([])
     await vi.waitFor(async () => {
-      expect(JSON.parse(await readFile(warnedFile(), 'utf8'))).toEqual({ version: 1, warned: { 'a\nfive_hour': RESET_TODAY } })
+      expect(JSON.parse(await readFile(warnedFile(), 'utf8'))).toEqual({ version: 1, warned: { 'a\nfive_hour': RESET_TODAY }, logins: {} })
     })
   })
 
@@ -637,29 +719,6 @@ describe('finished turns', () => {
   })
 })
 
-describe('plainText', () => {
-  it('turns Markdown into one line of text', () => {
-    expect(
-      plainText('# Fertig\n\n- **Tests** laufen\n- Siehe [Doku](https://example.com) und `npm test`\n> Hinweis\n1. __eins__'),
-    ).toBe('Fertig Tests laufen Siehe Doku und npm test Hinweis eins')
-  })
-
-  it('leaves out code blocks, also an unclosed one', () => {
-    expect(plainText('Vorher\n```ts\nconst a = 1\n```\nNachher')).toBe('Vorher Nachher')
-    expect(plainText('Text\n```\nnot closed')).toBe('Text')
-  })
-
-  it('keeps the alt text of images', () => {
-    expect(plainText('![Diagramm](img.png)')).toBe('Diagramm')
-  })
-
-  it('is null without text', () => {
-    expect(plainText(null)).toBeNull()
-    expect(plainText('')).toBeNull()
-    expect(plainText('```\ncode only\n```')).toBeNull()
-  })
-})
-
 describe('automatic account switch', () => {
   /** Stands in for AutoSwitch: its events and which tabs it is switching. */
   function switcher(switching: string[] = []) {
@@ -691,6 +750,17 @@ describe('automatic account switch', () => {
     created()[0].handlers.get('click')?.()
     expect(open.terminal).toHaveBeenCalledWith('t2')
     expect(win?.flashFrame).toHaveBeenCalledWith(true)
+  })
+
+  it('tells that a session goes on with its own account after the reset', async () => {
+    accountList = [account('a', 'Alpha')]
+    const events = switcher()
+    const service = await start()
+    service.watchAutoSwitch(events as never)
+    events.fire('switched', atLimit(), terminal({ id: 't2' }), account('a', 'Alpha'))
+    expect(created().map((n) => n.options)).toMatchObject([
+      { title: 'Limit zurückgesetzt', body: 'Tab\nDie Session läuft mit „Alpha“ weiter' },
+    ])
   })
 
   it('tells when the switch failed', async () => {

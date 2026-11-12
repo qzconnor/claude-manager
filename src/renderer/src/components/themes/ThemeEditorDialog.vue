@@ -32,6 +32,7 @@ import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
 import { useThemeActions } from '@/composables/useThemeActions'
 import { toastError } from '@/lib/errors'
+import { fileManagerLabel } from '@/lib/platform'
 import { containsTerms, searchText } from '@/lib/search'
 import { useSettingsStore } from '@/stores/settings'
 import { useThemesStore } from '@/stores/themes'
@@ -305,7 +306,7 @@ async function openJson() {
 }
 
 async function showInFolder() {
-  const id = await savedId('Das Zeigen im Explorer')
+  const id = await savedId(`Das Zeigen im ${fileManagerLabel}`)
   if (id) await actions.showFile(id)
 }
 
@@ -346,7 +347,7 @@ function resetAll() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" class="w-56">
             <DropdownMenuItem @select="openJson"><FileJsonIcon /> Als JSON bearbeiten</DropdownMenuItem>
-            <DropdownMenuItem @select="showInFolder"><FolderOpenIcon /> Im Explorer zeigen</DropdownMenuItem>
+            <DropdownMenuItem @select="showInFolder"><FolderOpenIcon /> Im {{ fileManagerLabel }} zeigen</DropdownMenuItem>
             <DropdownMenuItem @select="exportFile"><ShareIcon /> Exportieren…</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem :disabled="snapshot({ ...draft, name: original.name }) === snapshot(original)" @select="resetAll">

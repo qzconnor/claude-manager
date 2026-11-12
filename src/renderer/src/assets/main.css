@@ -158,6 +158,15 @@
   color: var(--primary);
 }
 
+/* Find in a session's history (useDomFind): every match, the current one stronger. */
+::highlight(find-match) {
+  background-color: color-mix(in oklch, var(--primary) 28%, transparent);
+}
+::highlight(find-current) {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
 /* Claude's click in a browser page: a soft ripple that widens from the pointer's tip and fades. */
 @keyframes browser-click {
   from {
@@ -517,16 +526,19 @@
     border-radius: calc(var(--radius) * 0.5);
     background: var(--muted);
   }
+  /* In the history in the terminal's colours and font (`--code-*`), elsewhere on the page's. */
   .markdown pre {
     padding: 0.75em 1em;
     border-radius: var(--radius);
-    background: color-mix(in oklab, var(--background) 70%, transparent);
-    border: 1px solid var(--border);
+    background: var(--code-bg, color-mix(in oklab, var(--background) 70%, transparent));
+    color: var(--code-fg, inherit);
+    border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
     overflow-x: auto;
   }
   .markdown pre code {
     padding: 0;
     background: transparent;
+    font-family: var(--code-font, var(--font-mono));
     font-size: 0.85em;
   }
   .markdown blockquote {

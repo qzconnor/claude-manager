@@ -115,7 +115,7 @@ async function submit() {
                     <Badge
                       v-if="entry.active"
                       variant="secondary"
-                      v-tooltip="'cswap hat ~/.claude gerade auf diesen Account geschaltet (Standard-Account).'"
+                      v-tooltip="'cswap hat ~/.claude (Account „Standard“) gerade auf diesen Account geschaltet.'"
                     >
                       Aktiv
                     </Badge>

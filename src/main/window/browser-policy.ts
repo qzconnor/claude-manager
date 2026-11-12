@@ -10,6 +10,33 @@ import type { ShortcutKey } from '@shared/shortcuts'
 export const ALLOWED_PERMISSIONS: ReadonlySet<string> = new Set(['clipboard-sanitized-write'])
 
 /**
+ * Like Chrome, a page that shows one dialog (alert, confirm, prompt) after another gets a box on the
+ * next one to stop them: otherwise a loop of them keeps the app from being used.
+ */
+export const SAFE_DIALOGS = { safeDialogs: true, safeDialogsMessage: 'Keine weiteren Dialoge dieser Seite zeigen' } as const
+
+/**
+ * Tabs and popups a page may open in `OPEN_BURST_MS`: links opened by hand or by Claude stay well
+ * below it, a page that opens them in a loop doesn't.
+ */
+export const MAX_OPENS = 8
+export const OPEN_BURST_MS = 10_000
+/** Popup windows a page may have open at once. */
+export const MAX_POPUPS = 4
+
+/** Counts what a page opens: true while it may open another, false once it opened too many at once. */
+export function openGate(now: () => number = Date.now): () => boolean {
+  let opens: number[] = []
+  return () => {
+    const at = now()
+    opens = opens.filter((before) => at - before < OPEN_BURST_MS)
+    if (opens.length >= MAX_OPENS) return false
+    opens.push(at)
+    return true
+  }
+}
+
+/**
  * The settings of every `<webview>` before it starts: no Node.js, not the app's preload, the browser's
  * own profile. False when its first address is none the browser may show (the view is then refused).
  */
@@ -23,6 +50,7 @@ export function hardenWebview(webPreferences: WebPreferences, params: Record<str
   webPreferences.webSecurity = true
   webPreferences.allowRunningInsecureContent = false
   webPreferences.experimentalFeatures = false
+  Object.assign(webPreferences, SAFE_DIALOGS)
   // A page without a background of its own is white (or dark with color-scheme: dark) as in
   // Chrome, on screen and in screenshots; a guest is transparent by default.
   webPreferences.transparent = false
@@ -95,13 +123,15 @@ export function faviconType(bytes: Uint8Array): string | null {
  * `report.pdf`, then `report (1).pdf`, `report (2).pdf` … Names that are no file name become `download`.
  */
 export function uniqueFileName(name: string, taken: (candidate: string) => boolean): string {
-  // Only the last part of a path, without characters Windows doesn't allow in names.
-  const base =
+  // Only the last part of a path (`/` or `\`), without characters Windows doesn't allow in names.
+  const cleaned =
     name
-      .split(/[\/]/)
+      .split(/[\\/]/)
       .pop()!
       .replace(/[<>:"|?*\u0000-\u001f]/g, '_')
       .replace(/^[\s.]+|[\s.]+$/g, '') || 'download'
+  // Names of devices (`CON`, `NUL.txt`, `COM1` …) don't name a file on Windows.
+  const base = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\.|$)/i.test(cleaned) ? `_${cleaned}` : cleaned
   if (!taken(base)) return base
   const extension = /(\.tar)?\.[^.\s]{1,10}$/i.exec(base)?.[0] ?? ''
   const stem = base.slice(0, base.length - extension.length) || 'download'

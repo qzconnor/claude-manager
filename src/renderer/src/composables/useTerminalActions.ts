@@ -1,4 +1,5 @@
 import type { TerminalInfo } from '@shared/types'
+import { toast } from 'vue-sonner'
 import { attempt } from '@/lib/errors'
 import { BROWSER_TAB, diffOfTab, pageOfTab } from '@/lib/workspace'
 import { useSettingsStore } from '@/stores/settings'
@@ -54,6 +55,15 @@ export function useTerminalActions() {
     await attempt(() => terminals.closeTab(tab.id), 'Tab konnte nicht geschlossen werden')
   }
 
+  /** In one tab bar, closes the other tabs, after one question for all their terminals that still run. */
+  async function closeOtherTabs(keep: TerminalTab): Promise<void> {
+    const others = terminals.tabs.filter((tab) => tab.id !== keep.id)
+    if (others.length === 0) return
+    if (others.length === 1) return closeTab(others[0])
+    if (!(await confirmClosing(others.flatMap((tab) => tab.panes), 'Andere Tabs schließen?'))) return
+    await attempt(() => Promise.all(others.map((tab) => terminals.closeTab(tab.id))), 'Tabs konnten nicht geschlossen werden')
+  }
+
   /** With the tabs in groups, closes several tabs (terminals and pages), after one question for all terminals that still run. */
   async function closeTabs(ids: string[]): Promise<void> {
     if (ids.length === 1) return closeTerminal(ids[0])
@@ -80,9 +90,40 @@ export function useTerminalActions() {
     await attempt(() => terminals.kill(id), 'Prozess konnte nicht beendet werden')
   }
 
+  /** Starts the tab again; a running process ends first, after a question. */
   async function restartTerminal(id: string): Promise<void> {
-    await attempt(() => terminals.restart(id), 'Neustart fehlgeschlagen')
+    const terminal = terminals.terminals.find((t) => t.id === id)
+    if (!terminal || terminal.mode === 'browser') return
+    const working = terminal.busy || terminal.compacting || terminal.subagents > 0
+    if (terminal.status === 'running' && (working || settings.settings.general.confirmCloseRunning)) {
+      const session = terminal.mode === 'session'
+      const ok = await ui.confirm({
+        title: session ? 'Session neu starten?' : 'Terminal neu starten?',
+        description: session
+          ? `${working ? 'Claude arbeitet gerade, die laufende Antwort bricht ab. ' : ''}„${terminal.title}“ wird beendet und geht danach mit ihrem Verlauf weiter. Was im Eingabefeld steht und nicht gesendet ist, geht verloren.`
+          : `„${terminal.title}“ läuft noch. Der Prozess wird beendet und startet neu.`,
+        confirmText: 'Neu starten',
+        destructive: working,
+      })
+      if (!ok) return
+    }
+    await attempt(() => terminals.restartSession(id), 'Neustart fehlgeschlagen')
   }
 
-  return { closeTerminal, closeTab, closeTabs, closeGroup, stopTerminal, restartTerminal }
+  /** Puts Claude's last answer in the session, as Markdown, on the clipboard. */
+  async function copyLastAnswer(id: string): Promise<void> {
+    const answer = await attempt(() => window.api.terminals.lastAnswer(id), 'Antwort konnte nicht gelesen werden')
+    if (answer === undefined) return
+    if (answer === null) {
+      toast.info('Noch keine Antwort', { description: 'Sobald Claude eine Antwort fertig hat, lässt sie sich kopieren.' })
+      return
+    }
+    const copied = await attempt(async () => {
+      await navigator.clipboard.writeText(answer)
+      return true
+    }, 'Konnte nicht kopiert werden')
+    if (copied) toast.success('Antwort kopiert')
+  }
+
+  return { closeTerminal, closeTab, closeOtherTabs, closeTabs, closeGroup, stopTerminal, restartTerminal, copyLastAnswer }
 }

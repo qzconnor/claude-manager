@@ -1,5 +1,44 @@
 import { describe, expect, it } from 'vitest'
-import { addressOf, addressToUrl, BLANK_PAGE, emulationLabels, fallbackTitle, isBrowsableUrl, NO_EMULATION, routeLabel } from './browser'
+import {
+  addressOf,
+  addressToUrl,
+  BLANK_PAGE,
+  emulationLabels,
+  fallbackTitle,
+  isBrowsableUrl,
+  NO_EMULATION,
+  routeLabel,
+  trimLog,
+} from './browser'
+
+describe('trimLog', () => {
+  const lines = (spec: string) => [...spec].map((c, i) => ({ id: i, sensitive: c === 's' }))
+  const ids = (log: { id: number }[]) => log.map((line) => line.id)
+
+  it('drops the oldest lines beyond the limit', () => {
+    const log = lines('pppp')
+    trimLog(log, 2)
+    expect(ids(log)).toEqual([2, 3])
+  })
+
+  it('keeps the sensitive lines and drops the plain ones first', () => {
+    const log = lines('spsps')
+    trimLog(log, 3)
+    expect(ids(log)).toEqual([0, 2, 4])
+  })
+
+  it('drops the oldest sensitive lines when nothing else is left', () => {
+    const log = lines('sss')
+    trimLog(log, 2)
+    expect(ids(log)).toEqual([1, 2])
+  })
+
+  it('leaves a log within the limit alone', () => {
+    const log = lines('ps')
+    trimLog(log, 2)
+    expect(ids(log)).toEqual([0, 1])
+  })
+})
 
 describe('addressToUrl', () => {
   it('takes addresses as typed and adds the scheme when it is missing', () => {

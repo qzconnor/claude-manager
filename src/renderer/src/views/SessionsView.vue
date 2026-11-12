@@ -14,6 +14,7 @@ import {
   MinusIcon,
   RefreshCwIcon,
   SearchIcon,
+  TagIcon,
   Trash2Icon,
   TriangleAlertIcon,
   UsersIcon,
@@ -22,12 +23,15 @@ import {
 import { refDebounced, useEventListener } from '@vueuse/core'
 import { computed, nextTick, onActivated, onMounted, ref, watch } from 'vue'
 import { SYSTEM_ACCOUNT_ID } from '@shared/defaults'
+import { allTags, hasTag, tagKey } from '@shared/session-marks'
 import type { SessionSummary } from '@shared/types'
 import { searchTerms } from '@shared/utils'
 import AccountDot from '@/components/common/AccountDot.vue'
 import SessionDetailPanel from '@/components/sessions/SessionDetailPanel.vue'
 import SessionFilterChip, { type FilterOption } from '@/components/sessions/SessionFilterChip.vue'
+import SessionPinnedSection from '@/components/sessions/SessionPinnedSection.vue'
 import SessionRootSection from '@/components/sessions/SessionRootSection.vue'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -44,20 +48,27 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useClock } from '@/composables/useClock'
+import { useListKeys } from '@/composables/useListKeys'
 import { useSectionDrag } from '@/composables/useSectionDrag'
 import { useSessionDetail, type SessionRef } from '@/composables/useSessionDetail'
+import { provideSessionPages } from '@/composables/useSessionPages'
+import { usePauseWhileHidden } from '@/composables/usePauseWhileHidden'
 import { useSessionRemoval } from '@/composables/useSessionRemoval'
 import { sessionKey, useSessionSearch } from '@/composables/useSessionSearch'
 import { attempt } from '@/lib/errors'
 import { formatBytes } from '@/lib/format'
 import { containsTerms, searchText } from '@/lib/search'
+import { setChecked, toggleChecked } from '@/lib/session-selection'
+import { readSessionsView, saveSessionsView } from '@/lib/sessions-view'
 import {
   allFolders,
   buildSessionTree,
   FOLDERS_SECTION_ID,
   opensByDefault,
+  PINNED_SECTION_ID,
   placeFolder,
   placeSession,
+  sessionsInView,
   type Placement,
   type SessionProject,
   type SessionRoot,
@@ -80,6 +91,9 @@ const TOOL_BUTTON = 'size-[32px] rounded-lg border-0 bg-transparent p-0 ring-1 r
 const TOOL_BUTTON_PRESSED =
   'bg-primary/10 ring-primary/40 hover:bg-primary/15 dark:bg-primary/10 dark:ring-primary/30 dark:hover:bg-primary/15'
 
+// Hidden behind the terminals, the list doesn't follow each change of a running session (every few
+// seconds), nor does the selected history load again: both catch up once the page is back.
+const pageShown = usePauseWhileHidden()
 const sessions = useSessionsStore()
 const workspaces = useWorkspacesStore()
 const accounts = useAccountsStore()
@@ -87,7 +101,8 @@ const settings = useSettingsStore()
 const app = useAppStore()
 const ui = useUiStore()
 const removal = useSessionRemoval()
-const now = useClock(60_000)
+// Every 30 seconds: `formatRelative` takes a time up to 45 seconds ahead of it as just now.
+const now = useClock(30_000)
 
 const DAY_MS = 86_400_000
 /** By the last activity. `older`: not touched for that long, e.g. to clean up. */
@@ -105,8 +120,6 @@ const AGE_FILTERS = [
     { value: 'older-365', label: 'Älter als 1 Jahr', days: 365, older: true },
   ],
 ]
-const ageFilter = ref('all')
-const age = computed(() => AGE_FILTERS.flat().find((f) => f.value === ageFilter.value) ?? null)
 
 const KB = 1024
 const MB = 1024 * KB
@@ -123,17 +136,41 @@ const SIZE_FILTERS = [
     { value: 'under-10k', label: 'Kleiner als 10 KB', short: 'Unter 10 KB', bytes: 10 * KB, larger: false },
   ],
 ]
-const sizeFilter = ref('all')
+const SORTS: { value: SessionSort; label: string }[] = [
+  { value: 'recent', label: 'Zuletzt aktiv' },
+  { value: 'name', label: 'Name' },
+  { value: 'size', label: 'Größe' },
+  { value: 'count', label: 'Anzahl Sessions' },
+]
+
+// Sort and filters as they were left, also after a restart (kept below, see `saveSessionsView`).
+const kept = readSessionsView({
+  sorts: SORTS.map((s) => s.value),
+  ages: AGE_FILTERS.flat().map((f) => f.value),
+  sizes: SIZE_FILTERS.flat().map((f) => f.value),
+})
+
+const ageFilter = ref(kept.age)
+const age = computed(() => AGE_FILTERS.flat().find((f) => f.value === ageFilter.value) ?? null)
+const sizeFilter = ref(kept.size)
 const size = computed(() => SIZE_FILTERS.flat().find((f) => f.value === sizeFilter.value) ?? null)
 
-const accountFilter = ref('all')
+const accountFilter = ref(kept.account)
+// A kept account that is gone shows all again.
+watch(
+  () => accounts.loaded && accountFilter.value !== 'all' && !accounts.get(accountFilter.value),
+  (gone) => {
+    if (gone) accountFilter.value = 'all'
+  },
+  { immediate: true },
+)
 
 /**
  * With several accounts the own ones come first and the standard account (`~/.claude`) is hidden
  * until asked for; chosen in the account filter, it shows anyway.
  */
 const severalAccounts = computed(() => accounts.accounts.length > 1)
-const showStandard = ref(false)
+const showStandard = ref(kept.showStandard)
 const standardHidden = computed(
   () => severalAccounts.value && !showStandard.value && accountFilter.value !== SYSTEM_ACCOUNT_ID,
 )
@@ -147,31 +184,52 @@ const accountOptions = computed<FilterOption[][]>(() => [
   accountOrder.value.map((a) => ({ value: a.id, label: a.name, color: a.color })),
 ])
 
-const SORTS: { value: SessionSort; label: string }[] = [
-  { value: 'recent', label: 'Zuletzt aktiv' },
-  { value: 'name', label: 'Name' },
-  { value: 'size', label: 'Größe' },
-  { value: 'count', label: 'Anzahl Sessions' },
-]
-const sort = ref<SessionSort>('recent')
+/** By a tag the user gave sessions: `#` and the tag (a tag never starts with one), or `all`. */
+const tagFilter = ref(kept.tag)
+const tag = computed(() => (tagFilter.value === 'all' ? null : tagFilter.value.slice(1)))
+const tagOptions = computed<FilterOption[][]>(() => {
+  const tags = allTags(sessions.groups.flatMap((g) => g.sessions))
+  return tags.length ? [tags.map((t) => ({ value: `#${t}`, label: t }))] : []
+})
+// A kept tag no session has any more shows all again.
+watch(
+  () => sessions.loaded && tag.value !== null && !tagOptions.value[0]?.some((o) => tagKey(o.label) === tagKey(tag.value!)),
+  (gone) => {
+    if (gone) tagFilter.value = 'all'
+  },
+  { immediate: true },
+)
+
+const sort = ref<SessionSort>(kept.sort)
+watch([sort, accountFilter, ageFilter, sizeFilter, showStandard, tagFilter], () =>
+  saveSessionsView({
+    sort: sort.value,
+    account: accountFilter.value,
+    age: ageFilter.value,
+    size: sizeFilter.value,
+    showStandard: showStandard.value,
+    tag: tagFilter.value,
+  }),
+)
 const sortLabel = computed(() => SORTS.find((s) => s.value === sort.value)?.label)
 
 const search = ref('')
 const query = refDebounced(search, 150)
 const terms = computed(() => searchTerms(query.value))
 /** Matches in the conversations; titles and prompts are searched right here. */
-const { hits } = useSessionSearch(query)
+const { hits, searching, error: searchError } = useSessionSearch(query)
 const selected = ref<SessionRef | null>(null)
-const { detail, summary, loading, error } = useSessionDetail(selected)
+const { detail, summary, loading, loadingOlder, error, loadOlder } = useSessionDetail(selected)
 
-/** Searching or filtering by age or size: then the folders with matches open by themselves. */
-const filtering = computed(() => terms.value.length > 0 || age.value !== null || size.value !== null)
-const filtersActive = computed(() => accountFilter.value !== 'all' || age.value !== null || size.value !== null)
+/** Searching or filtering by age, size or tag: then the folders with matches open by themselves. */
+const filtering = computed(() => terms.value.length > 0 || age.value !== null || size.value !== null || tag.value !== null)
+const filtersActive = computed(() => accountFilter.value !== 'all' || age.value !== null || size.value !== null || tag.value !== null)
 
 function resetFilters() {
   accountFilter.value = 'all'
   ageFilter.value = 'all'
   sizeFilter.value = 'all'
+  tagFilter.value = 'all'
 }
 
 function onSearchEscape(event: KeyboardEvent) {
@@ -194,7 +252,7 @@ function inSize(session: SessionSummary): boolean {
 }
 
 function matches(session: SessionSummary): boolean {
-  if (!inAge(session) || !inSize(session)) return false
+  if (!inAge(session) || !inSize(session) || (tag.value !== null && !hasTag(session.tags, tag.value))) return false
   if (terms.value.length === 0 || hits.value.has(sessionKey(session.accountId, session.id))) return true
   const text = searchText(
     session.title,
@@ -204,6 +262,7 @@ function matches(session: SessionSummary): boolean {
     session.gitBranch,
     session.worktree?.name,
     session.id,
+    ...session.tags,
   )
   return containsTerms(text, terms.value)
 }
@@ -219,6 +278,9 @@ const visibleSessions = computed(() =>
     .filter((g) => !(standardHidden.value && g.accountId === SYSTEM_ACCOUNT_ID))
     .flatMap((g) => g.sessions.filter(matches)),
 )
+
+/** The pinned sessions the filters let through, on top of the list, the latest first. */
+const pinned = computed(() => visibleSessions.value.filter((s) => s.pinned).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)))
 
 /** Matching sessions of the standard account while it is hidden. */
 const hiddenStandardCount = computed(() => {
@@ -282,8 +344,12 @@ const totalBytes = computed(() => shown.value.reduce((sum, s) => sum + s.sizeByt
 const folderCount = computed(() => projects.value.filter((p) => p.own.length > 0).length)
 
 const emptyMessage = computed(() => {
-  const filtered = age.value !== null || size.value !== null
-  if (query.value) return `Keine Session passt zu „${query.value}“${filtered ? ' und den Filtern' : ''}.`
+  const filtered = age.value !== null || size.value !== null || tag.value !== null
+  if (query.value) {
+    // The conversations may still bring some.
+    if (searching.value) return 'Suche in den Verläufen…'
+    return `Keine Session passt zu „${query.value}“${filtered ? ' und den Filtern' : ''}.`
+  }
   return filtered ? 'Keine Session passt zu den Filtern.' : null
 })
 
@@ -302,7 +368,7 @@ function toggled(set: Set<string>, key: string, on: boolean): Set<string> {
 const flipped = ref(new Set<string>())
 /** While searching or filtering every section and folder with matches is open, except those closed meanwhile. */
 const closedWhileFiltering = ref(new Set<string>())
-watch([query, ageFilter, sizeFilter], () => {
+watch([query, ageFilter, sizeFilter, tagFilter], () => {
   closedWhileFiltering.value = new Set()
 })
 
@@ -383,13 +449,13 @@ const allState = computed(() => {
   return count === shown.value.length ? true : 'indeterminate'
 })
 
-/** The sessions one can see, top to bottom: a Shift+click range leaves out closed folders. */
-const visibleOrder = computed(() => {
-  // As a folder shows them: the folders in it first, then its own sessions.
-  const inFolder = (p: SessionProject): SessionSummary[] =>
-    openProjects.value.has(p.id) ? [...p.folders.flatMap(inFolder), ...p.own] : []
-  return sections.value.filter((s) => isOpen(s.id)).flatMap((s) => [...s.projects.flatMap(inFolder), ...s.sessions])
-})
+/** How far each folder shows its sessions („Weitere … anzeigen“), by id. */
+const pages = provideSessionPages()
+/**
+ * The sessions one can see, top to bottom: a Shift+click range leaves out closed folders and the
+ * sessions behind „Weitere … anzeigen“. „Alle auswählen“ takes all the filters show: the bar counts them.
+ */
+const visibleOrder = computed(() => sessionsInView(sections.value, isOpen, openProjects.value, pages))
 
 function startSelecting() {
   selecting.value = true
@@ -405,28 +471,21 @@ function stopSelecting() {
 
 function toggle(session: SessionSummary, range: boolean) {
   if (!selecting.value) startSelecting()
-  const key = sessionKey(session.accountId, session.id)
-  const next = new Set(checked.value)
-  const keys = range && anchor ? visibleOrder.value.map((s) => sessionKey(s.accountId, s.id)) : []
-  const from = anchor ? keys.indexOf(anchor) : -1
-  const to = keys.indexOf(key)
-  if (from !== -1 && to !== -1) {
-    for (const k of keys.slice(Math.min(from, to), Math.max(from, to) + 1)) next.add(k)
-  } else if (next.has(key)) next.delete(key)
-  else next.add(key)
-  anchor = key
-  checked.value = next
+  // The order of what one can see only matters for a range.
+  const order = range && anchor ? visibleOrder.value.map((s) => sessionKey(s.accountId, s.id)) : []
+  const next = toggleChecked({ keys: checked.value, anchor }, sessionKey(session.accountId, session.id), range, order)
+  checked.value = next.keys
+  anchor = next.anchor
 }
 
 /** Checks or unchecks all sessions of a folder. */
 function checkProject(project: SessionProject, value: boolean) {
   if (!selecting.value) startSelecting()
-  const next = new Set(checked.value)
-  for (const s of project.sessions) {
-    if (value) next.add(sessionKey(s.accountId, s.id))
-    else next.delete(sessionKey(s.accountId, s.id))
-  }
-  checked.value = next
+  checked.value = setChecked(
+    checked.value,
+    project.sessions.map((s) => sessionKey(s.accountId, s.id)),
+    value,
+  )
   anchor = null
 }
 
@@ -440,6 +499,16 @@ async function removeChecked() {
 }
 
 function onKeydown(event: KeyboardEvent) {
+  // Ctrl+F in the list searches the list; in the history it searches the history (TranscriptView).
+  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'f') {
+    event.preventDefault()
+    const field = document.getElementById('sessions-search')
+    if (field instanceof HTMLInputElement) {
+      field.focus()
+      field.select()
+    }
+    return
+  }
   if (!selecting.value) return
   if (event.key === 'Escape') {
     event.preventDefault()
@@ -457,6 +526,13 @@ function select(session: SessionSummary) {
 }
 
 const list = ref<HTMLElement | null>(null)
+// Arrows, Home, End and the menu key in the list, as in a tree.
+const listKeys = useListKeys(list)
+
+/** ↓ in the search field goes on to the first row of the list. */
+function onSearchDown(event: KeyboardEvent) {
+  if (listKeys.focusFirst()) event.preventDefault()
+}
 
 // Workspaces are dragged by their header; the order is saved (`workspaces.json`).
 useSectionDrag(list, { onDrop: moveWorkspace })
@@ -550,7 +626,9 @@ watch(() => shownFolders.value.join('\n'), () => void checkFolders(), { immediat
 // A project gone from its workspace stays in the list while sessions name it: check it then too.
 watch(() => workspaces.workspaces, () => void checkFolders())
 // Moved or deleted in Explorer meanwhile: shown as gone once the window is back.
-useEventListener(window, 'focus', () => void checkFolders())
+useEventListener(window, 'focus', () => {
+  if (pageShown.value) void checkFolders()
+})
 
 const load = () => attempt(() => Promise.all([sessions.load(), workspaces.load()]), 'Sessions konnten nicht geladen werden')
 /**
@@ -577,13 +655,17 @@ onActivated(() => {
         <div class="flex items-center gap-2">
           <InputGroup class="h-[32px] flex-1">
             <InputGroupAddon>
-              <SearchIcon />
+              <!-- While the conversations are searched. -->
+              <Spinner v-if="searching" />
+              <SearchIcon v-else />
             </InputGroupAddon>
             <InputGroupInput
+              id="sessions-search"
               v-model="search"
               placeholder="Sessions durchsuchen…"
               spellcheck="false"
               @keydown.esc="onSearchEscape"
+              @keydown.down="onSearchDown"
             />
             <InputGroupAddon v-if="search" align="inline-end">
               <InputGroupButton size="icon-xs" class="size-[24px]" aria-label="Suche leeren" @click="search = ''">
@@ -624,7 +706,7 @@ onActivated(() => {
           </Tooltip>
         </div>
 
-        <div class="flex min-w-0 items-center gap-1.5">
+        <div class="flex min-w-0 flex-wrap items-center gap-1.5">
           <SessionFilterChip
             v-if="accounts.accounts.length > 1"
             v-model="accountFilter"
@@ -646,6 +728,14 @@ onActivated(() => {
             :groups="AGE_FILTERS"
           />
           <SessionFilterChip v-model="sizeFilter" :icon="HardDriveIcon" name="Größe" all-label="Jede Größe" :groups="SIZE_FILTERS" />
+          <SessionFilterChip
+            v-if="tagOptions.length || tag"
+            v-model="tagFilter"
+            :icon="TagIcon"
+            name="Tag"
+            all-label="Alle Tags"
+            :groups="tagOptions"
+          />
           <Tooltip v-if="filtersActive">
             <TooltipTrigger as-child>
               <Button variant="ghost" size="icon-sm" class="text-muted-foreground" aria-label="Filter zurücksetzen" @click="resetFilters">
@@ -697,10 +787,32 @@ onActivated(() => {
 
       <!-- Room for the scrollbar is kept, so the rows don't move when it comes; the padding evens out its width. -->
       <div ref="list" class="min-h-0 flex-1 overflow-y-auto py-2 pr-0.5 pl-2.5 [scrollbar-gutter:stable]">
-        <div v-if="!sessions.loaded" class="flex flex-col gap-3 p-2">
+        <div v-if="!sessions.loaded && sessions.error" class="p-2">
+          <Alert variant="destructive">
+            <TriangleAlertIcon />
+            <AlertTitle>Sessions konnten nicht geladen werden</AlertTitle>
+            <AlertDescription class="flex flex-col items-start gap-2">
+              <span>{{ sessions.error }}</span>
+              <Button variant="outline" size="sm" :disabled="sessions.loading" @click="reload">
+                <Spinner v-if="sessions.loading" />
+                Erneut versuchen
+              </Button>
+            </AlertDescription>
+          </Alert>
+        </div>
+        <div v-else-if="!sessions.loaded" class="flex flex-col gap-3 p-2">
           <Skeleton v-for="i in 8" :key="i" class="h-8 w-full" />
         </div>
         <div v-else class="flex flex-col gap-3">
+          <p v-if="searchError" class="flex items-center gap-2 px-3 py-1 text-xs text-destructive">
+            <TriangleAlertIcon class="size-3.5 shrink-0" />
+            <span class="min-w-0">Suche in den Verläufen fehlgeschlagen, gefunden wird nur in Titeln und Prompts: {{ searchError }}</span>
+          </p>
+          <!-- Reading again failed: the list stays as it was. -->
+          <p v-if="sessions.error" class="flex items-center gap-2 px-3 py-1 text-xs text-destructive">
+            <TriangleAlertIcon class="size-3.5 shrink-0" />
+            <span class="min-w-0">Neu einlesen fehlgeschlagen: {{ sessions.error }}</span>
+          </p>
           <p
             v-for="failure in accountErrors"
             :key="failure.accountId"
@@ -709,6 +821,20 @@ onActivated(() => {
             <TriangleAlertIcon class="size-3.5 shrink-0" />
             <span class="min-w-0">{{ failure.name }}: {{ failure.error }}</span>
           </p>
+          <SessionPinnedSection
+            v-if="pinned.length"
+            :sessions="pinned"
+            :open="isOpen(PINNED_SECTION_ID)"
+            :selected="selected"
+            :now="now"
+            :hits="hits"
+            :terms="terms"
+            :selecting="selecting"
+            :checked="checked"
+            @update:open="setOpen(PINNED_SECTION_ID, $event)"
+            @select="select"
+            @toggle="toggle"
+          />
           <SessionRootSection
             v-for="section in sections"
             :key="section.id"
@@ -797,7 +923,15 @@ onActivated(() => {
     </aside>
 
     <section class="min-w-0 flex-1">
-      <SessionDetailPanel v-if="summary" :summary="summary" :detail="detail" :loading="loading" :error="error" />
+      <SessionDetailPanel
+        v-if="summary"
+        :summary="summary"
+        :detail="detail"
+        :loading="loading"
+        :loading-older="loadingOlder"
+        :error="error"
+        @load-older="loadOlder"
+      />
       <Empty v-else class="size-full">
         <EmptyHeader>
           <EmptyMedia variant="icon">

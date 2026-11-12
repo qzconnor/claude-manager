@@ -27,7 +27,7 @@ import { useLauncher } from '@/composables/useLauncher'
 import { formatArgs, parseArgs } from '@/lib/args'
 import { errorMessage } from '@/lib/errors'
 import { accountKindLabel } from '@/lib/format'
-import { secretStore } from '@/lib/platform'
+import { isWindows, secretStore } from '@/lib/platform'
 import { useAccountsStore } from '@/stores/accounts'
 
 type CreatableKind = Exclude<AccountKind, 'system'>
@@ -266,7 +266,7 @@ async function submit() {
                 </Field>
                 <Field v-if="form.useCustomDir" :data-invalid="!!dirError || undefined">
                   <FieldLabel for="account-config-dir">Konfigurationsordner</FieldLabel>
-                  <DirectoryInput id="account-config-dir" v-model="form.configDir" placeholder="C:\Users\…\.claude-work" />
+                  <DirectoryInput id="account-config-dir" v-model="form.configDir" :placeholder="isWindows ? 'C:\\Users\\…\\.claude-work' : '/home/…/.claude-work'" />
                   <FieldError v-if="dirError">{{ dirError }}</FieldError>
                 </Field>
                 <Field v-else orientation="horizontal">

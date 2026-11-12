@@ -398,7 +398,10 @@ function createEngine(props: MessageScrollerProviderProps) {
   let spacerHeight = 0
   let mode: Mode = autoScroll() ? 'following-bottom' : 'free-scrolling'
   let streamingTurn: HTMLElement | null = null
+  // The first message and where it was among the children: other children (a line between days, a
+  // button to load older messages) come before it too, and only a message that moved down was prepended to.
   let firstItem: HTMLElement | null = null
+  let firstItemIndex = -1
   let itemCount = 0
   let lastScrollTop = 0
   let defaultScrollPositionApplied = false
@@ -714,6 +717,7 @@ function createEngine(props: MessageScrollerProviderProps) {
     children: HTMLElement[],
     previousCount: number,
     previousFirst: HTMLElement | null,
+    previousFirstIndex: number,
   ) {
     if (flushPendingScrollToMessage())
       return
@@ -729,7 +733,7 @@ function createEngine(props: MessageScrollerProviderProps) {
       return
     }
     const previousIndex = previousFirst ? children.indexOf(previousFirst) : -1
-    if (preserveScrollOnPrepend && previousIndex > 0) {
+    if (preserveScrollOnPrepend && previousIndex > previousFirstIndex && previousFirstIndex !== -1) {
       applyPrependRestore()
       return
     }
@@ -772,10 +776,12 @@ function createEngine(props: MessageScrollerProviderProps) {
     const children = getMessageChildren(content, spacer)
     const previousCount = itemCount
     const previousFirst = firstItem
+    const previousFirstIndex = firstItemIndex
     itemCount = children.length
-    firstItem = children[0] ?? null
+    firstItemIndex = children.findIndex((child) => child.dataset.messageId !== undefined)
+    firstItem = children[firstItemIndex] ?? null
 
-    applyContentChange(children, previousCount, previousFirst)
+    applyContentChange(children, previousCount, previousFirst, previousFirstIndex)
     capturePrependAnchor()
   }
 

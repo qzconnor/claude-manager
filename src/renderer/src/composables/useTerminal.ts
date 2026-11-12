@@ -2,24 +2,30 @@ import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { UnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { Terminal, type ITheme, type ITerminalOptions } from '@xterm/xterm'
+import { Terminal, type IBufferRange, type ITheme, type ITerminalOptions } from '@xterm/xterm'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import type { PastedImage, TerminalSettings } from '@shared/types'
 import { drawBlockGlyphs } from '@/lib/block-glyphs'
+import { linkText, showsTarget } from '@/lib/hyperlinks'
 import { drawLigatures, type Ligatures } from '@/lib/ligatures'
 import { createBackgroundFilter, slotPalette, type SlotTints } from '@/lib/claude-backgrounds'
 import { claudeInputAt } from '@/lib/claude-input'
 import { answerColorQueries } from '@/lib/color-queries'
 import { matchShortcut } from '@shared/shortcuts'
+import { pastePreview, pasteRunsLines } from '@/lib/paste-guard'
+import { isWindows } from '@/lib/platform'
 import { addedImageRef, countImageRefs, pastedImageLinks } from '@/lib/pasted-image-links'
 import { terminalBus } from '@/lib/terminal-bus'
 import { makeSlotsTranslucent, setSlotTints } from '@/lib/translucent-slots'
+import { RULER_WIDTH, turnMarks, type TurnMarks } from '@/lib/turn-marks'
 import { urlLinks } from '@/lib/url-links'
 import { useAppStore } from '@/stores/app'
 import { useFileTreeStore } from '@/stores/file-tree'
 import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
+import { useUiStore } from '@/stores/ui'
 import type { TerminalPalette } from '@shared/themes/types'
+import { useScreenReader } from './useScreenReader'
 import { buildFontStack, ensureFontLoaded, useTerminalAppearance } from './useTerminalAppearance'
 
 export interface UseTerminalOptions {
@@ -61,6 +67,14 @@ export interface ImagePreview {
   x: number
   y: number
   image: PastedImage | null
+}
+
+/** A link (OSC 8) the mouse rests on: where it leads, where the mouse is, and whether only Ctrl+click opens it. */
+export interface LinkHint {
+  url: string
+  x: number
+  y: number
+  ctrl: boolean
 }
 
 /** A pasted image opened in full size. */
@@ -124,6 +138,8 @@ export function toXtermTheme(p: TerminalPalette, tints: SlotTints): ITheme {
     scrollbarSliderBackground: 'rgba(128, 128, 128, 0.25)',
     scrollbarSliderHoverBackground: 'rgba(128, 128, 128, 0.4)',
     scrollbarSliderActiveBackground: 'rgba(128, 128, 128, 0.55)',
+    // The marks of the prompts lie under the scrollbar, without a line beside them.
+    overviewRulerBorder: '#00000000',
   }
 }
 
@@ -184,6 +200,13 @@ function emptyRowsAtBottom(term: Terminal): number {
   return empty
 }
 
+/** Claude Code's input box with the cursor in it (see claudeInputAt); null while it shows something else. */
+function claudeInput(term: Terminal) {
+  const buffer = term.buffer.active
+  const lines = Array.from({ length: term.rows }, (_, y) => buffer.getLine(buffer.baseY + y)?.translateToString(true) ?? '')
+  return claudeInputAt(lines, buffer.cursorY)
+}
+
 interface Linkifier {
   _activeLine: number
   _lastBufferCell: unknown
@@ -206,10 +229,12 @@ function forgetCachedLinks(term: Terminal): void {
 export function useTerminal(options: UseTerminalOptions) {
   const { terminalId, claudeSession, container, active } = options
   const settingsStore = useSettingsStore()
+  const screenReader = useScreenReader()
   const appStore = useAppStore()
   const terminalsStore = useTerminalsStore()
+  const ui = useUiStore()
   const fileTree = useFileTreeStore()
-  const { palette, dark, slotTints, backgrounds, logo } = useTerminalAppearance()
+  const { palette, dark, slotTints, backgrounds, logo, accent } = useTerminalAppearance()
   /** All output passes through here on its way to xterm. */
   const filterOutput = createBackgroundFilter(
     () => backgrounds.value,
@@ -235,9 +260,12 @@ export function useTerminal(options: UseTerminalOptions) {
   let shiftY = 0
   let disposed = false
   let ligatures: Ligatures | null = null
+  /** The prompts sent to Claude Code, marked beside the scrollbar. */
+  let marks: TurnMarks | null = null
   const cleanups: (() => void)[] = []
 
   const imagePreview = ref<ImagePreview | null>(null)
+  const linkHint = ref<LinkHint | null>(null)
   const openedImage = ref<OpenedImage | null>(null)
   /** The numbers of the pasted images, as last asked for; `known` once they came. */
   let imageIds: { at: number; ids: Promise<ReadonlySet<number>>; known: ReadonlySet<number> | null } | null = null
@@ -283,6 +311,11 @@ export function useTerminal(options: UseTerminalOptions) {
         if (hover === imageHover) imagePreview.value = null
       },
     )
+  }
+
+  /** Whether the text of a link (OSC 8) in `range` is something else than the URL it opens. */
+  function hidesTarget(uri: string, range: IBufferRange): boolean {
+    return !term || !showsTarget(linkText(term.buffer.active, range), uri)
   }
 
   function hideImage(): void {
@@ -344,10 +377,41 @@ export function useTerminal(options: UseTerminalOptions) {
     return true
   }
 
+  /** Whether pasting `text` would run lines on its own, and the user wants to be asked first. */
+  function runsLines(text: string): boolean {
+    if (!term || !settingsStore.settings.terminal.multiLinePasteWarning) return false
+    // PowerShell takes no bracketed paste: in a shell under Windows the mode can only come from output
+    // (a printed ESC [?2004h, a program run in it), and PowerShell would still run each line.
+    const bracketed = term.modes.bracketedPasteMode && (claudeSession || !isWindows)
+    return pasteRunsLines(text, bracketed)
+  }
+
+  /**
+   * Text for the input of the program; with line breaks that a shell would run line by line at once,
+   * only after asking (like Windows Terminal), since copied text may hide commands.
+   */
+  async function pasteText(text: string): Promise<void> {
+    if (!runsLines(text)) {
+      term?.paste(text)
+      return
+    }
+    const ok = await ui.confirm({
+      title: 'Mehrere Zeilen einfügen?',
+      description:
+        'Der Text enthält Zeilenumbrüche: Die Shell führt jede Zeile sofort als Befehl aus. Abschalten lässt sich die Frage unter Einstellungen › Terminal › Verhalten.',
+      code: pastePreview(text),
+      confirmText: 'Einfügen',
+      warning: true,
+    })
+    if (!ok || !term) return
+    term.paste(text)
+    focus()
+  }
+
   async function pasteClipboard(): Promise<void> {
     const text = await navigator.clipboard.readText()
     if (text) {
-      term?.paste(text)
+      await pasteText(text)
       return
     }
     // Claude Code takes the image from the clipboard itself and puts an [Image #N] at the cursor:
@@ -399,6 +463,8 @@ export function useTerminal(options: UseTerminalOptions) {
       shown = true
       clearTimeout(hiddenTimer)
       if (settingsStore.settings.terminal.renderer === 'webgl') enableWebgl()
+      // Hidden, the prompts weren't looked for.
+      marks?.refresh()
       return
     }
     if (!shown) return
@@ -487,9 +553,7 @@ export function useTerminal(options: UseTerminalOptions) {
    */
   function showChanges(): boolean {
     if (!claudeSession || !term || !settingsStore.settings.claude.diffCommand) return false
-    const buffer = term.buffer.active
-    const lines = Array.from({ length: term.rows }, (_, y) => buffer.getLine(buffer.baseY + y)?.translateToString(true) ?? '')
-    const input = claudeInputAt(lines, buffer.cursorY)
+    const input = claudeInput(term)
     if (input?.command !== '/diff') return false
     write('\x05' + '\x7f'.repeat([...input.text].length))
     fileTree.showAllChanges(terminalId)
@@ -528,6 +592,14 @@ export function useTerminal(options: UseTerminalOptions) {
       e.preventDefault()
       return false
     }
+    // Ctrl+↑/↓ go from prompt to prompt while Claude Code's input box has the cursor. Elsewhere (its list
+    // of agents, the files of its own /diff) the keys are Claude Code's, as in a shell.
+    if (ctrl && !e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && term && claudeInput(term)) {
+      if (marks?.jump(e.key === 'ArrowUp' ? -1 : 1)) {
+        e.preventDefault()
+        return false
+      }
+    }
     return true
   }
 
@@ -545,6 +617,7 @@ export function useTerminal(options: UseTerminalOptions) {
     setSlotTints(slotTints.value)
     term = new Terminal({
       ...terminalOptions(s, palette.value, slotTints.value),
+      screenReaderMode: screenReader.value,
       allowProposedApi: true,
       allowTransparency: true,
       customGlyphs: true,
@@ -553,10 +626,23 @@ export function useTerminal(options: UseTerminalOptions) {
       macOptionIsMeta: true,
       rightClickSelectsWord: false,
       smoothScrollDuration: 0,
+      // The prompts sent to Claude Code beside the scrollbar (see turnMarks).
+      overviewRuler: { width: RULER_WIDTH },
       ...(build ? { windowsPty: { backend: 'conpty' as const, buildNumber: build } } : {}),
+      // Links a program writes (OSC 8) show where they lead under the mouse. One whose text is something
+      // other than its URL may name another site than it opens: it opens only with Ctrl+click.
       linkHandler: {
-        activate: (_event, uri) => {
-          if (/^https?:\/\//i.test(uri)) void window.api.app.openExternal(uri)
+        activate: (event, uri, range) => {
+          if (!/^https?:\/\//i.test(uri)) return
+          if (!event.ctrlKey && !event.metaKey && hidesTarget(uri, range)) return
+          linkHint.value = null
+          void window.api.app.openExternal(uri)
+        },
+        hover: (event, uri, range) => {
+          linkHint.value = { url: uri, x: event.clientX, y: event.clientY, ctrl: hidesTarget(uri, range) }
+        },
+        leave: () => {
+          linkHint.value = null
         },
       },
     })
@@ -582,6 +668,9 @@ export function useTerminal(options: UseTerminalOptions) {
       () => webgl !== null,
     ))
     cleanups.push(() => lig.dispose())
+    // Also in shell tabs: Claude Code may run there too. Without its prompts nothing shows.
+    const turns = (marks = turnMarks(term, { color: () => accent.value, shown: () => shown }))
+    cleanups.push(() => turns.dispose())
     // Right away for a terminal on screen, so the output so far isn't drawn by the DOM renderer first.
     setShown(el.getClientRects().length > 0)
     term.attachCustomKeyEventHandler(handleKey)
@@ -626,6 +715,16 @@ export function useTerminal(options: UseTerminalOptions) {
     }
     el.addEventListener('contextmenu', onContextMenu)
     cleanups.push(() => el.removeEventListener('contextmenu', onContextMenu))
+    // A paste xterm takes itself (Shift+Insert, the paste of the system) asks like Ctrl+V.
+    const onPaste = (event: ClipboardEvent) => {
+      const text = event.clipboardData?.getData('text/plain') ?? ''
+      if (!runsLines(text)) return
+      event.preventDefault()
+      event.stopPropagation()
+      void pasteText(text)
+    }
+    el.addEventListener('paste', onPaste, true)
+    cleanups.push(() => el.removeEventListener('paste', onPaste, true))
     // With right-click paste the right button belongs to the app: a program that uses the mouse doesn't
     // get it as well. Claude Code does, and under Windows and Linux it pastes on a right-click itself,
     // so the text came twice. The press and release stop before xterm, which would report them.
@@ -659,6 +758,9 @@ export function useTerminal(options: UseTerminalOptions) {
     try {
       const buffer = await window.api.terminals.attach(terminalId)
       if (disposed) return
+      // At the size the output was written for: at xterm's 80×24 its lines would break apart in the
+      // scrollback. The view takes its own size right after (`fit`), and the program draws anew.
+      if (buffer.cols !== t.cols || buffer.rows !== t.rows) t.resize(buffer.cols, buffer.rows)
       const replay = filterOutput(buffer.data)
       if (buffer.answered && replay) {
         replaying = true
@@ -715,6 +817,16 @@ export function useTerminal(options: UseTerminalOptions) {
     },
   )
 
+  // The marks of the prompts in the accent of another theme.
+  watch(accent, () => {
+    if (shown) marks?.refresh()
+  })
+
+  // The output as text for a screen reader, once the setting or the system asks for it.
+  watch(screenReader, (on) => {
+    if (term) term.options.screenReaderMode = on
+  })
+
   onBeforeUnmount(() => {
     disposed = true
     stopAwaitingPaste?.()
@@ -735,6 +847,8 @@ export function useTerminal(options: UseTerminalOptions) {
     imagePreview,
     /** The pasted image opened in full size by a click on its `[Image #N]`. */
     openedImage,
+    /** The link (OSC 8) under the mouse, with where it leads. */
+    linkHint,
     closeImage: () => (openedImage.value = null),
     focus,
     fit,
@@ -742,8 +856,8 @@ export function useTerminal(options: UseTerminalOptions) {
     pasteClipboard,
     /** Pastes like Ctrl+V, e.g. the paths of dropped files. */
     paste: (text: string) => {
-      term?.paste(text)
       focus()
+      void pasteText(text)
     },
     clear: () => term?.clear(),
     selectAll: () => term?.selectAll(),

@@ -39,3 +39,12 @@ export function groupTabs(terminals: readonly TerminalInfo[], splits: readonly P
   }
   return tabs
 }
+
+/**
+ * The terminals in the order they were opened, for the views of their panes. These lie where the
+ * layout puts them, so the order of their elements doesn't show; but moving the element of a browser
+ * loads its page again, and in the order of the tabs every reordering of tabs would move some.
+ */
+export function inOpeningOrder<T extends { id: string; createdAt: string }>(list: readonly T[]): T[] {
+  return [...list].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+}

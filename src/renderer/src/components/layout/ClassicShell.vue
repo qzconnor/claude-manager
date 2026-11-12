@@ -6,9 +6,11 @@ import ChangesView from '@/components/files/ChangesView.vue'
 import DiffView from '@/components/files/DiffView.vue'
 import FileTreePanel from '@/components/files/FileTreePanel.vue'
 import TerminalWorkspace from '@/components/terminal/TerminalWorkspace.vue'
+import { useWakeShown } from '@/composables/useWakeShown'
+import { separatorValue } from '@/lib/separator-keys'
 import { cn } from '@/lib/utils'
 import { useBrowsersStore } from '@/stores/browsers'
-import { MAX_TREE_SHARE, useFileTreeStore } from '@/stores/file-tree'
+import { DEFAULT_DIFF_SHARE, MAX_DIFF_SHARE, MAX_TREE_SHARE, MIN_DIFF_SHARE, useFileTreeStore } from '@/stores/file-tree'
 import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
@@ -93,6 +95,21 @@ function onSplitResizeStart(event: PointerEvent) {
 }
 onBeforeUnmount(() => endSplitResize?.())
 
+/** The edge of the changes moved with the keyboard, 2 % a step; with the tree on the right they grow to the left. */
+function onSplitResizeKey(event: KeyboardEvent) {
+  const percent = separatorValue(event, true, {
+    value: fileTree.diffShare * 100,
+    min: MIN_DIFF_SHARE * 100,
+    max: MAX_DIFF_SHARE * 100,
+    step: 2,
+    initial: DEFAULT_DIFF_SHARE * 100,
+    reversed: treeSide.value === 'right',
+  })
+  if (percent === null) return
+  event.preventDefault()
+  fileTree.setDiffShare(percent / 100)
+}
+
 /**
  * The part of the page's top border below the selected tab in the title bar (px from the page's
  * left edge). It is left out, and the tab's own side borders carry on into the rest of the line.
@@ -122,6 +139,7 @@ watch(
   (ids) => window.api.terminals.viewing(ids ? ids.split(',') : []),
   { immediate: true },
 )
+useWakeShown(() => (onTerminals.value ? (terminals.activeTab?.panes.map((p) => p.id) ?? []) : []))
 </script>
 
 <template>
@@ -186,15 +204,19 @@ watch(
             role="separator"
             aria-orientation="vertical"
             aria-label="Breite der Änderungen ändern"
+            tabindex="0"
             :aria-valuenow="Math.round(fileTree.diffShare * 100)"
-            :class="cn('group/handle absolute inset-y-0 z-20 w-[9px] cursor-col-resize', treeSide === 'left' ? '-right-[5px]' : '-left-[5px]')"
+            :aria-valuemin="MIN_DIFF_SHARE * 100"
+            :aria-valuemax="MAX_DIFF_SHARE * 100"
+            :class="cn('group/handle absolute inset-y-0 z-20 w-[9px] cursor-col-resize outline-none', treeSide === 'left' ? '-right-[5px]' : '-left-[5px]')"
             @pointerdown="onSplitResizeStart"
-            @dblclick="fileTree.setDiffShare(0.5)"
+            @dblclick="fileTree.setDiffShare(DEFAULT_DIFF_SHARE)"
+            @keydown="onSplitResizeKey"
           >
             <div
               :class="
                 cn(
-                  'absolute inset-y-0 left-[4px] w-px transition-colors group-hover/handle:bg-primary/60',
+                  'absolute inset-y-0 left-[4px] w-px transition-colors group-hover/handle:bg-primary/60 group-focus-visible/handle:bg-primary',
                   resizingSplit && 'bg-primary/60',
                 )
               "

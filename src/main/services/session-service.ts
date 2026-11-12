@@ -1,31 +1,44 @@
 import { watch, type FSWatcher } from 'node:fs'
 import { mkdir, stat } from 'node:fs/promises'
+import { join } from 'node:path'
 import { shell } from 'electron'
 import type {
+  SessionChanges,
+  SessionChangeTexts,
   SessionDetail,
   SessionGroup,
   SessionRef,
+  SessionFileChange,
+  SessionFileEdit,
   SessionRemoveResult,
   SessionSearchHit,
   SessionSummary,
   TranscriptToolDetail,
 } from '@shared/types'
+import { CONVERSATION_PAGE_MESSAGES } from '@shared/defaults'
 import { folderKey, windowsPath } from '@shared/folders'
+import { sessionMarkdown } from '@shared/session-markdown'
 import { liveSessionIds, sessionFiles } from '../lib/session-files'
 import { moveSession, moveSessions } from '../lib/session-move'
 import { TypedEmitter } from '../lib/typed-emitter'
-import type { ConversationResult, IndexedSession, TranscriptSearchHit } from '../workers/indexer-protocol'
+import type { ConversationResult, FileEditHit, IndexedSession, TranscriptSearchHit } from '../workers/indexer-protocol'
 import type { AccountService } from './account-service'
 import type { IndexerClient } from './indexer-client'
+import type { SessionMarks } from './session-marks'
 import type { SessionNames } from './session-names'
 import type { TerminalService } from './terminal-service'
 
 type Events = { changed: [accountId: string] }
 
-const MAX_CONVERSATION_MESSAGES = 600
+/** The most messages of a history the window gets at once, however many it asks for. */
+const MAX_CONVERSATION_MESSAGES = 100_000
 /** Hits per account; a search with more is too vague to go through all of them. */
 const MAX_SEARCH_HITS = 200
+/** Sessions that changed a file the menu lists; older ones hardly matter any more. */
+const MAX_FILE_EDITS = 50
 const TOOL_USE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
+/** Session and message ids (UUIDs): also part of the path to the file history. */
+const ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 /** Files moved to the recycle bin at the same time. */
 const TRASH_CONCURRENCY = 6
 
@@ -35,23 +48,38 @@ const TRASH_CONCURRENCY = 6
  */
 const localPath = process.platform === 'win32' ? windowsPath : (path: string) => path
 
+/** A projects folder that couldn't be watched (made, or its watcher failed) is tried again after this long. */
+const WATCH_RETRY_MS = 30_000
+
 export class SessionService extends TypedEmitter<Events> {
   private readonly watchers = new Map<string, { dir: string; watcher: FSWatcher }>()
+  private retryTimer: NodeJS.Timeout | null = null
+  private disposed = false
   private readonly debounce = new Map<string, NodeJS.Timeout>()
   private readonly filePaths = new Map<string, string>()
+  /** Each account's projects folder, as the lists last knew it. */
+  private projectsDirs = new Map<string, string>()
 
   constructor(
     private readonly accounts: AccountService,
     private readonly indexer: IndexerClient,
     private readonly terminals: TerminalService,
     private readonly names: SessionNames,
+    private readonly marks: SessionMarks,
   ) {
     super()
-    accounts.on('changed', () => this.syncWatchers())
-    // A session named or renamed: the lists show it at once. Which account has it doesn't matter, it is cheap.
-    names.on('changed', () => {
-      for (const account of this.accounts.list()) this.emit('changed', account.id)
+    accounts.on('changed', () => {
+      this.syncWatchers()
+      this.reportMovedAccounts()
     })
+    // A session named or renamed: the lists show it at once. Which account has it doesn't matter, it is cheap.
+    names.on('changed', () => this.changedEverywhere())
+    // Pinned or tagged: the same.
+    marks.on('changed', () => this.changedEverywhere())
+  }
+
+  private changedEverywhere(): void {
+    for (const account of this.accounts.list()) this.emit('changed', account.id)
   }
 
   /** Names the session (empty: it shows Claude Code's title again); also its tabs and the API show it. */
@@ -59,11 +87,24 @@ export class SessionService extends TypedEmitter<Events> {
     this.names.set(sessionId, name)
   }
 
+  /** Pins the session to the top of the list, or takes the pin away. */
+  pin(sessionId: string, pinned: boolean): void {
+    this.marks.setPinned(sessionId, pinned)
+  }
+
+  /** Gives the session these tags (none: no tags). */
+  tag(sessionId: string, tags: readonly unknown[]): void {
+    this.marks.setTags(sessionId, tags)
+  }
+
   init(): void {
+    this.projectsDirs = this.currentDirs()
     this.syncWatchers()
   }
 
   dispose(): void {
+    this.disposed = true
+    if (this.retryTimer) clearTimeout(this.retryTimer)
     for (const { watcher } of this.watchers.values()) watcher.close()
     this.watchers.clear()
     for (const timer of this.debounce.values()) clearTimeout(timer)
@@ -88,18 +129,32 @@ export class SessionService extends TypedEmitter<Events> {
     )
   }
 
-  async get(accountId: string, sessionId: string): Promise<SessionDetail> {
-    // Re-scan first (cheap thanks to the worker cache) so the summary and file path are current.
-    const [group] = await this.list(accountId)
-    const summary = group?.sessions.find((s) => s.id === sessionId)
+  /** The session with the newest `limit` messages of its history. */
+  async get(accountId: string, sessionId: string, limit = CONVERSATION_PAGE_MESSAGES): Promise<SessionDetail> {
+    const summary = await this.summary(accountId, sessionId)
     const filePath = this.filePaths.get(`${accountId}:${sessionId}`)
-    if (!summary || !filePath) throw new Error('Session nicht gefunden.')
+    if (!filePath) throw new Error('Session nicht gefunden.')
     const conversation = await this.indexer.request<ConversationResult>({
       method: 'readConversation',
       filePath,
-      maxMessages: MAX_CONVERSATION_MESSAGES,
+      maxMessages: Math.max(1, Math.min(Math.floor(limit), MAX_CONVERSATION_MESSAGES)),
     })
-    return { summary, messages: conversation.messages, truncated: conversation.truncated }
+    return { summary, messages: conversation.messages, truncated: conversation.truncated, total: conversation.total }
+  }
+
+  /** The session as the list has it now. */
+  async summary(accountId: string, sessionId: string): Promise<SessionSummary> {
+    // Re-scan first (cheap thanks to the worker cache) so the summary and file path are current.
+    const [group] = await this.list(accountId)
+    const summary = group?.sessions.find((s) => s.id === sessionId)
+    if (!summary) throw new Error('Session nicht gefunden.')
+    return summary
+  }
+
+  /** The session's history as a Markdown document (see `sessionMarkdown`), as much of it as the window gets at most. */
+  async markdown(accountId: string, sessionId: string): Promise<string> {
+    const detail = await this.get(accountId, sessionId, MAX_CONVERSATION_MESSAGES)
+    return sessionMarkdown(detail.summary, detail.messages, { omitted: detail.total - detail.messages.length })
   }
 
   /** Full-text search through the conversations of all accounts (see the indexer's search index). */
@@ -120,6 +175,63 @@ export class SessionService extends TypedEmitter<Events> {
       }),
     )
     return groups.flat()
+  }
+
+  /** The sessions of all accounts that changed the file at `path`, the latest change first. */
+  async editedBy(path: string): Promise<SessionFileEdit[]> {
+    // Accounts may keep their sessions in the same folder: it is asked once.
+    const dirs = new Map<string, string>()
+    for (const account of this.accounts.list()) {
+      const dir = this.accounts.paths(account.id).projectsDir
+      if (!dirs.has(dir)) dirs.set(dir, account.id)
+    }
+    const groups = await Promise.all(
+      [...dirs].map(async ([projectsDir, accountId]) => {
+        try {
+          const hits = await this.indexer.request<FileEditHit[]>({ method: 'editedBy', projectsDir, path })
+          return hits.map((hit): SessionFileEdit => ({ session: this.toSummary(accountId, hit.session), changedAt: hit.at }))
+        } catch {
+          return []
+        }
+      }),
+    )
+    return groups
+      .flat()
+      .sort((a, b) => b.changedAt.localeCompare(a.changedAt))
+      .slice(0, MAX_FILE_EDITS)
+  }
+
+  /** What the session changed prompt by prompt, from Claude Code's file history. */
+  async changes(accountId: string, sessionId: string): Promise<SessionChanges> {
+    return this.indexer.request<SessionChanges>({ method: 'sessionChanges', ...(await this.historyOf(accountId, sessionId)) })
+  }
+
+  /** What `/rewind` to the prompt `turnId` would do to the files. */
+  async rewindPreview(accountId: string, sessionId: string, turnId: string): Promise<SessionFileChange[]> {
+    if (!ID_RE.test(turnId)) throw new Error('Ungültige Prompt-ID.')
+    return this.indexer.request<SessionFileChange[]>({ method: 'rewindPreview', ...(await this.historyOf(accountId, sessionId)), turnId })
+  }
+
+  /** Both versions of a file that a change of a prompt (`turn`) or `/rewind` to it (`rewind`) compares. */
+  async changeTexts(accountId: string, sessionId: string, turnId: string, path: string, kind: 'turn' | 'rewind'): Promise<SessionChangeTexts> {
+    if (!ID_RE.test(turnId)) throw new Error('Ungültige Prompt-ID.')
+    return this.indexer.request<SessionChangeTexts>({
+      method: 'changeTexts',
+      ...(await this.historyOf(accountId, sessionId)),
+      turnId,
+      path,
+      kind,
+    })
+  }
+
+  /** The transcript of a session, its folder of Claude Code's file history and the folder it works in. */
+  private async historyOf(accountId: string, sessionId: string): Promise<{ filePath: string; historyDir: string; cwd: string | null }> {
+    if (!ID_RE.test(sessionId)) throw new Error('Ungültige Session-ID.')
+    const [group] = await this.list(accountId)
+    const summary = group?.sessions.find((s) => s.id === sessionId)
+    const filePath = this.filePaths.get(`${accountId}:${sessionId}`)
+    if (!summary || !filePath) throw new Error('Session nicht gefunden.')
+    return { filePath, historyDir: join(this.accounts.paths(accountId).configDir, 'file-history', sessionId), cwd: summary.cwd }
   }
 
   /** Complete input and output of one tool call, loaded when it is expanded in the transcript. */
@@ -249,6 +361,7 @@ export class SessionService extends TypedEmitter<Events> {
   private toSummary(accountId: string, s: IndexedSession): SessionSummary {
     this.filePaths.set(`${accountId}:${s.id}`, s.filePath)
     const name = this.names.get(s.id)
+    const { pinned, tags } = this.marks.get(s.id)
     return {
       id: s.id,
       accountId,
@@ -257,6 +370,8 @@ export class SessionService extends TypedEmitter<Events> {
       worktree: s.worktree ? { ...s.worktree, path: localPath(s.worktree.path), originalCwd: localPath(s.worktree.originalCwd) } : null,
       title: name ?? s.title,
       name,
+      pinned,
+      tags: [...tags],
       firstPrompt: s.firstPrompt,
       lastPrompt: s.lastPrompt,
       gitBranch: s.gitBranch,
@@ -270,9 +385,27 @@ export class SessionService extends TypedEmitter<Events> {
     }
   }
 
+  private currentDirs(): Map<string, string> {
+    return new Map(this.accounts.list().map((a) => [a.id, this.accounts.paths(a.id).projectsDir]))
+  }
+
+  /**
+   * Accounts that came, went or keep their sessions in another folder now: their lists change all at
+   * once, without a change in the folder the watcher would see (a new account with an existing folder).
+   */
+  private reportMovedAccounts(): void {
+    if (this.disposed) return
+    const dirs = this.currentDirs()
+    for (const id of new Set([...this.projectsDirs.keys(), ...dirs.keys()])) {
+      if (this.projectsDirs.get(id) !== dirs.get(id)) this.emit('changed', id)
+    }
+    this.projectsDirs = dirs
+  }
+
   /** Watches every account's projects folder and reports changes (debounced). */
   private syncWatchers(): void {
-    const wanted = new Map(this.accounts.list().map((a) => [a.id, this.accounts.paths(a.id).projectsDir]))
+    if (this.disposed) return
+    const wanted = this.currentDirs()
     for (const [id, entry] of this.watchers) {
       if (wanted.get(id) !== entry.dir) {
         entry.watcher.close()
@@ -290,12 +423,22 @@ export class SessionService extends TypedEmitter<Events> {
           })
           watcher.on('error', () => {
             watcher.close()
-            this.watchers.delete(id)
+            if (this.watchers.get(id)?.watcher === watcher) this.watchers.delete(id)
+            // Deleted with the folder, or the drive was gone for a moment: the lists keep up again later.
+            this.retryWatchers()
           })
           this.watchers.set(id, { dir, watcher })
         })
-        .catch(() => undefined)
+        .catch(() => this.retryWatchers())
     }
+  }
+
+  private retryWatchers(): void {
+    if (this.disposed || this.retryTimer) return
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null
+      this.syncWatchers()
+    }, WATCH_RETRY_MS)
   }
 
   private schedule(accountId: string): void {

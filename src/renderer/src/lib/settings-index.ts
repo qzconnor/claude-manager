@@ -126,6 +126,8 @@ const TREE = [
         fields: [
           { id: 'terminal.copyOnSelect', label: 'Beim Markieren kopieren', keywords: 'Auswahl Zwischenablage' },
           { id: 'terminal.rightClickPaste', label: 'Rechtsklick kopiert / fügt ein', keywords: 'einfügen Maus Zwischenablage' },
+          { id: 'terminal.multiLinePasteWarning', label: 'Vor mehrzeiligem Einfügen warnen', keywords: 'einfügen Zeilen Zwischenablage Befehle Sicherheit' },
+          { id: 'terminal.screenReader', label: 'Screenreader', keywords: 'Barrierefreiheit Sprachausgabe vorlesen NVDA JAWS Orca blind' },
           { id: 'terminal.scrollback', label: 'Scrollback', keywords: 'Zeilen Verlauf Puffer' },
         ],
       },
@@ -157,6 +159,11 @@ const TREE = [
           },
           { id: 'claude.defaultArgs', label: 'Standard-Argumente', keywords: 'Parameter Optionen Modell model' },
           { id: 'claude.defaultCwd', label: 'Standard-Arbeitsordner', keywords: 'Ordner Verzeichnis Downloads Projekt' },
+          {
+            id: 'claude.hideSecrets',
+            label: 'Token und API-Key vor Befehlen verbergen',
+            keywords: 'Sicherheit Umgebung Umgebungsvariablen Bash Hooks MCP CLAUDE_CODE_SUBPROCESS_ENV_SCRUB',
+          },
           { id: 'claude.autoSwitch', label: 'Bei einem Limit automatisch wechseln', keywords: 'Account Rate Limit' },
           { id: 'claude.continuePrompt', label: 'Nachricht nach Account-Wechsel', keywords: 'Prompt weitermachen fortsetzen Limit' },
         ],
@@ -174,8 +181,13 @@ const TREE = [
         id: 'claude.general',
         title: 'Allgemein',
         fields: [
-          { id: 'claude.defaultAccount', label: 'Standard-Account', keywords: 'Konto neue Session' },
+          { id: 'claude.defaultAccount', label: 'Account für neue Sessions', keywords: 'Konto neue Session Vorgabe Standard-Account cm' },
           { id: 'claude.restoreTerminals', label: 'Tabs beim Start wiederherstellen', keywords: 'Sessions fortsetzen Neustart' },
+          {
+            id: 'claude.restoreAsleep',
+            label: 'Wiederhergestellte Tabs erst beim Ansehen starten',
+            keywords: 'schlafende Tabs Platzhalter später starten Speicher schneller',
+          },
           { id: 'claude.confirmClose', label: 'Schließen laufender Terminals bestätigen', keywords: 'Nachfrage' },
           { id: 'claude.closeOnExit', label: 'Tab schließen, wenn der Prozess endet', keywords: 'beenden exit' },
           { id: 'claude.usageRefresh', label: 'Usage-Aktualisierung', keywords: 'Limits Nutzung Intervall Minuten' },
@@ -207,6 +219,11 @@ const TREE = [
         fields: [
           { id: 'claude.browserTools', label: 'Browser für Claude-Sessions', keywords: 'MCP Server Werkzeuge Tools' },
           { id: 'claude.browserToolsAllowed', label: 'Ohne Nachfrage bedienen', keywords: 'Erlaubnis Berechtigung fragen' },
+          {
+            id: 'claude.browserSensitiveAllowed',
+            label: 'Auch heikle Werkzeuge ohne Nachfrage',
+            keywords: 'Erlaubnis fragen Dateien hochladen Upload Cookies Speicher Storage Netzwerk Anfragen Skript JavaScript Seitendaten löschen',
+          },
           { id: 'claude.noClaudeInChrome', label: 'Ohne Claude in Chrome', keywords: 'Erweiterung no-chrome' },
           { id: 'claude.clearBrowserData', label: 'Browserdaten löschen', keywords: 'Cookies Cache abmelden Logins' },
         ],
@@ -251,6 +268,7 @@ const TREE = [
           { id: 'notifications.onLimit', label: 'Limit erreicht', keywords: 'Nutzungslimit Reset' },
           { id: 'notifications.onNearLimit', label: 'Limit fast verbraucht', keywords: 'Warnung Usage' },
           { id: 'notifications.nearLimitPercent', label: 'Schwelle (%)', keywords: 'Prozent Limit' },
+          { id: 'notifications.onLoginLost', label: 'Login abgelaufen', keywords: 'Anmeldung Token erneuern Refresh' },
         ],
       },
       {

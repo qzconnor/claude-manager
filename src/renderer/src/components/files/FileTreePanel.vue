@@ -10,18 +10,25 @@ import {
   EllipsisIcon,
   ExternalLinkIcon,
   FileDiffIcon,
+  FilePlusIcon,
   FolderOpenIcon,
+  FolderPlusIcon,
   FolderXIcon,
   GitCompareIcon,
   GitBranchIcon,
   GitCommitHorizontalIcon,
   ListFilterIcon,
   ListTreeIcon,
+  MinusIcon,
+  PencilIcon,
   PlusIcon,
   RefreshCwIcon,
   SearchIcon,
   SquareTerminalIcon,
   TextCursorInputIcon,
+  TextSearchIcon,
+  Trash2Icon,
+  Undo2Icon,
   XIcon,
 } from '@lucide/vue'
 import { useElementSize } from '@vueuse/core'
@@ -32,6 +39,7 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuShortcut,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import {
@@ -43,9 +51,11 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { MIN_CONTENT_QUERY, useContentSearch } from '@/composables/useContentSearch'
 import { useFileTreeModel } from '@/composables/useFileTreeModel'
+import { useGitActions } from '@/composables/useGitActions'
 import { useLauncher } from '@/composables/useLauncher'
-import { formatArgs } from '@/lib/args'
+import { useOpenFile } from '@/composables/useOpenFile'
 import { attempt } from '@/lib/errors'
 import { fileIcon, type FileIconInfo } from '@/lib/file-icons'
 import {
@@ -73,10 +83,19 @@ import {
   type TreeRow,
 } from '@/lib/file-tree'
 import { TOUCH_ICON } from '@/lib/file-touch'
+import { fileManagerLabel, isWindows, shellKind } from '@/lib/platform'
+import { pastedPaths } from '@/lib/shell-quote'
 import { terminalBus } from '@/lib/terminal-bus'
+import { childPath, type NameKind, type NameRequest } from '@/lib/tree-names'
+import { separatorValue } from '@/lib/separator-keys'
+import { isMenuKey, openMenuBelow } from '@/lib/tab-keys'
 import { cn } from '@/lib/utils'
-import { DEFAULT_TREE_WIDTH, SEPARATOR, useFileTreeStore, type TreeTarget } from '@/stores/file-tree'
+import { DEFAULT_TREE_WIDTH, MAX_TREE_WIDTH, MIN_TREE_WIDTH, SEPARATOR, useFileTreeStore, type TreeTarget } from '@/stores/file-tree'
 import { useSettingsStore } from '@/stores/settings'
+import { useUiStore } from '@/stores/ui'
+import FileContentResults from './FileContentResults.vue'
+import FileNameDialog from './FileNameDialog.vue'
+import FileSessionsMenu from './FileSessionsMenu.vue'
 import FileTreeFilters from './FileTreeFilters.vue'
 
 /**
@@ -99,11 +118,13 @@ const props = defineProps<{
 
 const fileTree = useFileTreeStore()
 const settings = useSettingsStore()
+const ui = useUiStore()
 const launcher = useLauncher()
+const openPath = useOpenFile()
 const model = useFileTreeModel(() => props.target.root)
 
-const windows = window.api.platform === 'win32'
-const explorer = windows ? 'Explorer' : 'Dateimanager'
+const windows = isWindows
+const explorer = fileManagerLabel
 const rootName = computed(() => folderName(props.target.root))
 
 /** Rows follow the size of the interface's font (`text-sm`, like the session list). */
@@ -227,7 +248,47 @@ const query = computed({
   get: () => model.value.query,
   set: (value: string) => (model.value.query = value),
 })
-const searching = computed(() => query.value.trim().length > 0)
+/** The tree is searched by name; a search of the files' content shows its hits instead of the tree. */
+const searching = computed(() => query.value.trim().length > 0 && !model.value.searchContent)
+
+// ── Searching the files' content ──
+
+const content = useContentSearch(() => model.value)
+/** Something is typed while the search looks into the files: its hits show, not the tree. */
+const contentShown = computed(() => model.value.searchContent && query.value.trim().length > 0)
+const contentResults = ref<InstanceType<typeof FileContentResults> | null>(null)
+const searchPlaceholder = computed(() =>
+  model.value.searchContent ? 'Im Inhalt suchen' : filtered.value ? 'Gefilterte Dateien suchen' : 'Dateien suchen',
+)
+const contentStatus = computed(() => {
+  if (content.error.value) return content.error.value
+  if (query.value.trim().length < MIN_CONTENT_QUERY) return 'Mindestens zwei Zeichen'
+  const result = content.result.value
+  if (!result) return null
+  if (result.matches === 0) return 'Keine Treffer.'
+  const files = result.files.length
+  return `${result.matches} Treffer in ${files} ${files === 1 ? 'Datei' : 'Dateien'}${result.truncated ? ', nur die ersten' : ''}`
+})
+
+function toggleContent() {
+  model.value.searchContent = !model.value.searchContent
+  searchInput.value?.focus()
+}
+
+function openHit(path: string, line: number, keep: boolean) {
+  fileTree.showDiff(props.target, path, { groupId: props.groupId, keep, line })
+}
+
+/** A letter typed in the hits goes on in the search. */
+function typeInSearch(key: string) {
+  query.value += key
+  searchInput.value?.focus()
+}
+
+function refresh() {
+  fileTree.refresh(model.value)
+  content.refresh()
+}
 const searchInput = ref<HTMLInputElement | null>(null)
 
 /** The list of all files is needed to search them, and for the files in new folders when the changes show. */
@@ -413,7 +474,7 @@ function collapseAll() {
 }
 
 function openFile(path: string) {
-  void attempt(() => window.api.app.openPath(abs(path)), 'Datei konnte nicht geöffnet werden')
+  void openPath(abs(path))
 }
 
 /** Shows the file's changes; `keep`: with the tabs in groups as a tab that stays, not one that previews. */
@@ -488,6 +549,14 @@ function onDragStart(event: DragEvent, row: TreeRow) {
 }
 
 function onListKeydown(event: KeyboardEvent) {
+  // The menu key and Shift+F10: the menu of the selected entry, below it. The key's own event goes to the
+  // tree, and its menu would be the one of the folder.
+  if (isMenuKey(event) && scroller.value) {
+    event.preventDefault()
+    const row = selected.value ? scroller.value.querySelector<HTMLElement>(`[data-path="${CSS.escape(selected.value)}"]`) : null
+    openMenuBelow(row ?? scroller.value)
+    return
+  }
   if (event.ctrlKey || event.metaKey || event.altKey) return
   const list = entries.value
   const index = list.findIndex((row) => row.path === selected.value)
@@ -535,6 +604,14 @@ function onListKeydown(event: KeyboardEvent) {
         else toggleDir(current.path)
       } else showDiff(current.path, true)
       break
+    case 'F2':
+      if (!current || isGone(current.path)) return
+      rename(current.path, current.entry.dir)
+      break
+    case 'Delete':
+      if (!current || isGone(current.path)) return
+      void trash(current.path, current.entry.dir)
+      break
     case 'Escape':
       if (!searching.value) return
       query.value = ''
@@ -555,6 +632,9 @@ function onSearchKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape' && query.value) {
     query.value = ''
     event.preventDefault()
+  } else if ((event.key === 'ArrowDown' || event.key === 'Enter') && contentShown.value) {
+    event.preventDefault()
+    contentResults.value?.focusFirst()
   } else if ((event.key === 'ArrowDown' || event.key === 'Enter') && entries.value.length) {
     event.preventDefault()
     // The first file that matched, else the first row.
@@ -568,6 +648,25 @@ function onSearchKeydown(event: KeyboardEvent) {
 
 /** The entry the context menu is for; the tree's folder itself on an empty spot. */
 const menuTarget = ref<{ path: string; dir: boolean }>({ path: '', dir: true })
+/** How git sees the file the context menu is for; null for a folder and an unchanged file. */
+const menuState = computed(() => (menuTarget.value.dir ? null : decorations.value.file(menuTarget.value.path)))
+const gitActions = useGitActions()
+
+async function onGit(action: 'stage' | 'unstage' | 'discard', path: string) {
+  const state = decorations.value.file(path)
+  if (!state) return
+  const root = props.target.root
+  const done =
+    action === 'stage'
+      ? await gitActions.stage(root, path)
+      : action === 'unstage'
+        ? await gitActions.unstage(root, path)
+        : await gitActions.discard(root, path, state.status)
+  if (done) fileTree.refresh(model.value)
+}
+
+/** The folder new entries of the context menu go in: the entry's own, or the one a file lies in. */
+const menuFolder = computed(() => (menuTarget.value.dir ? menuTarget.value.path : parentPath(menuTarget.value.path)))
 const isSession = computed(() => props.target.session.mode === 'session')
 const sessionRunning = computed(() => props.target.session.status === 'running')
 
@@ -580,7 +679,7 @@ function onContextMenu(event: MouseEvent) {
 
 /**
  * Hands the entry to the session: Claude gets an `@` mention (relative to the folder it works in), a
- * shell the quoted path.
+ * shell the path quoted so that it runs nothing in it.
  */
 function mention(path: string, dir: boolean) {
   let text: string
@@ -588,7 +687,7 @@ function mention(path: string, dir: boolean) {
     const target = dir ? `${path}/` : path
     text = /\s/.test(target) ? `@"${target}" ` : `@${target} `
   } else {
-    text = `${formatArgs([abs(path)])} `
+    text = `${pastedPaths([abs(path)], props.target.session.mode, shellKind)} `
   }
   if (!terminalBus.paste(props.target.session.id, text)) void navigator.clipboard.writeText(text.trim())
 }
@@ -605,11 +704,103 @@ function openFolder(path: string) {
   void attempt(() => window.api.app.openPath(abs(path)), 'Ordner konnte nicht geöffnet werden')
 }
 
+// ── Making, renaming and deleting entries ──
+
+/** What the name dialog is open for. */
+const nameRequest = ref<NameRequest | null>(null)
+
+/** A file git deleted: it shows, but isn't on the disk any more. */
+function isGone(path: string): boolean {
+  return decorations.value.file(path)?.status === 'deleted'
+}
+
+function create(kind: NameKind, parent: string) {
+  nameRequest.value = { kind, parent, name: '', dir: kind === 'folder' }
+}
+
+function rename(path: string, dir: boolean) {
+  nameRequest.value = { kind: 'rename', parent: parentPath(path), name: path.slice(path.lastIndexOf('/') + 1), dir }
+}
+
+/**
+ * Made or renamed: the tree shows the entry at once and selects it. A renamed folder stays open, and the
+ * changes shown of a renamed file follow it.
+ */
+function onNamed(path: string, request: NameRequest) {
+  nameRequest.value = null
+  const m = model.value
+  if (request.kind === 'rename') {
+    const from = childPath(request.parent, request.name)
+    if (request.dir && m.expanded.has(from)) fileTree.setExpanded(m, path, true)
+    const current = props.current
+    if (current && (current === from || current.startsWith(`${from}/`))) showDiff(path + current.slice(from.length))
+  }
+  query.value = ''
+  if (filtered.value) for (const folder of ancestors(path)) m.collapsedFiltered.delete(folder)
+  else fileTree.reveal(m, path)
+  fileTree.refresh(m)
+  selectWhenShown(path)
+  scroller.value?.focus()
+}
+
+/** Selects the entry once its row is there: its folder is read again first. */
+function selectWhenShown(path: string) {
+  if (rows.value.some((row) => row.path === path)) return select(path)
+  const stop = watch(rows, (list) => {
+    if (!list.some((row) => row.path === path)) return
+    stop()
+    clearTimeout(timer)
+    select(path)
+  })
+  const timer = setTimeout(stop, 3000)
+}
+
+/** Moves the entry to the recycle bin, once asked; the selection goes on to the next entry, like in Explorer. */
+async function trash(path: string, dir: boolean) {
+  const name = path.slice(path.lastIndexOf('/') + 1)
+  const confirmed = await ui.confirm({
+    title: `„${name}“ in den Papierkorb verschieben?`,
+    description: dir
+      ? 'Der Ordner kommt mit allem darin in den Papierkorb. Dort lässt er sich wiederherstellen.'
+      : 'Aus dem Papierkorb lässt sich die Datei wiederherstellen.',
+    confirmText: 'In den Papierkorb',
+    destructive: true,
+  })
+  if (!confirmed) return
+  const list = entries.value
+  const index = list.findIndex((row) => row.path === path)
+  const inside = (other: string) => other === path || other.startsWith(`${path}/`)
+  const next = list.slice(index + 1).find((row) => !inside(row.path)) ?? list[index - 1]
+  const done = await attempt(async () => {
+    await window.api.files.trash(props.target.root, path)
+    return true
+  }, 'Nicht in den Papierkorb verschoben')
+  if (!done) return
+  fileTree.refresh(model.value)
+  if (selected.value && inside(selected.value)) select(next?.path ?? null)
+  scroller.value?.focus()
+}
+
 // ── Width ──
 
 const panel = ref<HTMLElement | null>(null)
 const resizing = ref(false)
 let endResize: (() => void) | null = null
+
+/** The tree's edge moved with the keyboard, 16 px a step; on the right its width grows to the left. */
+function onResizeKey(event: KeyboardEvent) {
+  const width = separatorValue(event, true, {
+    value: fileTree.width,
+    min: MIN_TREE_WIDTH,
+    max: MAX_TREE_WIDTH,
+    step: 16,
+    initial: DEFAULT_TREE_WIDTH,
+    reversed: props.side === 'right',
+  })
+  if (width === null) return
+  event.preventDefault()
+  fileTree.setWidth(width)
+}
 
 function onResizeStart(event: PointerEvent) {
   if (event.button !== 0 || !panel.value) return
@@ -657,7 +848,7 @@ const iconButton =
       </span>
       <Tooltip>
         <TooltipTrigger as-child>
-          <button type="button" aria-label="Aktualisieren" :class="iconButton" @click="fileTree.refresh(model)">
+          <button type="button" aria-label="Aktualisieren" :class="iconButton" @click="refresh">
             <RefreshCwIcon class="size-[16px]" />
           </button>
         </TooltipTrigger>
@@ -684,6 +875,15 @@ const iconButton =
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" class="w-60">
+          <DropdownMenuItem @select="create('file', '')">
+            <FilePlusIcon />
+            Neue Datei…
+          </DropdownMenuItem>
+          <DropdownMenuItem @select="create('folder', '')">
+            <FolderPlusIcon />
+            Neuer Ordner…
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem @select="openFolder('')">
             <FolderOpenIcon />
             Im {{ explorer }} öffnen
@@ -775,12 +975,15 @@ const iconButton =
           type="text"
           spellcheck="false"
           autocomplete="off"
-          :aria-label="filtered ? 'Gefilterte Dateien suchen' : 'Dateien suchen'"
-          :placeholder="filtered ? 'Gefilterte Dateien suchen' : 'Dateien suchen'"
+          :aria-label="searchPlaceholder"
+          :placeholder="searchPlaceholder"
           class="h-full min-w-0 flex-1 bg-transparent px-2 outline-none placeholder:text-muted-foreground"
           @keydown="onSearchKeydown"
         />
-        <Spinner v-if="searching && model.searchLoading" class="mr-1.5 size-[14px] text-muted-foreground" />
+        <Spinner
+          v-if="(searching && model.searchLoading) || (contentShown && content.loading.value)"
+          class="mr-1.5 size-[14px] text-muted-foreground"
+        />
         <button
           v-if="query"
           type="button"
@@ -790,8 +993,25 @@ const iconButton =
         >
           <XIcon class="size-[12px]" />
         </button>
+        <!-- Name or content, like the switches in VS Code's search. -->
+        <button
+          type="button"
+          aria-label="Im Inhalt der Dateien suchen"
+          :aria-pressed="model.searchContent"
+          class="mr-1 flex size-[20px] shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground aria-pressed:bg-primary/20 aria-pressed:text-foreground"
+          v-tooltip="model.searchContent ? 'Sucht im Inhalt der Dateien, ein Klick sucht nach Namen' : 'Im Inhalt der Dateien suchen'"
+          @click="toggleContent"
+        >
+          <TextSearchIcon class="size-[13px]" />
+        </button>
       </label>
-      <p v-if="searching && searchResult" class="px-2.5 pt-1.5 text-[11px] text-muted-foreground">
+      <p
+        v-if="contentShown && contentStatus"
+        :class="cn('px-2.5 pt-1.5 text-[11px]', content.error.value ? 'text-destructive' : 'text-muted-foreground')"
+      >
+        {{ contentStatus }}
+      </p>
+      <p v-else-if="searching && searchResult" class="px-2.5 pt-1.5 text-[11px] text-muted-foreground">
         {{
           searchResult.matches === 0
             ? 'Keine Datei passt.'
@@ -801,7 +1021,7 @@ const iconButton =
         }}
         <template v-if="model.search?.truncated && !filtered"> · nicht alle Dateien durchsucht</template>
       </p>
-      <p v-else-if="filtered && filteredPaths.length" class="flex items-center gap-1 px-2.5 pt-1.5 text-[11px] text-muted-foreground">
+      <p v-else-if="filtered && filteredPaths.length && !contentShown" class="flex items-center gap-1 px-2.5 pt-1.5 text-[11px] text-muted-foreground">
         <span class="min-w-0 truncate">
           {{ filterLabel }}: {{ filteredPaths.length }} {{ filteredPaths.length === 1 ? 'Datei' : 'Dateien' }}
           <template v-if="filters.changes && git && (git.truncated || (untrackedDirs.length && model.search?.truncated))"> · nicht alle</template>
@@ -824,6 +1044,17 @@ const iconButton =
     <div v-else-if="rootLoading" class="flex flex-1 justify-center pt-6">
       <Spinner class="size-[16px] text-muted-foreground" />
     </div>
+    <template v-else-if="contentShown">
+      <FileContentResults
+        v-if="content.result.value?.files.length"
+        ref="contentResults"
+        :result="content.result.value"
+        @open="openHit"
+        @type="typeInSearch"
+        @leave="searchInput?.focus()"
+      />
+      <div v-else class="flex-1" />
+    </template>
     <ContextMenu v-else>
       <ContextMenuTrigger as-child>
         <div
@@ -984,6 +1215,7 @@ const iconButton =
           <GitCompareIcon />
           Änderungen zeigen
         </ContextMenuItem>
+        <FileSessionsMenu v-if="!menuTarget.dir && menuTarget.path" :path="abs(menuTarget.path)" />
         <ContextMenuItem v-if="!menuTarget.dir" @select="openFile(menuTarget.path)">
           <ExternalLinkIcon />
           Mit Standardprogramm öffnen
@@ -1000,6 +1232,42 @@ const iconButton =
           <ListTreeIcon />
           Im Baum zeigen
         </ContextMenuItem>
+        <template v-if="menuState">
+          <ContextMenuSeparator />
+          <ContextMenuItem @select="onGit('stage', menuTarget.path)">
+            <PlusIcon />
+            Vormerken
+          </ContextMenuItem>
+          <ContextMenuItem v-if="menuState.staged" @select="onGit('unstage', menuTarget.path)">
+            <MinusIcon />
+            Nicht mehr vormerken
+          </ContextMenuItem>
+          <ContextMenuItem :variant="menuState.status === 'deleted' ? 'default' : 'destructive'" @select="onGit('discard', menuTarget.path)">
+            <Undo2Icon />
+            {{ menuState.status === 'deleted' ? 'Wiederherstellen…' : 'Änderungen verwerfen…' }}
+          </ContextMenuItem>
+        </template>
+        <ContextMenuSeparator />
+        <ContextMenuItem @select="create('file', menuFolder)">
+          <FilePlusIcon />
+          Neue Datei…
+        </ContextMenuItem>
+        <ContextMenuItem @select="create('folder', menuFolder)">
+          <FolderPlusIcon />
+          Neuer Ordner…
+        </ContextMenuItem>
+        <template v-if="menuTarget.path && !isGone(menuTarget.path)">
+          <ContextMenuItem @select="rename(menuTarget.path, menuTarget.dir)">
+            <PencilIcon />
+            Umbenennen…
+            <ContextMenuShortcut>F2</ContextMenuShortcut>
+          </ContextMenuItem>
+          <ContextMenuItem variant="destructive" @select="trash(menuTarget.path, menuTarget.dir)">
+            <Trash2Icon />
+            In den Papierkorb
+            <ContextMenuShortcut>Entf</ContextMenuShortcut>
+          </ContextMenuItem>
+        </template>
         <ContextMenuSeparator />
         <ContextMenuItem @select="copy(abs(menuTarget.path))">
           <CopyIcon />
@@ -1030,20 +1298,26 @@ const iconButton =
       </ContextMenuContent>
     </ContextMenu>
 
+    <FileNameDialog :root="target.root" :root-name="rootName" :request="nameRequest" @close="nameRequest = null" @done="onNamed" />
+
     <!-- The tree's inner edge: a line to drag its width by, like the dividers between groups. -->
     <div
       role="separator"
       aria-orientation="vertical"
       aria-label="Breite des Dateibaums ändern"
+      tabindex="0"
       :aria-valuenow="Math.round(fileTree.width)"
-      :class="cn('group/handle absolute inset-y-0 z-20 w-[9px] cursor-col-resize', side === 'left' ? '-right-[4px]' : '-left-[4px]')"
+      :aria-valuemin="MIN_TREE_WIDTH"
+      :aria-valuemax="MAX_TREE_WIDTH"
+      :class="cn('group/handle absolute inset-y-0 z-20 w-[9px] cursor-col-resize outline-none', side === 'left' ? '-right-[4px]' : '-left-[4px]')"
       @pointerdown="onResizeStart"
       @dblclick="fileTree.setWidth(DEFAULT_TREE_WIDTH)"
+      @keydown="onResizeKey"
     >
       <div
         :class="
           cn(
-            'absolute inset-y-0 left-[4px] w-px bg-border transition-colors group-hover/handle:bg-primary/60',
+            'absolute inset-y-0 left-[4px] w-px bg-border transition-colors group-hover/handle:bg-primary/60 group-focus-visible/handle:bg-primary',
             resizing && 'bg-primary/60',
           )
         "

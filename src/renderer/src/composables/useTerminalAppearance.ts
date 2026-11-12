@@ -57,6 +57,8 @@ export function useTerminalAppearance() {
   )
   /** Whether the output filter gives Claude Code's crab the accent of the theme. */
   const logo = computed(() => store.settings.terminal.logoColor)
+  /** The accent of the terminal's theme: the crab's color, the marks of the prompts beside the scrollbar. */
+  const accent = computed(() => theme.value.colors.primary)
 
   const containerBackground = computed(() => {
     const opacity = store.settings.terminal.backgroundOpacity
@@ -68,5 +70,5 @@ export function useTerminalAppearance() {
   /** Laid over the parts of a split tab without the keyboard, so the one with it stands out. */
   const inactiveVeil = computed(() => `color-mix(in oklab, ${palette.value.background} 45%, transparent)`)
 
-  return { palette, dark, slotTints, containerBackground, inactiveVeil, backgrounds, logo }
+  return { palette, dark, slotTints, containerBackground, inactiveVeil, backgrounds, logo, accent }
 }

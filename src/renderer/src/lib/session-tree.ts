@@ -83,10 +83,12 @@ export interface Placement {
 
 /** The section of the folders in no workspace. */
 export const FOLDERS_SECTION_ID = 'folders'
+/** The pinned sessions on top of the list. */
+export const PINNED_SECTION_ID = 'pinned'
 
-/** Workspaces and the other folders start open, start folders and folders closed (for an overview). */
+/** The pinned sessions, workspaces and the other folders start open, start folders and folders closed (for an overview). */
 export function opensByDefault(id: string): boolean {
-  return id === FOLDERS_SECTION_ID || id.startsWith('workspace\n')
+  return id === PINNED_SECTION_ID || id === FOLDERS_SECTION_ID || id.startsWith('workspace\n')
 }
 
 /**
@@ -299,6 +301,31 @@ export function buildSessionTree(
 /** The folders and all folders in them, each before the ones in it. */
 export function allFolders(folders: readonly SessionProject[]): SessionProject[] {
   return folders.flatMap((f) => [f, ...allFolders(f.folders)])
+}
+
+/** How many sessions a folder shows at first, and how many more each „Weitere … anzeigen“ adds. */
+export const PAGE_SIZE = 50
+
+/** The sessions a folder or section shows of its own: the first `PAGE_SIZE`, or as many as `pages` holds for its id. */
+export function pageOf<T>(sessions: readonly T[], id: string, pages: ReadonlyMap<string, number>): T[] {
+  return sessions.slice(0, pages.get(id) ?? PAGE_SIZE)
+}
+
+/**
+ * The sessions one sees in the list, top to bottom: those of open sections and open folders, and of
+ * each only as many as it shows (see `pageOf`). A Shift+click range takes these, never sessions hidden
+ * behind „Weitere … anzeigen“ in the middle of it.
+ */
+export function sessionsInView(
+  sections: readonly { id: string; projects: readonly SessionProject[]; sessions: readonly SessionSummary[] }[],
+  isOpen: (id: string) => boolean,
+  openFolders: ReadonlySet<string>,
+  pages: ReadonlyMap<string, number>,
+): SessionSummary[] {
+  // As a folder shows them: the folders in it first, then its own sessions.
+  const inFolder = (p: SessionProject): SessionSummary[] =>
+    openFolders.has(p.id) ? [...p.folders.flatMap(inFolder), ...pageOf(p.own, p.id, pages)] : []
+  return sections.filter((s) => isOpen(s.id)).flatMap((s) => [...s.projects.flatMap(inFolder), ...pageOf(s.sessions, s.id, pages)])
 }
 
 function newestFirst(a: { updatedAt: string }, b: { updatedAt: string }): number {

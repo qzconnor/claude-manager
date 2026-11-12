@@ -8,6 +8,17 @@ export type IndexerRequest =
   | { method: 'readToolCall'; filePath: string; toolUseId: string }
   /** An empty query only brings the search index up to date. */
   | { method: 'searchTranscripts'; projectsDir: string; query: string; limit: number }
+  /** The sessions that changed a file (absolute path) with Claude's Edit or Write. */
+  | { method: 'editedBy'; projectsDir: string; path: string }
+  /**
+   * What a session changed prompt by prompt (`historyDir`: its folder of Claude Code's file history,
+   * `cwd`: its folder, for the paths of older versions).
+   */
+  | { method: 'sessionChanges'; filePath: string; historyDir: string; cwd: string | null }
+  | { method: 'rewindPreview'; filePath: string; historyDir: string; cwd: string | null; turnId: string }
+  | { method: 'changeTexts'; filePath: string; historyDir: string; cwd: string | null; turnId: string; path: string; kind: 'turn' | 'rewind' }
+  /** Answered between two files: whether the worker is still alive while a request takes long. */
+  | { method: 'ping' }
 
 export type IndexerResponse =
   | { id: number; ok: true; result: unknown }
@@ -20,8 +31,24 @@ export interface IndexedSession extends ParsedSummary {
   fileUpdatedAt: string
 }
 
-/** [input, output, cacheCreation, cacheRead, messages] */
-export type TokenTuple = [number, number, number, number, number]
+/** A session that changed a file, and when it changed it last. */
+export interface FileEditHit {
+  session: IndexedSession
+  at: string
+}
+
+/** The cost in US dollars at the API's prices, without the answers of models the app has no price for. */
+export type TokenTuple = [input: number, output: number, cacheCreation: number, cacheRead: number, messages: number, cost: number]
+
+/** One session with its subagents; the folder, title and model as its own transcript records them. */
+export interface SessionTokenRow {
+  projectKey: string
+  sessionId: string
+  path: string | null
+  title: string | null
+  model: string | null
+  tokens: TokenTuple
+}
 
 /** Aggregates as tuples (see `TokenTuple`). */
 export interface TokenStatsResult {
@@ -32,7 +59,11 @@ export interface TokenStatsResult {
    * number of sessions. A worktree session counts for the folder it was started in.
    */
   folders: [string | null, string, TokenTuple, number][]
+  /** The most expensive sessions (see `TOP_SESSIONS`). */
+  sessions: SessionTokenRow[]
   sessionCount: number
+  /** Answers of models without a known price, which no cost includes. */
+  unpriced: number
 }
 
 /** Newest sessions first. */
@@ -46,4 +77,5 @@ export interface TranscriptSearchHit {
 export interface ConversationResult {
   messages: TranscriptMessage[]
   truncated: boolean
+  total: number
 }

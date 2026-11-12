@@ -40,19 +40,18 @@ import { useFolderMove } from '@/composables/useFolderMove'
 import { useLauncher } from '@/composables/useLauncher'
 import type { SessionRef } from '@/composables/useSessionDetail'
 import { useSessionRemoval } from '@/composables/useSessionRemoval'
+import { useSessionPage } from '@/composables/useSessionPages'
 import { sessionKey } from '@/composables/useSessionSearch'
 import { attempt } from '@/lib/errors'
 import { formatBytes, formatRelative } from '@/lib/format'
 import { splitFolder } from '@/lib/recent-folders'
-import type { SessionProject } from '@/lib/session-tree'
+import { PAGE_SIZE, type SessionProject } from '@/lib/session-tree'
 import { cn } from '@/lib/utils'
 import { useUiStore } from '@/stores/ui'
 import { useWorkspacesStore } from '@/stores/workspaces'
 import NewSessionButton from './NewSessionButton.vue'
 import NewSessionMenuItem from './NewSessionMenuItem.vue'
 import SessionListItem from './SessionListItem.vue'
-
-const PAGE_SIZE = 50
 
 /**
  * A folder in the session list (a project of a workspace, a folder in one, or a folder of its own): the
@@ -96,9 +95,15 @@ const ui = useUiStore()
 const workspaces = useWorkspacesStore()
 const folderMove = useFolderMove()
 const menuOpen = ref(false)
-const limit = ref(PAGE_SIZE)
 /** Its own sessions; those in its folders are with them. */
-const visible = computed(() => props.project.own.slice(0, limit.value))
+const {
+  shown: visible,
+  hidden,
+  showMore,
+} = useSessionPage(
+  () => props.project.id,
+  () => props.project.own,
+)
 
 const checkState = computed(() => {
   const count = props.project.sessions.filter((s) => props.checked?.has(sessionKey(s.accountId, s.id))).length
@@ -140,14 +145,14 @@ const moveTargets = computed(() => {
 })
 
 function moveTo(into: string) {
-  if (path.value) void folderMove.move(path.value, into, props.project.sessions.length)
+  if (path.value) void folderMove.move(path.value, into)
 }
 
 /** A new workspace, beside the one the folder lies in; the folder moves into it once made. */
 function moveToNewWorkspace() {
   if (!path.value || folderMove.blocked(path.value)) return
   const parent = splitFolder(splitFolder(path.value).parent).parent || null
-  ui.workspaceRequest = { mode: 'create', parent, move: { path: path.value, sessions: props.project.sessions.length } }
+  ui.workspaceRequest = { mode: 'create', parent, move: { path: path.value } }
 }
 
 /** The folder the project lies in, to make it a workspace with its neighbours; null for a drive or the root. */
@@ -173,7 +178,7 @@ async function copyPath() {
 </script>
 
 <template>
-  <Collapsible :open="open" class="flex flex-col" @update:open="emit('update:open', $event)">
+  <Collapsible :open="open" data-list-group class="flex flex-col" @update:open="emit('update:open', $event)">
     <ContextMenu @update:open="menuOpen = $event">
       <ContextMenuTrigger as-child>
         <div
@@ -200,6 +205,7 @@ async function copyPath() {
           </Checkbox>
           <CollapsibleTrigger
             v-tooltip="details"
+            data-list-row
             :disabled="empty"
             class="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-default"
           >
@@ -336,7 +342,7 @@ async function copyPath() {
       />
       <SessionListItem
         v-for="session in visible"
-        :key="session.id"
+        :key="sessionKey(session.accountId, session.id)"
         :session="session"
         :now="now"
         :selected="selected?.accountId === session.accountId && selected.sessionId === session.id"
@@ -348,13 +354,14 @@ async function copyPath() {
         @toggle="emit('toggle', session, $event)"
       />
       <Button
-        v-if="project.own.length > limit"
+        v-if="hidden > 0"
         variant="ghost"
         size="sm"
+        data-list-row
         class="self-start text-muted-foreground"
-        @click="limit += PAGE_SIZE"
+        @click="showMore"
       >
-        Weitere {{ Math.min(PAGE_SIZE, project.own.length - limit) }} von {{ project.own.length - limit }} anzeigen
+        Weitere {{ Math.min(PAGE_SIZE, hidden) }} von {{ hidden }} anzeigen
       </Button>
     </CollapsibleContent>
   </Collapsible>

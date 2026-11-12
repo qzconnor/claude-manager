@@ -9,6 +9,8 @@ interface Watched {
   /** The working directories asked for that lie in this repository. */
   cwds: Set<string>
   watcher: FSWatcher
+  /** Linux: the reftable folder (see `startWatching`). */
+  reftable: FSWatcher | null
   timer: NodeJS.Timeout | null
 }
 
@@ -17,6 +19,11 @@ interface Watched {
  * repository (worktrees and submodules included), so nothing shows without git. The branch comes
  * from the HEAD file, which is watched, so a checkout in the terminal shows up right away.
  */
+/** A repository that couldn't be watched is tried again after this long. */
+const WATCH_RETRY_MS = 30_000
+/** A new `.git` is looked at once nothing changed in it for this long (`git init` writes many files). */
+const REPO_SETTLE_MS = 300
+
 export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: GitBranch | null] }> {
   /** Only hits are kept: a folder can still become a repository later. */
   private readonly gitDirs = new Map<string, string>()
@@ -24,6 +31,12 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
   private readonly watched = new Map<string, Watched>()
   /** Counts the calls of `watch`; an older one that finishes late changes nothing. */
   private generation = 0
+  /** The folders of the last `watch`. */
+  private cwds: readonly string[] = []
+  /** Folders that are no repository yet: `git init` there makes one (see `watchForRepo`). */
+  private readonly waiting = new Map<string, { watcher: FSWatcher; timer: NodeJS.Timeout | null }>()
+  private retryTimer: NodeJS.Timeout | null = null
+  private disposed = false
 
   /** Null without git, outside a repository or with an unreadable HEAD. */
   async branch(cwd: string): Promise<GitBranch | null> {
@@ -45,6 +58,8 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
    * Replaces the folders of the previous call; a folder that is no repository yet is picked up by a later one.
    */
   async watch(cwds: readonly string[]): Promise<void> {
+    if (this.disposed) return
+    this.cwds = cwds
     const generation = ++this.generation
     const found = await Promise.all([...new Set(cwds)].map(async (cwd) => [cwd, await this.gitDir(cwd)] as const))
     if (generation !== this.generation) return
@@ -52,6 +67,9 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
     for (const [cwd, gitDir] of found) {
       if (gitDir) wanted.set(gitDir, (wanted.get(gitDir) ?? new Set()).add(cwd))
     }
+    const noRepo = new Set(found.filter(([, gitDir]) => !gitDir).map(([cwd]) => cwd))
+    for (const cwd of [...this.waiting.keys()]) if (!noRepo.has(cwd)) this.stopWaiting(cwd)
+    for (const cwd of noRepo) if (!this.waiting.has(cwd)) this.watchForRepo(cwd)
     for (const gitDir of [...this.watched.keys()]) {
       if (!wanted.has(gitDir)) this.unwatch(gitDir)
     }
@@ -63,8 +81,11 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
   }
 
   dispose(): void {
+    this.disposed = true
     this.generation++
+    if (this.retryTimer) clearTimeout(this.retryTimer)
     for (const gitDir of [...this.watched.keys()]) this.unwatch(gitDir)
+    for (const cwd of [...this.waiting.keys()]) this.stopWaiting(cwd)
   }
 
   /**
@@ -113,15 +134,78 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
 
   private startWatching(gitDir: string, cwds: Set<string>): void {
     try {
-      // git replaces HEAD through HEAD.lock, so the folder is watched, not the file.
+      // git replaces HEAD through HEAD.lock, so the folder is watched, not the file. With reftable refs
+      // HEAD stays put and the tables change: Windows tells it as a change of their folder, Linux not.
       const watcher = watch(gitDir, (_event, file) => {
-        if (file === 'HEAD') this.scheduleRead(gitDir)
+        if (file === 'HEAD' || file === 'reftable') this.scheduleRead(gitDir)
       })
-      watcher.on('error', () => this.unwatch(gitDir))
-      this.watched.set(gitDir, { cwds, watcher, timer: null })
+      watcher.on('error', () => {
+        this.unwatch(gitDir)
+        this.retry()
+      })
+      let reftable: FSWatcher | null = null
+      if (process.platform === 'linux' && existsSync(join(gitDir, 'reftable'))) {
+        try {
+          reftable = watch(join(gitDir, 'reftable'), () => this.scheduleRead(gitDir))
+          reftable.on('error', () => undefined)
+        } catch {
+          // Only the branch of reftable repositories lags then, until the window asks again.
+        }
+      }
+      this.watched.set(gitDir, { cwds, watcher, reftable, timer: null })
     } catch {
-      // Not watchable: the window still asks again when it gets the focus.
+      // Not watchable now: tried again later; the window also asks again when it gets the focus.
+      this.retry()
     }
+  }
+
+  /**
+   * Waits in a folder that is no repository for its `.git` (`git init`, `git clone .`): then the
+   * folders are watched anew, and the new branch is reported.
+   */
+  private watchForRepo(cwd: string): void {
+    try {
+      const watcher = watch(cwd, (_event, file) => {
+        if (file !== '.git') return
+        const waiting = this.waiting.get(cwd)
+        if (waiting?.watcher !== watcher) return
+        // `git init` writes many files: looked at once it is done.
+        if (waiting.timer) clearTimeout(waiting.timer)
+        waiting.timer = setTimeout(() => {
+          waiting.timer = null
+          void this.gitDir(cwd).then(async (gitDir) => {
+            if (!gitDir || this.waiting.get(cwd) !== waiting) return
+            this.stopWaiting(cwd)
+            this.emit('changed', cwd, await readBranch(gitDir))
+            void this.watch(this.cwds)
+          })
+        }, REPO_SETTLE_MS)
+      })
+      watcher.on('error', () => {
+        if (this.waiting.get(cwd)?.watcher === watcher) this.stopWaiting(cwd)
+        else watcher.close()
+      })
+      this.waiting.set(cwd, { watcher, timer: null })
+    } catch {
+      // The folder is gone: nothing to wait for.
+    }
+  }
+
+  private stopWaiting(cwd: string): void {
+    const waiting = this.waiting.get(cwd)
+    if (!waiting) return
+    if (waiting.timer) clearTimeout(waiting.timer)
+    waiting.watcher.close()
+    this.waiting.delete(cwd)
+  }
+
+  /** Watches the folders of the last call again, after a watcher failed. */
+  private retry(): void {
+    if (this.disposed || this.retryTimer) return
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null
+      void this.watch(this.cwds)
+    }, WATCH_RETRY_MS)
   }
 
   private scheduleRead(gitDir: string): void {
@@ -142,8 +226,17 @@ export class GitService extends TypedEmitter<{ changed: [cwd: string, branch: Gi
     if (!watched) return
     if (watched.timer) clearTimeout(watched.timer)
     watched.watcher.close()
+    watched.reftable?.close()
     this.watched.delete(gitDir)
   }
+}
+
+/** The branch of a repository with reftable refs, from git; a detached HEAD by its commit. */
+async function reftableBranch(gitDir: string): Promise<GitBranch | null> {
+  const branch = await runGit(gitDir, [`--git-dir=${gitDir}`, 'symbolic-ref', '--quiet', '--short', 'HEAD'])
+  if (branch.ok && branch.out) return { name: branch.out, detached: false }
+  const commit = await runGit(gitDir, [`--git-dir=${gitDir}`, 'rev-parse', '--short', 'HEAD'])
+  return commit.ok && commit.out ? { name: commit.out, detached: true } : null
 }
 
 type GitResult = { ok: true; out: string } | { ok: false; missing: boolean }
@@ -197,6 +290,26 @@ export function repoWebUrl(remote: string): string | null {
 }
 
 /**
+ * The page that opens a pull request (merge request) of `source` into `target` on the host of `web`
+ * (`repoWebUrl`): GitHub, GitLab, Bitbucket and Azure DevOps, also self-hosted ones named after them.
+ * Null for another host.
+ */
+export function pullRequestUrl(web: string, target: string, source: string): string | null {
+  const host = /^https?:\/\/([^/:]+)/i.exec(web)?.[1]?.toLowerCase() ?? ''
+  const ref = (name: string) => name.split('/').map(encodeURIComponent).join('/')
+  const query = encodeURIComponent
+  if (host.includes('github')) return `${web}/compare/${ref(target)}...${ref(source)}?expand=1`
+  if (host.includes('gitlab')) {
+    return `${web}/-/merge_requests/new?merge_request%5Bsource_branch%5D=${query(source)}&merge_request%5Btarget_branch%5D=${query(target)}`
+  }
+  if (host.includes('bitbucket')) return `${web}/pull-requests/new?source=${query(source)}&dest=${query(target)}`
+  if (host === 'dev.azure.com' || host.endsWith('.visualstudio.com')) {
+    return `${web}/pullrequestcreate?sourceRef=${query(source)}&targetRef=${query(target)}`
+  }
+  return null
+}
+
+/**
  * Only the git directory of a linked worktree (`<repository>/.git/worktrees/<name>`) has a `commondir` file:
  * it leads to the repository's own git directory, whose folder is the main checkout. A bare repository has
  * no checkout of its own; then its folder stands in. Submodules have no `commondir` either.
@@ -211,10 +324,12 @@ async function readMainWorktree(gitDir: string): Promise<string | null> {
 }
 
 /** `ref: refs/heads/<name>` names the branch; a bare commit hash means a detached HEAD. */
-async function readBranch(gitDir: string): Promise<GitBranch | null> {
+export async function readBranch(gitDir: string): Promise<GitBranch | null> {
   try {
     const head = (await readFile(join(gitDir, 'HEAD'), 'utf8')).trim()
     const ref = /^ref:\s*(?:refs\/heads\/)?(.+)$/.exec(head)
+    // reftable: HEAD only stands in for older git (`refs/heads/.invalid`), git itself knows the branch.
+    if (ref?.[1] === '.invalid') return reftableBranch(gitDir)
     if (ref) return { name: ref[1], detached: false }
     return /^[0-9a-f]{40,64}$/i.test(head) ? { name: head.slice(0, 7), detached: true } : null
   } catch {

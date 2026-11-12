@@ -6,7 +6,12 @@ import {
   GlobeIcon,
   HistoryIcon,
   KeyRoundIcon,
+  LayersIcon,
+  PencilIcon,
+  PlayIcon,
+  RotateCcwIcon,
   SquareTerminalIcon,
+  Trash2Icon,
 } from '@lucide/vue'
 import { injectDropdownMenuRootContext } from 'reka-ui'
 import { computed, watch } from 'vue'
@@ -25,11 +30,14 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useLauncher } from '@/composables/useLauncher'
 import { useRecentFolders } from '@/composables/useRecentFolders'
-import { shortenPath } from '@/lib/format'
+import { tabSetTabLabel } from '@shared/tab-sets'
+import { formatRelative, shortenPath } from '@/lib/format'
 import { shellLabel } from '@/lib/platform'
 import { useAccountsStore } from '@/stores/accounts'
 import { useAppStore } from '@/stores/app'
+import { useTabSetsStore } from '@/stores/tab-sets'
 import { useTerminalsStore } from '@/stores/terminals'
+import { useUiStore } from '@/stores/ui'
 
 /** Folders the menu offers to start in right away. */
 const RECENT_FOLDERS = 6
@@ -39,6 +47,8 @@ const router = useRouter()
 const app = useAppStore()
 const accounts = useAccountsStore()
 const terminals = useTerminalsStore()
+const tabSets = useTabSetsStore()
+const ui = useUiStore()
 const launcher = useLauncher()
 const root = injectDropdownMenuRootContext()
 const recent = useRecentFolders(RECENT_FOLDERS)
@@ -65,6 +75,21 @@ function startIn(event: Event, path: string) {
 function onFolderKey(event: KeyboardEvent, path: string) {
   if (event.key === 'Enter' || event.key === ' ') startIn(event, path)
 }
+
+/** Like a folder: a click (or Enter) on a tab set opens it, its submenu has the rest. */
+function openSet(event: Event, id: string) {
+  event.preventDefault()
+  event.stopImmediatePropagation()
+  root.onOpenChange(false)
+  void tabSets.open(id)
+}
+
+function onSetKey(event: KeyboardEvent, id: string) {
+  if (event.key === 'Enter' || event.key === ' ') openSet(event, id)
+}
+
+/** Login tabs can't be in a set. */
+const canSaveSet = computed(() => terminals.terminals.some((t) => t.mode !== 'login'))
 </script>
 
 <template>
@@ -74,7 +99,7 @@ function onFolderKey(event: KeyboardEvent, path: string) {
       <DropdownMenuItem v-for="account in accounts.accounts" :key="account.id" @select="launcher.newSession(account.id)">
         <AccountDot :color="account.color" />
         <span class="truncate">{{ account.name }}</span>
-        <DropdownMenuShortcut v-if="account.id === launcher.defaultAccountId()">Standard</DropdownMenuShortcut>
+        <DropdownMenuShortcut v-if="account.id === launcher.defaultAccountId()">Vorgabe</DropdownMenuShortcut>
       </DropdownMenuItem>
     </DropdownMenuGroup>
     <template v-if="recent.folders.value.length">
@@ -103,7 +128,7 @@ function onFolderKey(event: KeyboardEvent, path: string) {
             >
               <AccountDot :color="account.color" />
               <span class="truncate">{{ account.name }}</span>
-              <DropdownMenuShortcut v-if="account.id === launcher.defaultAccountId()">Standard</DropdownMenuShortcut>
+              <DropdownMenuShortcut v-if="account.id === launcher.defaultAccountId()">Vorgabe</DropdownMenuShortcut>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem @select="launcher.newSessionInWorktree(null, folder.path)">
@@ -113,6 +138,38 @@ function onFolderKey(event: KeyboardEvent, path: string) {
             <DropdownMenuItem @select="launcher.shell(launcher.defaultAccountId(), folder.path)">
               <SquareTerminalIcon />
               {{ shellLabel }} hier öffnen
+            </DropdownMenuItem>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+      </DropdownMenuGroup>
+    </template>
+    <template v-if="tabSets.sets.length">
+      <DropdownMenuSeparator />
+      <DropdownMenuLabel>Tab-Sets</DropdownMenuLabel>
+      <DropdownMenuGroup>
+        <DropdownMenuSub v-for="set in tabSets.sets" :key="set.id">
+          <DropdownMenuSubTrigger
+            v-tooltip.left="set.tabs.map(tabSetTabLabel).join(' · ')"
+            :text-value="set.name"
+            @click.capture="openSet($event, set.id)"
+            @keydown.capture="onSetKey($event, set.id)"
+          >
+            <LayersIcon />
+            <span class="min-w-0 flex-1 truncate">{{ set.name }}</span>
+            <span class="text-xs text-muted-foreground tabular-nums">{{ set.tabs.length }}</span>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent class="w-52">
+            <DropdownMenuItem @select="tabSets.open(set.id)">
+              <PlayIcon />
+              Öffnen
+            </DropdownMenuItem>
+            <DropdownMenuItem @select="ui.tabSetRequest = { mode: 'edit', id: set.id }">
+              <PencilIcon />
+              Bearbeiten…
+            </DropdownMenuItem>
+            <DropdownMenuItem variant="destructive" @select="tabSets.remove(set.id)">
+              <Trash2Icon />
+              Löschen
             </DropdownMenuItem>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
@@ -178,6 +235,24 @@ function onFolderKey(event: KeyboardEvent, path: string) {
         <HistoryIcon />
         Session fortsetzen…
       </DropdownMenuItem>
+      <DropdownMenuItem :disabled="!canSaveSet" @select="ui.tabSetRequest = { mode: 'create' }">
+        <LayersIcon />
+        Offene Tabs als Tab-Set speichern…
+      </DropdownMenuItem>
+      <DropdownMenuSub v-if="terminals.recentlyClosed.length">
+        <DropdownMenuSubTrigger>
+          <RotateCcwIcon />
+          Zuletzt geschlossen
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent class="w-72">
+          <DropdownMenuItem v-for="entry in terminals.recentlyClosed" :key="entry.id" @select="launcher.reopen(entry)">
+            <SquareTerminalIcon v-if="entry.mode === 'shell'" />
+            <AccountDot v-else :color="accounts.get(entry.authAccountId)?.color ?? accounts.get(entry.accountId)?.color" />
+            <span class="min-w-0 flex-1 truncate">{{ entry.title }}</span>
+            <DropdownMenuShortcut class="tracking-normal">{{ formatRelative(new Date(entry.closedAt).toISOString()) }}</DropdownMenuShortcut>
+          </DropdownMenuItem>
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
     </DropdownMenuGroup>
   </DropdownMenuContent>
 </template>

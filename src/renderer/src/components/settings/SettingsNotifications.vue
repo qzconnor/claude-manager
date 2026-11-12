@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { BellRingIcon } from '@lucide/vue'
 import { computed, ref } from 'vue'
-import type { AppSettings, DeepPartial, NotificationSettings, NotifyWhen } from '@shared/types'
+import type { AppSettings, DeepPartial, NotificationSettings } from '@shared/types'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -9,6 +9,8 @@ import { Switch } from '@/components/ui/switch'
 import { useSetting } from '@/composables/useSetting'
 import { attempt } from '@/lib/errors'
 import { isWindows } from '@/lib/platform'
+import { WHEN } from '@/lib/setting-choices'
+import type { SettingsResetKeys } from '@/lib/settings-reset'
 import NumberControl from './NumberControl.vue'
 import SettingField from './SettingField.vue'
 import SettingsSection from './SettingsSection.vue'
@@ -21,6 +23,11 @@ function notificationSetting<K extends keyof NotificationSettings>(key: K, delay
   )
 }
 
+/** The page shows all of them: the reset of its first card takes all along. */
+const RESET: SettingsResetKeys = {
+  notifications: ['enabled', 'onDone', 'minBusySeconds', 'onInput', 'onLimit', 'onNearLimit', 'nearLimitPercent', 'onLoginLost', 'when', 'toast', 'preview', 'sound', 'flashTaskbar', 'unreadDot'],
+}
+
 const enabled = notificationSetting('enabled')
 const onDone = notificationSetting('onDone')
 const minBusySeconds = notificationSetting('minBusySeconds', 300)
@@ -28,6 +35,7 @@ const onInput = notificationSetting('onInput')
 const onLimit = notificationSetting('onLimit')
 const onNearLimit = notificationSetting('onNearLimit')
 const nearLimitPercent = notificationSetting('nearLimitPercent', 300)
+const onLoginLost = notificationSetting('onLoginLost')
 const when = notificationSetting('when')
 const toast = notificationSetting('toast')
 const preview = notificationSetting('preview')
@@ -38,10 +46,6 @@ const unreadDot = notificationSetting('unreadDot')
 const off = computed(() => !enabled.value)
 const toastName = isWindows ? 'Windows-Benachrichtigung' : 'Systembenachrichtigung'
 
-const WHEN: { value: NotifyWhen; label: string }[] = [
-  { value: 'background', label: 'Fenster im Hintergrund' },
-  { value: 'hidden', label: 'Tab nicht sichtbar' },
-]
 const whenDescription = computed(() =>
   when.value === 'background'
     ? 'Nur, solange du in einem anderen Programm bist oder das Fenster minimiert ist. Den Punkt am Tab gibt es immer.'
@@ -62,7 +66,7 @@ async function sendTest() {
       anchor="notifications.main"
       title="Benachrichtigungen"
       description="Hinweise auf Tabs, in denen Claude fertig ist oder dich braucht, und auf fast verbrauchte Limits. Einzelne Tabs lassen sich über ihr Kontextmenü stummschalten."
-      reset-section="notifications"
+      :reset="RESET"
     >
       <SettingField
         anchor="notifications.enabled"
@@ -131,6 +135,14 @@ async function sendTest() {
           :step="5"
           :disabled="off || !toast || !onNearLimit"
         />
+      </SettingField>
+      <SettingField
+        anchor="notifications.onLoginLost"
+        for="notify-login-lost"
+        label="Login abgelaufen"
+        :description="`Der Browser-Login eines Accounts ist abgelaufen und lässt sich nicht mehr erneuern, nur neu anmelden hilft. Einmal pro Login, nur als ${toastName}, ein Klick öffnet die Accounts-Seite.`"
+      >
+        <Switch id="notify-login-lost" v-model="onLoginLost" :disabled="off || !toast" />
       </SettingField>
     </SettingsSection>
 

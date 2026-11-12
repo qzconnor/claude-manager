@@ -5,6 +5,7 @@ import type { Account, AccountUsage, AttentionKind, NotificationSettings, Termin
 import { isPlainObject, limitLabel, standardTwin } from '@shared/utils'
 import { readJson, writeJsonAtomic } from '../lib/json-file'
 import { nearLimits, type NearLimit, type WarnedWindows } from '../lib/near-limit'
+import { oneLine, plainText } from '../lib/plain-text'
 import { resourceIcon } from '../window/tray'
 import type { AccountService } from './account-service'
 import type { AutoSwitch } from './auto-switch'
@@ -18,6 +19,8 @@ const MAX_DETAIL_CHARS = 180
 interface WarnedFile {
   version: 1
   warned: WarnedWindows
+  /** Accounts whose dead login was told about: account id → when its tokens were saved (identifies the login). */
+  logins?: Record<string, string>
 }
 
 /** Where the app goes when a notification is clicked; both bring the window to the front. */
@@ -26,12 +29,14 @@ export interface NotificationTargets {
   terminal(id: string): void
   /** Shows the usage page. */
   usage(): void
+  /** Shows the accounts page. */
+  accounts(): void
 }
 
 /**
  * Points to tabs in which Claude Code is done, waits for the user or hit a limit (settings
  * `notifications`): a system notification, the flashing taskbar button and the dot on the tab.
- * Also warns when an account's limit is nearly used up.
+ * Also warns when an account's limit is nearly used up or its login ended.
  */
 export class NotificationService {
   /** The terminals the window shows: those of the selected tab while the terminals page is open, otherwise none. */
@@ -43,6 +48,10 @@ export class NotificationService {
   private readonly shown = new Map<string, Notification>()
   /** The latest warning about a limit of each account, kept for the same reasons. */
   private readonly limitWarnings = new Map<string, Notification>()
+  /** The notification about the dead login of each account, kept for the same reasons. */
+  private readonly loginWarnings = new Map<string, Notification>()
+  /** Accounts whose dead login was already told about, kept across restarts (see `WarnedFile.logins`). */
+  private loginsWarned: Record<string, string> = {}
   private test: Notification | null = null
   private readonly warnedFile: string
   /** Limit windows that were already warned about, kept across restarts. */
@@ -67,6 +76,9 @@ export class NotificationService {
       for (const [key, resetsAt] of Object.entries(stored.warned)) {
         if (typeof resetsAt === 'string' || resetsAt === null) this.warned[key] = resetsAt
       }
+      if (isPlainObject(stored.logins)) {
+        for (const [id, login] of Object.entries(stored.logins)) if (typeof login === 'string') this.loginsWarned[id] = login
+      }
     }
     this.terminals.on('turnEnded', (id, turn) => this.turnEnded(id, turn))
     this.terminals.on('changed', (terminals) => {
@@ -83,6 +95,7 @@ export class NotificationService {
       ) {
         this.checkLimits()
       }
+      if (loginLostWanted(next.notifications) !== loginLostWanted(previous.notifications)) this.checkLogins()
       const { enabled, unreadDot } = next.notifications
       if (enabled && unreadDot) return
       for (const terminal of this.terminals.list()) {
@@ -90,7 +103,9 @@ export class NotificationService {
       }
     })
     this.usage.on('changed', () => this.checkLimits())
+    this.accounts.on('changed', () => this.checkLogins())
     this.checkLimits()
+    this.checkLogins()
   }
 
   /**
@@ -152,8 +167,13 @@ export class NotificationService {
   private switched(from: TerminalInfo, to: TerminalInfo, target: Account): void {
     const settings = this.settings.get().notifications
     if (!settings.enabled || !settings.onLimit || to.muted) return
-    const limit = `${limitLabel(from.limit?.type ?? null)} von „${this.accountName(from.authAccountId)}“ erreicht`
     const shown = this.viewing.has(from.id) || this.viewing.has(to.id)
+    // It waited for the reset of its own limit.
+    if (target.id === from.authAccountId) {
+      this.alert(to, 'Limit zurückgesetzt', `Die Session läuft mit „${target.name}“ weiter`, shown, settings)
+      return
+    }
+    const limit = `${limitLabel(from.limit?.type ?? null)} von „${this.accountName(from.authAccountId)}“ erreicht`
     this.alert(to, `Weiter mit „${target.name}“`, limit, shown, settings)
   }
 
@@ -219,9 +239,58 @@ export class NotificationService {
       const reached = nearLimits(accountUsage, settings.nearLimitPercent, this.warned, Date.now())
       if (reached.length > 0) this.warnLimit(account, reached, settings)
     }
-    if (JSON.stringify(this.warned) !== before) {
-      void writeJsonAtomic(this.warnedFile, { version: 1, warned: this.warned } satisfies WarnedFile).catch(() => undefined)
+    if (JSON.stringify(this.warned) !== before) this.saveWarned()
+  }
+
+  private saveWarned(): void {
+    const file: WarnedFile = { version: 1, warned: this.warned, logins: this.loginsWarned }
+    void writeJsonAtomic(this.warnedFile, file).catch(() => undefined)
+  }
+
+  /**
+   * Tells about browser logins that ended and can't be renewed (`authState` `dead`): once per login,
+   * also across restarts. Signed in again (or the account removed), its next end tells again.
+   */
+  private checkLogins(): void {
+    const settings = this.settings.get().notifications
+    const accounts = this.accounts.list()
+    const before = JSON.stringify(this.loginsWarned)
+    for (const id of Object.keys(this.loginsWarned)) {
+      if (accounts.some((account) => account.id === id && account.authState === 'dead')) continue
+      delete this.loginsWarned[id]
+      this.dismissLoginWarning(id)
     }
+    if (loginLostWanted(settings)) {
+      // The standard account shares its login with its twin and isn't on the accounts page then.
+      const twin = standardTwin(accounts)
+      for (const account of accounts) {
+        if (account.authState !== 'dead' || account.id in this.loginsWarned || (twin && account.id === SYSTEM_ACCOUNT_ID)) continue
+        this.loginsWarned[account.id] = account.tokenSavedAt ?? ''
+        this.warnLogin(account, settings)
+      }
+    }
+    if (JSON.stringify(this.loginsWarned) !== before) this.saveWarned()
+  }
+
+  /** A click shows the accounts page, where "Neu anmelden" is. */
+  private warnLogin(account: Account, settings: NotificationSettings): void {
+    if (!Notification.isSupported()) return
+    const notification = this.create(
+      'Login abgelaufen',
+      `${account.name}\nClaude Code kann den Login nicht mehr erneuern. Melde dich neu an.`,
+      settings,
+    )
+    notification.on('click', () => this.open.accounts())
+    this.dismissLoginWarning(account.id)
+    this.loginWarnings.set(account.id, notification)
+    notification.show()
+  }
+
+  private dismissLoginWarning(accountId: string): void {
+    const notification = this.loginWarnings.get(accountId)
+    if (!notification) return
+    this.loginWarnings.delete(accountId)
+    notification.close()
   }
 
   /** One notification per account; a click shows the usage page. */
@@ -278,6 +347,10 @@ function nearLimitWanted(settings: NotificationSettings): boolean {
   return settings.enabled && settings.onNearLimit && settings.toast
 }
 
+function loginLostWanted(settings: NotificationSettings): boolean {
+  return settings.enabled && settings.onLoginLost && settings.toast
+}
+
 function wanted(settings: NotificationSettings, kind: AttentionKind): boolean {
   if (kind === 'done') return settings.onDone
   if (kind === 'input') return settings.onInput
@@ -303,25 +376,8 @@ function describe(terminal: TerminalInfo, turn: TurnEnd, preview: boolean): { ti
   return { title: 'Claude ist fertig', detail: preview ? shorten(plainText(turn.detail)) : null }
 }
 
-/** Markdown of an answer as plain text on one line; code blocks are left out. */
-export function plainText(markdown: string | null): string | null {
-  if (!markdown) return null
-  const text = markdown
-    .replace(/```[\s\S]*?(```|$)/g, ' ')
-    .replace(/`([^`\n]*)`/g, '$1')
-    .replace(/!?\[([^\]\n]*)\]\([^)\n]*\)/g, '$1')
-    .replace(/^[ \t]{0,3}(#{1,6}[ \t]+|[-*+][ \t]+|\d+[.)][ \t]+|>[ \t]?)/gm, '')
-    .replace(/\*\*([^*\n]+)\*\*/g, '$1')
-    .replace(/__([^_\n]+)__/g, '$1')
-    .replace(/\s+/g, ' ')
-    .trim()
-  return text || null
-}
-
 function shorten(text: string | null): string | null {
-  const single = text?.replace(/\s+/g, ' ').trim()
-  if (!single) return null
-  return single.length > MAX_DETAIL_CHARS ? `${single.slice(0, MAX_DETAIL_CHARS - 1)}…` : single
+  return oneLine(text, MAX_DETAIL_CHARS)
 }
 
 /** "um 19:40", on another day "Fr. 19:40". */

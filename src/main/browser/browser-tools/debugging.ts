@@ -5,7 +5,7 @@ import { effectivePermissions } from '../page-emulation'
 import { formatConsoleEntry } from '../page-errors'
 import { cut, optionalBoolean, optionalNumber, stringList, ToolError } from '../tool-args'
 import { describeEmulation, mergePermissions, parseEmulation, PERMISSIONS } from './emulation-args'
-import { bodyText, formatBytes, headerLines, MAX_BODY_CHARS, responseBody } from './network-format'
+import { formatBytes, headerLines, MAX_BODY_CHARS, requestBodyText, responseBody } from './network-format'
 import { measurePerformance } from './performance'
 import { str } from './test-code'
 import { NAVIGATION_WAIT_MS, pageState, shortAddress, tool, type ToolDefinition } from './tool'
@@ -122,6 +122,7 @@ export const debuggingTools: ToolDefinition<never>[] = [
     },
     required: ['id'],
     readOnly: true,
+    sensitive: true,
     kind: 'network',
     whileDialog: true,
     parse: (args) => {
@@ -158,7 +159,7 @@ export const debuggingTools: ToolDefinition<never>[] = [
           .then((r) => r.postData)
           .catch(() => null)
       }
-      if (sent !== null) lines.push('', 'Request body:', bodyText(sent, entry.requestHeaders['content-type'] ?? entry.requestHeaders['Content-Type'] ?? null))
+      if (sent !== null) lines.push('', 'Request body:', requestBodyText(sent, entry.requestHeaders['content-type'] ?? entry.requestHeaders['Content-Type'] ?? null))
       if (entry.responseHeaders) lines.push('', 'Response headers:', ...headerLines(entry.responseHeaders))
       if (entry.messages) {
         lines.push('', ...socketMessages(entry, p.messages))
@@ -195,7 +196,7 @@ export const debuggingTools: ToolDefinition<never>[] = [
         properties: Object.fromEntries(PERMISSIONS.map((name) => [name, { type: 'string', enum: ['granted', 'denied', 'default'] }])),
         additionalProperties: false,
         description:
-          "Permissions the page gets (granted) or is refused (denied); default: as the browser has it (it refuses them). camera and microphone are the computer's real devices; notifications show as real notifications.",
+          "Permissions the page gets (granted) or is refused (denied); default: as the browser has it (it refuses them). A grant holds for the site open now only (its origin, like the location from geolocation): not for frames of other sites in it, nor after the tab goes to another site; give it again there. A refusal holds for every site. camera and microphone are the computer's real devices; notifications show as real notifications.",
       },
       reset: { type: 'boolean', description: 'End all emulation.' },
     },
@@ -230,6 +231,7 @@ export const debuggingTools: ToolDefinition<never>[] = [
       reload: { type: 'boolean', description: 'Load the page again afterwards (default true).' },
     },
     destructive: true,
+    sensitive: true,
     kind: 'clear',
     parse: (args) => {
       const what = args.what === undefined || args.what === null ? [...SITE_DATA] : stringList(args, 'what', 3)

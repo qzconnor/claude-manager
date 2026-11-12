@@ -1,7 +1,9 @@
 import { tryOnScopeDispose, useEventListener } from '@vueuse/core'
 import { useRouter } from 'vue-router'
+import { toast } from 'vue-sonner'
 import { createDefaultSettings } from '@shared/defaults'
 import { matchBrowserShortcut, matchShortcut, type Shortcut } from '@shared/shortcuts'
+import { nextWaiting } from '@/lib/overview'
 import { useBrowsersStore } from '@/stores/browsers'
 import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
@@ -35,8 +37,8 @@ export function useShortcuts() {
   const showTerminals = () => {
     if (!terminals.grouped && !onTerminals()) void router.push({ name: 'terminals' })
   }
-  /** The browser with the keyboard, if a browser has it. */
-  const activeBrowser = () => (onTerminals() ? browsers.get(terminals.activeId) : undefined)
+  /** The browser with the keyboard, if a browser has it; not one hidden behind a page or another tab. */
+  const activeBrowser = () => (onTerminals() ? browsers.get(terminals.keyboardTerminal) : undefined)
 
   /** `event`: the key in the window, which is kept from the page; a browser page's key has been already. */
   function run(shortcut: Shortcut, event?: KeyboardEvent): void {
@@ -61,8 +63,9 @@ export function useShortcuts() {
         void launcher.newSession()
         break
       case 'close-tab':
-        // The tab with the keyboard: the terminal, in groups also a page.
-        if (terminals.focusedTab) void closeTerminal(terminals.focusedTab)
+        // The tab with the keyboard: the terminal, in groups also a page. In one tab bar only while the
+        // terminals are shown: on another page the tab isn't to be seen.
+        if (terminals.focusedTab && (terminals.grouped || onTerminals())) void closeTerminal(terminals.focusedTab)
         break
       case 'next-tab':
       case 'previous-tab':
@@ -104,6 +107,14 @@ export function useShortcuts() {
       case 'toggle-file-tree':
         fileTree.toggle()
         break
+      case 'next-waiting': {
+        const id = nextWaiting(terminals.terminals, terminals.keyboardTerminal)
+        if (id) {
+          terminals.activate(id)
+          showTerminals()
+        } else toast('Kein Tab wartet auf dich')
+        break
+      }
       case 'browser-address':
         activeBrowser()?.focusAddress()
         break

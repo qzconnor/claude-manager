@@ -6,12 +6,18 @@ import {
   diffLines,
   diffMode,
   fileLines,
+  isHeadRow,
   lineAtRow,
   lineColumns,
   MAX_DIFF_COLUMNS,
   numberDigits,
   parsePatch,
+  sameDiff,
   shownText,
+  sideBySide,
+  splitOffsets,
+  unchangedNote,
+  wordMarks,
   wrapOffsets,
   wrappedRows,
   type DiffLine,
@@ -64,6 +70,51 @@ describe('parsePatch', () => {
     expect(parsePatch('@@ -1 +1 @@\r\n-a\r\n+b\r\n').lines.map((l) => l.text)).toEqual(['', 'a', 'b'])
     expect(parsePatch('')).toEqual({ lines: [], added: 0, removed: 0 })
   })
+
+  it('keeps a lone carriage return in its line, as git does', () => {
+    const { lines } = parsePatch('@@ -1,2 +1,2 @@\n-50%\r100%\n+done\n same\n')
+    expect(lines.slice(1)).toEqual([
+      { kind: 'del', text: '50%\r100%', old: 1, new: null },
+      { kind: 'add', text: 'done', old: null, new: 1 },
+      { kind: 'context', text: 'same', old: 2, new: 2 },
+    ])
+  })
+
+  it('shows lines whose line ending alone changed, and says so', () => {
+    const { lines, eol } = parsePatch('@@ -1,3 +1,3 @@\n-one\r\n-two\r\n+one\n+two\n three\r\n')
+    expect(eol).toBe('Nur Zeilenenden geändert (CRLF → LF)')
+    expect(lines.slice(1)).toEqual([
+      { kind: 'del', text: 'one', old: 1, new: null, eol: 'crlf' },
+      { kind: 'del', text: 'two', old: 2, new: null, eol: 'crlf' },
+      { kind: 'add', text: 'one', old: null, new: 1, eol: 'lf' },
+      { kind: 'add', text: 'two', old: null, new: 2, eol: 'lf' },
+      { kind: 'context', text: 'three', old: 3, new: 3 },
+    ])
+  })
+
+  it('counts line endings changed among other changes, the other way round too', () => {
+    const { lines, eol } = parsePatch('@@ -1,2 +1,2 @@\n-one\n-two\n+one\r\n+TWO\r\n')
+    expect(eol).toBe('Zeilenenden in 1 Zeile geändert (LF → CRLF)')
+    expect(lines.map((l) => l.eol)).toEqual([undefined, 'lf', undefined, 'crlf', undefined])
+  })
+
+  it('marks the words that changed between a removed line and the added one in its place', () => {
+    const { lines } = parsePatch('@@ -1,3 +1,3 @@\n-let size = 10\n-old()\n+let size = 20\n+entirely different code\n same\n')
+    const [, size, old, newSize, other] = lines
+    const words = (line: DiffLine) => wordMarks(line).map(([start, end]) => line.text.slice(start, end))
+    expect(words(size!)).toEqual(['10'])
+    expect(words(newSize!)).toEqual(['20'])
+    // Changed whole: nothing to mark.
+    expect(words(old!)).toEqual([])
+    expect(words(other!)).toEqual([])
+    expect(wordMarks(lines[5]!)).toEqual([])
+  })
+
+  it('marks nothing where the text changed and the line ending stayed', () => {
+    const parsed = parsePatch('@@ -1 +1 @@\r\n-a\r\n+b\r\n')
+    expect(parsed.eol).toBeUndefined()
+    expect(parsed.lines.some((l) => l.eol)).toBe(false)
+  })
 })
 
 describe('fileLines', () => {
@@ -76,6 +127,7 @@ describe('fileLines', () => {
     expect(fresh.added).toBe(2)
     expect(fresh.lines[1]).toEqual({ kind: 'add', text: 'y', old: null, new: 2 })
     expect(fileLines('', 'context').lines).toEqual([])
+    expect(fileLines('a\rb\n', 'context').lines.map((l) => l.text)).toEqual(['a\rb'])
   })
 })
 
@@ -101,6 +153,33 @@ describe('diffMode', () => {
     expect(diffMode(diff({ tooLarge: true, binary: true }), 'modified')).toBe('tooLarge')
   })
 
+  it('shows an image as such, and tells when it changed again', () => {
+    const image = (before: string | null, after: string | null) => diff({ binary: true, patch: 'Binary files a/x.png and b/x.png differ\n', image: { before, after } })
+    expect(diffMode(image('data:a', 'data:b'), 'modified')).toBe('image')
+    expect(diffMode(image(null, 'data:b'), 'untracked')).toBe('image')
+    // Too big on both sides: nothing to show.
+    expect(diffMode(image(null, null), 'modified')).toBe('binary')
+    expect(diffLines(image('data:a', 'data:b'), 'image').lines).toEqual([])
+    // The patch of a binary file stays the same, the image doesn't.
+    expect(sameDiff(image('data:a', 'data:b'), image('data:a', 'data:b'))).toBe(true)
+    expect(sameDiff(image('data:a', 'data:b'), image('data:a', 'data:c'))).toBe(false)
+    expect(diffHash(image('data:a', 'data:b'))).not.toBe(diffHash(image('data:a', 'data:c')))
+  })
+
+  it('shows a file only renamed or made executable as it is, and says why', () => {
+    const renamed = 'diff --git a/a.ts b/b.ts\nsimilarity index 100%\nrename from a.ts\nrename to b.ts\n'
+    const chmod = 'diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode 100755\n'
+    expect(diffMode(diff({ patch: renamed, text: 'x' }), 'renamed')).toBe('unchanged')
+    expect(diffMode(diff({ patch: chmod, text: 'x' }), 'modified')).toBe('unchanged')
+    expect(unchangedNote(renamed)).toBe('Umbenannt, Inhalt unverändert')
+    expect(unchangedNote(chmod)).toBe('Jetzt ausführbar, Inhalt unverändert')
+    expect(unchangedNote(`${renamed.replace('100%', '100%\nold mode 100755\nnew mode 100644')}`)).toBe(
+      'Umbenannt und nicht mehr ausführbar, Inhalt unverändert',
+    )
+    expect(unchangedNote('')).toBeNull()
+    expect(unchangedNote(PATCH)).toBeNull()
+  })
+
   it('gives the lines of each mode', () => {
     expect(diffLines(diff({ patch: PATCH }), 'diff')).toMatchObject({ added: 3, removed: 2 })
     expect(diffLines(diff({ text: 'a\nb\n' }), 'new')).toMatchObject({ added: 2, removed: 0 })
@@ -114,6 +193,16 @@ describe('diffMode', () => {
     expect(diffColumns(lines)).toBe(Math.max(...lines.map((l) => l.text.length)))
     expect(diffColumns([{ kind: 'add', text: 'x'.repeat(MAX_DIFF_COLUMNS * 2), old: null, new: 1 }])).toBe(MAX_DIFF_COLUMNS)
     expect(numberDigits([])).toBe(1)
+  })
+})
+
+describe('sameDiff', () => {
+  it('tells an answer that says the same from one that changed', () => {
+    expect(sameDiff(diff({ patch: PATCH }), diff({ patch: PATCH }))).toBe(true)
+    expect(sameDiff(diff({ text: 'a' }), diff({ text: 'a' }))).toBe(true)
+    expect(sameDiff(diff({ patch: PATCH }), diff({ patch: `${PATCH} ` }))).toBe(false)
+    expect(sameDiff(diff({ text: 'a' }), diff({ text: 'a', missing: true }))).toBe(false)
+    expect(sameDiff(diff({ text: 'a' }), diff({ text: 'a', repo: false }))).toBe(false)
   })
 })
 
@@ -154,5 +243,57 @@ describe('wrapping', () => {
     expect([...offsets]).toEqual([0, 1, 4, 5])
     expect([0, 1, 2, 3, 4, 9].map((row) => lineAtRow(offsets, row))).toEqual([0, 1, 1, 1, 2, 2])
     expect(lineAtRow(new Uint32Array([0]), 3)).toBe(0)
+  })
+})
+
+describe('side by side', () => {
+  const line = (kind: DiffLine['kind'], text = 'x'): DiffLine => ({ kind, text, old: null, new: null })
+
+  it('puts removed lines beside the added ones at their place, the rest on both sides', () => {
+    const { lines } = parsePatch(PATCH)
+    expect(sideBySide(lines)).toEqual([
+      { left: 0, right: 0 },
+      { left: 1, right: 1 },
+      { left: 2, right: 3 },
+      { left: null, right: 4 },
+      { left: 5, right: 5 },
+      // The empty line before the second section is one of the file.
+      { left: 6, right: 6 },
+      { left: 7, right: 7 },
+      { left: 8, right: 8 },
+      { left: 9, right: 10 },
+    ])
+    expect(sideBySide(lines).map((row) => isHeadRow(row, lines))).toEqual([true, false, false, false, false, false, true, false, false])
+  })
+
+  it('leaves a side empty where lines were only removed or only added', () => {
+    const lines = [line('context'), line('add'), line('add'), line('context'), line('del'), line('del'), line('del'), line('add')]
+    expect(sideBySide(lines)).toEqual([
+      { left: 0, right: 0 },
+      { left: null, right: 1 },
+      { left: null, right: 2 },
+      { left: 3, right: 3 },
+      { left: 4, right: 7 },
+      { left: 5, right: null },
+      { left: 6, right: null },
+    ])
+    expect(sideBySide([])).toEqual([])
+  })
+
+  it('pairs the lines whose changed words are marked', () => {
+    const { lines } = parsePatch(['@@ -1,2 +1,2 @@', '-const a = 1', '-const b = 1', '+const a = 2', '+const b = 3', ''].join('\n'))
+    expect(sideBySide(lines)).toEqual([
+      { left: 0, right: 0 },
+      { left: 1, right: 3 },
+      { left: 2, right: 4 },
+    ])
+    const marked = (index: number) => wordMarks(lines[index]!).map(([start, end]) => lines[index]!.text.slice(start, end))
+    expect([marked(1), marked(3), marked(2), marked(4)]).toEqual([['1'], ['2'], ['1'], ['3']])
+  })
+
+  it('gives a row the rows of its longer side, a section head one', () => {
+    const lines = [line('hunk', 'h'.repeat(30)), line('context', 'c'.repeat(25)), line('del', 'short'), line('add', 'a'.repeat(21)), line('add')]
+    const rows = sideBySide(lines)
+    expect([...splitOffsets(rows, lines, 10)]).toEqual([0, 1, 4, 7, 8])
   })
 })

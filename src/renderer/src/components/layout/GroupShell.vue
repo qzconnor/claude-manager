@@ -2,6 +2,7 @@
 import { watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GroupWorkspace from '@/components/terminal/GroupWorkspace.vue'
+import { useWakeShown } from '@/composables/useWakeShown'
 import { isPage } from '@/lib/workspace'
 import { useTerminalsStore } from '@/stores/terminals'
 import GroupTitleBar from './GroupTitleBar.vue'
@@ -43,6 +44,7 @@ watch(
   (ids) => window.api.terminals.viewing(ids ? ids.split(',') : []),
   { immediate: true },
 )
+useWakeShown(() => terminals.visibleIds)
 </script>
 
 <template>

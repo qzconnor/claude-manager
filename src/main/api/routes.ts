@@ -1,3 +1,4 @@
+import { MAX_STATS_DAYS } from '@shared/defaults'
 import type { TerminalCreateOptions } from '@shared/types'
 import type { AppContext } from '../context'
 import {
@@ -122,6 +123,31 @@ export const routes: Route[] = [
     },
     handler: (ctx) => requireAccount(ctx, ctx.params.accountId),
   },
+  {
+    method: 'POST',
+    path: '/api/v1/accounts/{accountId}/renew-login',
+    doc: {
+      tag: 'Accounts',
+      summary: 'Login erneuern',
+      description:
+        'Holt mit dem Refresh-Token des Browser-Logins einen neuen Access-Token, auch wenn der alte noch gilt, ' +
+        'wie Claude Code beim Start einer Session. `rejected`: Nur neu anmelden hilft. `busy`: Claude Code erneuert gerade. ' +
+        '`failed`: Netzwerk oder Server, später erneut versuchen.',
+      pathParams: [accountIdParam],
+      response: {
+        description: 'Ergebnis',
+        schema: {
+          type: 'object',
+          properties: { result: { type: 'string', enum: ['renewed', 'busy', 'rejected', 'failed'] } },
+          required: ['result'],
+        },
+      },
+    },
+    handler: async (ctx) => {
+      requireAccount(ctx, ctx.params.accountId)
+      return { result: await ctx.app.usage.renewLogin(ctx.params.accountId) }
+    },
+  },
 
   // --- usage -----------------------------------------------------------------
   {
@@ -169,7 +195,24 @@ export const routes: Route[] = [
     },
     handler: (ctx) => {
       requireAccount(ctx, ctx.params.accountId)
-      return ctx.app.usage.stats(ctx.params.accountId, queryInteger(ctx.query, 'days', 1, 365) ?? 30)
+      return ctx.app.usage.stats(ctx.params.accountId, queryInteger(ctx.query, 'days', 1, MAX_STATS_DAYS) ?? 30)
+    },
+  },
+  {
+    method: 'GET',
+    path: '/api/v1/accounts/{accountId}/usage-history',
+    doc: {
+      tag: 'Usage',
+      summary: 'Verlauf der Limits',
+      description:
+        'Messwerte des 5-Stunden-Limits der letzten zwei Tage und des Wochenlimits der letzten 15 Tage, wie die App sie abgefragt hat. ' +
+        'Gesammelt wird, solange die App läuft.',
+      pathParams: [accountIdParam],
+      response: { description: 'Verlauf', schema: ref('UsageHistory') },
+    },
+    handler: (ctx) => {
+      requireAccount(ctx, ctx.params.accountId)
+      return ctx.app.usage.history(ctx.params.accountId)
     },
   },
 
@@ -196,15 +239,19 @@ export const routes: Route[] = [
     doc: {
       tag: 'Sessions',
       summary: 'Verlauf einer Session',
-      description: 'Nachrichten als Markdown; bei sehr langen Sessions nur der neueste Teil.',
+      description: 'Nachrichten als Markdown; bei sehr langen Sessions nur der neueste Teil (`limit`).',
       pathParams: [accountIdParam, { name: 'sessionId', description: 'Session-ID (UUID)' }],
+      queryParams: [
+        { name: 'limit', description: 'Höchstens so viele neueste Nachrichten (Standard 600)', schema: { type: 'integer', minimum: 1 } },
+      ],
       response: { description: 'Session', schema: ref('SessionDetail') },
     },
     handler: async (ctx) => {
       requireAccount(ctx, ctx.params.accountId)
       if (!SESSION_ID_RE.test(ctx.params.sessionId)) throw new HttpError(400, 'Ungültige Session-ID.')
+      const limit = queryInteger(ctx.query, 'limit', 1, 100_000)
       try {
-        return await ctx.app.sessions.get(ctx.params.accountId, ctx.params.sessionId)
+        return await ctx.app.sessions.get(ctx.params.accountId, ctx.params.sessionId, limit)
       } catch (error) {
         throw new HttpError(404, error instanceof Error ? error.message : 'Session nicht gefunden.')
       }
@@ -271,7 +318,7 @@ export const routes: Route[] = [
       } catch (error) {
         throw new HttpError(400, error instanceof Error ? error.message : String(error))
       }
-      if (!terminal) throw new HttpError(403, 'Dem Ordner wurde in der App nicht vertraut.')
+      if (!terminal) throw new HttpError(403, 'In der App abgelehnt: dem Ordner wird nicht vertraut, oder die Session ist anderswo schon offen.')
       if (optionalBoolean(body, 'activate')) ctx.activateTerminal(terminal.id)
       return terminal
     },
@@ -351,6 +398,7 @@ export const routes: Route[] = [
     handler: async (ctx) => {
       const terminal = requireTerminal(ctx, ctx.params.id)
       const data = requiredString(await ctx.body(), 'data', 256 * 1024)
+      if (terminal.status === 'asleep') throw new HttpError(409, 'Der Tab ist vom letzten Start und startet erst, wenn die App ihn zeigt.')
       if (terminal.status !== 'running') throw new HttpError(409, 'Der Prozess ist bereits beendet.')
       ctx.app.terminals.write(ctx.params.id, data)
     },

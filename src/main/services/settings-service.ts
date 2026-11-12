@@ -1,10 +1,10 @@
 import { statSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { createDefaultSettings as sharedDefaults } from '@shared/defaults'
-import type { AppSettings, DeepPartial, SettingsImportResult } from '@shared/types'
-import { isPlainObject, mergeKnown } from '@shared/utils'
-import { readJson, readJsonSync, writeJsonAtomic } from '../lib/json-file'
+import type { AppSettings, DeepPartial, SettingChange, SettingsImportPreview } from '@shared/types'
+import { isPlainObject, mergeKnown, sameData } from '@shared/utils'
+import { readJson, readJsonGuardedSync, writeJsonAtomic } from '../lib/json-file'
 import { TypedEmitter } from '../lib/typed-emitter'
 
 /** The defaults of this platform (e.g. the terminal font). */
@@ -26,7 +26,7 @@ export class SettingsService extends TypedEmitter<Events> {
   constructor(userDataDir: string) {
     super()
     this.file = join(userDataDir, 'settings.json')
-    this.settings = sanitize(mergeKnown(createDefaultSettings(), migrate(readJsonSync(this.file))))
+    this.settings = sanitize(mergeKnown(createDefaultSettings(), migrate(readJsonGuardedSync(this.file))))
   }
 
   get(): AppSettings {
@@ -37,7 +37,7 @@ export class SettingsService extends TypedEmitter<Events> {
     const previous = this.settings
     // An invalid value in the patch (e.g. null) leaves the setting as it was.
     this.settings = sanitize(mergeKnown(this.settings, patch), previous)
-    await writeJsonAtomic(this.file, this.settings)
+    await writeJsonAtomic(this.file, this.settings, { guarded: true })
     this.emit('changed', this.get(), previous)
     return this.get()
   }
@@ -46,7 +46,7 @@ export class SettingsService extends TypedEmitter<Events> {
     const defaults = createDefaultSettings()
     const previous = this.settings
     this.settings = section ? { ...this.settings, [section]: defaults[section] } : defaults
-    await writeJsonAtomic(this.file, this.settings)
+    await writeJsonAtomic(this.file, this.settings, { guarded: true })
     this.emit('changed', this.get(), previous)
     return this.get()
   }
@@ -65,18 +65,69 @@ export class SettingsService extends TypedEmitter<Events> {
   }
 
   /**
-   * Takes over the settings of an exported file (a settings.json from the data folder works too).
-   * Settings the file doesn't have keep their value, e.g. ones newer than the file.
+   * Reads what the settings of an exported file (a settings.json from the data folder works too)
+   * would change, without taking anything over: the user picks the changes, which then come as an
+   * update. Settings the file doesn't have keep their value, e.g. ones newer than the file.
    */
-  async importFrom(file: string): Promise<SettingsImportResult> {
+  async previewImport(file: string): Promise<SettingsImportPreview> {
     if ((await stat(file)).size > MAX_IMPORT_BYTES) throw new Error('Die Datei ist zu groß für exportierte Einstellungen.')
     const data = await readJson<unknown>(file)
     if (data === null) throw new Error('Die Datei ist kein gültiges JSON.')
     const imported = migrate(settingsIn(data)) as Record<string, unknown>
     dropLocal(imported)
     const skipped = dropMissingPaths(imported)
-    return { settings: await this.update(imported as DeepPartial<AppSettings>), skipped }
+    // Cleaned up like an update, so the preview shows what the settings would really be.
+    const next = sanitize(mergeKnown(this.get(), imported), this.settings)
+    const exported = isPlainObject(data) && data.format === EXPORT_FORMAT ? data : null
+    const exportedAt =
+      typeof exported?.exportedAt === 'string' && !Number.isNaN(Date.parse(exported.exportedAt)) ? exported.exportedAt : null
+    return {
+      fileName: basename(file),
+      appVersion: typeof exported?.appVersion === 'string' ? exported.appVersion.slice(0, 40) : null,
+      exportedAt,
+      changes: settingChanges(this.settings, next),
+      skipped,
+    }
   }
+}
+
+/**
+ * Settings that decide what runs (the program and its options, the message sent after a switch) or
+ * what Claude may do without asking. A file from someone else could run anything with them, so an
+ * import only takes them over when the user picks them. `widens`: only when the file turns it on.
+ */
+const SENSITIVE: { path: string; widens?: boolean }[] = [
+  { path: 'claude.executablePath' },
+  { path: 'claude.defaultArgs' },
+  { path: 'claude.continuePrompt' },
+  { path: 'claude.browserToolsAllowed', widens: true },
+  { path: 'claude.browserSensitiveAllowed', widens: true },
+  { path: 'claude.shellTools', widens: true },
+  { path: 'claude.shellToolsAllowed', widens: true },
+  { path: 'api.enabled', widens: true },
+]
+
+/** Every setting that differs between `current` and `next`, in the order of the settings. */
+export function settingChanges(current: AppSettings, next: AppSettings): SettingChange[] {
+  const changes: SettingChange[] = []
+  const walk = (from: Record<string, unknown>, to: Record<string, unknown>, prefix: string) => {
+    for (const key of Object.keys(from)) {
+      const path = prefix ? `${prefix}.${key}` : key
+      const [a, b] = [from[key], to[key]]
+      if (isPlainObject(a) && isPlainObject(b)) walk(a, b, path)
+      else if (!sameData(a, b)) {
+        changes.push({ path, from: structuredClone(a), to: structuredClone(b), sensitive: isSensitive(path, b) })
+      }
+    }
+  }
+  walk(current as unknown as Record<string, unknown>, next as unknown as Record<string, unknown>, '')
+  return changes
+}
+
+/** Whether changing the setting at `path` to `value` needs the user's choice (see SENSITIVE). */
+function isSensitive(path: string, value: unknown): boolean {
+  const entry = SENSITIVE.find((sensitive) => sensitive.path === path)
+  return !!entry && (!entry.widens || value === true)
 }
 
 /** The settings in an exported file, or the file itself when it is a settings.json. */
@@ -214,6 +265,7 @@ function sanitize(s: AppSettings, fallback: AppSettings = createDefaultSettings(
   s.terminal.cursorStyle = cursors.includes(s.terminal.cursorStyle) ? s.terminal.cursorStyle : d.terminal.cursorStyle
   s.terminal.renderer = s.terminal.renderer === 'dom' ? 'dom' : 'webgl'
   s.terminal.unicode = s.terminal.unicode === 'unicode11' ? 'unicode11' : 'graphemes'
+  s.terminal.screenReader = s.terminal.screenReader === 'on' || s.terminal.screenReader === 'off' ? s.terminal.screenReader : 'auto'
   s.terminal.panelBackground = panelBackgrounds.includes(s.terminal.panelBackground)
     ? s.terminal.panelBackground
     : d.terminal.panelBackground

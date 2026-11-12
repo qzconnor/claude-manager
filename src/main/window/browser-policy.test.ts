@@ -6,6 +6,9 @@ import {
   faviconType,
   hardenWebview,
   loginHost,
+  MAX_OPENS,
+  OPEN_BURST_MS,
+  openGate,
   mobileUserAgent,
   popupTitle,
   toShortcutKey,
@@ -22,11 +25,31 @@ describe('hardenWebview', () => {
     expect(params.partition).toBe('persist:browser')
   })
 
+  it('lets the user stop a page that shows one dialog after another', () => {
+    const prefs: WebPreferences = {}
+    hardenWebview(prefs, {})
+    expect(prefs.safeDialogs).toBe(true)
+    expect(prefs.safeDialogsMessage).toBeTruthy()
+  })
+
   it('refuses views that start at an address the browser may not show', () => {
     expect(hardenWebview({}, { src: 'file:///C:/Windows/win.ini' })).toBe(false)
     expect(hardenWebview({}, { src: 'javascript:alert(1)' })).toBe(false)
     expect(hardenWebview({}, { src: 'about:blank' })).toBe(true)
     expect(hardenWebview({}, {})).toBe(true)
+  })
+})
+
+describe('openGate', () => {
+  it('lets a page open a few tabs or popups at once, then none until the burst is over', () => {
+    let now = 0
+    const mayOpen = openGate(() => now)
+    for (let i = 0; i < MAX_OPENS; i++) expect(mayOpen()).toBe(true)
+    expect(mayOpen()).toBe(false)
+    now = OPEN_BURST_MS - 1
+    expect(mayOpen()).toBe(false)
+    now = OPEN_BURST_MS
+    expect(mayOpen()).toBe(true)
   })
 })
 
@@ -102,8 +125,13 @@ describe('uniqueFileName', () => {
   })
 
   it('takes only the name, without folders or characters Windows forbids', () => {
-    expect(uniqueFileName('..\..\evil.exe', takenOf())).toBe('evil.exe')
+    expect(uniqueFileName('..\\..\\evil.exe', takenOf())).toBe('evil.exe')
+    expect(uniqueFileName('C:\\Windows\\evil.exe', takenOf())).toBe('evil.exe')
+    expect(uniqueFileName('..\\../a\\b/evil.exe', takenOf())).toBe('evil.exe')
     expect(uniqueFileName('a/b/c.txt', takenOf())).toBe('c.txt')
+    expect(uniqueFileName('CON', takenOf())).toBe('_CON')
+    expect(uniqueFileName('nul.pdf', takenOf())).toBe('_nul.pdf')
+    expect(uniqueFileName('console.pdf', takenOf())).toBe('console.pdf')
     expect(uniqueFileName('what?.txt', takenOf())).toBe('what_.txt')
     expect(uniqueFileName('', takenOf())).toBe('download')
     expect(uniqueFileName('...', takenOf())).toBe('download')

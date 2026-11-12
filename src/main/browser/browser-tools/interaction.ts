@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { keyEvents } from '../keys'
 import { isFrameRef } from '../frames'
 import { delay, type ElementBox, type MouseButton } from '../page-driver'
 import type { ActionContext } from '../action-context'
+import { uploadProblem } from '../upload-policy'
 import { type Args, cut, oneOf, optionalBoolean, optionalNumber, optionalString, requiredString, stringList, ToolError } from '../tool-args'
 import { clickOptions, dialogCode, locate, str } from './test-code'
 import {
@@ -243,29 +243,31 @@ export const interactionTools: ToolDefinition<never>[] = [
     title: 'Upload files',
     description: 'Puts local files into a file input (ref), or into the file chooser a click has just opened (no ref).',
     properties: {
-      paths: { type: 'array', items: { type: 'string' }, description: 'Absolute paths of the files.' },
+      paths: { type: 'array', items: { type: 'string' }, description: "Absolute paths of the files, in the session's folder or the temp folder." },
       ref: { ...ref, description: 'The file input; leave out after a click opened a file chooser.' },
       element,
     },
     required: ['paths'],
+    sensitive: true,
     kind: 'upload',
     parse: (args) => {
       const paths = stringList(args, 'paths', MAX_UPLOAD_FILES)
+      // Whether they may be uploaded is checked when it runs (uploadProblem), with the session's folder.
       for (const path of paths) {
         if (!isAbsolute(path)) throw new ToolError(`Not an absolute path: ${path}`)
-        let file = false
-        try {
-          file = statSync(path).isFile()
-        } catch {
-          // checked below
-        }
-        if (!file) throw new ToolError(`No such file: ${path}`)
       }
       return { paths, ref: args.ref === undefined ? undefined : refOf(args), element: optionalString(args, 'element', 200) }
     },
     label: (p) => `Lädt ${p.paths.length === 1 ? '1 Datei' : `${p.paths.length} Dateien`} hoch`,
     run: async (ctx, p) => {
+      const folders = ctx.uploadFolders()
+      for (const path of p.paths) {
+        const problem = uploadProblem(path, folders)
+        if (problem) throw new ToolError(problem)
+      }
       const names = p.paths.map((path) => path.split(/[\\/]/).pop()).join(', ')
+      // The log says which files left the computer.
+      ctx.note(p.paths.join(', '))
       if (p.ref) {
         if (isFrameRef(p.ref)) throw new ToolError('This file input is inside a frame of another site; click it and use browser_file_upload without ref.')
         const locator = await locate(ctx, p.ref)

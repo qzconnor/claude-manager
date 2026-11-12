@@ -104,7 +104,7 @@ function openDashboard() {
             <span v-for="item in summary" :key="item.key" class="flex items-center gap-1.5">
               <UsageRing :percent="item.percent" :size="14" class="size-3.5" />
               <span>{{ item.short }}</span>
-              <span class="font-medium text-foreground tabular-nums">{{ item.percent }}%</span>
+              <span class="font-medium text-foreground tabular-nums">{{ item.percent }}&nbsp;%</span>
               <span v-if="item.limitAt" :class="cn('font-medium tabular-nums', usageTextClass.high)">→ {{ item.limitAt }}</span>
             </span>
           </Button>
@@ -162,10 +162,10 @@ function openDashboard() {
               variant="ghost"
               size="icon-xs"
               aria-label="Usage aktualisieren"
-              :disabled="usageStore.refreshing"
+              :disabled="!account || usageStore.isRefreshing(account.id)"
               @click="refresh"
             >
-              <Spinner v-if="usageStore.refreshing" />
+              <Spinner v-if="account && usageStore.isRefreshing(account.id)" />
               <RefreshCwIcon v-else />
             </Button>
           </div>

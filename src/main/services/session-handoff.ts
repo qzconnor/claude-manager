@@ -1,3 +1,4 @@
+import { argsWithoutPrompt, lastingArgs } from '@shared/claude-args'
 import { folderKey } from '@shared/folders'
 import type { Account, TerminalCreateOptions, TerminalInfo } from '@shared/types'
 import { canLendCredentials } from '@shared/utils'
@@ -33,25 +34,54 @@ export class SessionHandoff extends TypedEmitter<Events> {
   /**
    * Replaces the tab by one that continues its session with `targetId`. Null when the user doesn't
    * trust the folder for the account whose folder the session lands in: the tab then keeps running.
+   * `limited`: the session stood at a limit that has reset by now (`limit` is gone then), see AutoSwitch.
    */
-  async continueTerminal(terminalId: string, targetId: string): Promise<TerminalInfo | null> {
+  async continueTerminal(terminalId: string, targetId: string, limited = false): Promise<TerminalInfo | null> {
     const old = this.terminals.get(terminalId)
     if (old.mode !== 'session') throw new Error('Nur Claude-Code-Sessions können den Account wechseln.')
     const target = this.accounts.get(targetId)
-    if (target.id === old.authAccountId && old.status === 'running') {
+    const atLimit = limited || old.limit !== null
+    // At a limit that has reset, the session goes on with its own account (see AutoSwitch).
+    if (target.id === old.authAccountId && old.status === 'running' && !atLimit) {
       throw new Error(`Der Tab läuft schon über „${target.name}“.`)
     }
-    return this.handOver(old, target, true)
+    return this.handOver(old, target, atLimit)
   }
 
   /**
-   * Starts the tab's session again in its place with the same account, and it goes on with its
-   * conversation: changed launch options (such as `--no-chrome`) apply to it. Null as above.
+   * Starts the tab again in its place, after its process has ended. A session goes on with the
+   * conversation it has now (not the one it was started with: `/resume` and `/clear` change it), with
+   * the same account; changed launch options (such as `--no-chrome`) apply to it. A shell, or a session
+   * whose id isn't known yet, starts as it was started. Null as above.
    */
   async restartTerminal(terminalId: string): Promise<TerminalInfo | null> {
     const old = this.terminals.get(terminalId)
-    if (old.mode !== 'session') throw new Error('Nur Claude-Code-Sessions lassen sich mit ihrem Verlauf neu starten.')
-    return this.handOver(old, this.accounts.get(old.authAccountId), false)
+    if (old.mode === 'browser') throw new Error('Ein Browser lädt seine Seite neu, statt neu zu starten.')
+    if (old.mode === 'session' && old.sessionId) return this.handOver(old, this.accounts.get(old.authAccountId), false)
+    if (this.switching.has(terminalId)) throw new Error('Der Neustart läuft bereits.')
+    this.switching.add(terminalId)
+    try {
+      const cwd = old.mode === 'session' ? await this.terminals.trustedCwd(old.accountId, old.cwd) : old.cwd
+      if (cwd === null) return null
+      await this.terminals.stop(terminalId)
+      const info = this.terminals.create({
+        accountId: old.accountId,
+        authAccountId: old.authAccountId === old.accountId ? undefined : old.authAccountId,
+        cwd,
+        mode: old.mode,
+        resumeSessionId: old.resumeSessionId ?? undefined,
+        // What picked the conversation picks it again, the prompt isn't sent once more.
+        args: argsWithoutPrompt(old.args),
+        title: old.fixedTitle ? old.title : null,
+        muted: old.muted,
+        replaces: terminalId,
+      })
+      this.emit('replaced', terminalId, info)
+      this.terminals.close(terminalId)
+      return info
+    } finally {
+      this.switching.delete(terminalId)
+    }
   }
 
   /**
@@ -84,6 +114,7 @@ export class SessionHandoff extends TypedEmitter<Events> {
       const options = await this.prepare(old.accountId, sessionId, failed ? (located?.cwd ?? old.cwd) : cwd, this.accounts.get(old.authAccountId))
       const info = this.terminals.create({
         ...options,
+        args: lastingArgs(old.args),
         title: old.fixedTitle ? old.title : null,
         muted: old.muted,
         replaces: terminalId,
@@ -97,7 +128,7 @@ export class SessionHandoff extends TypedEmitter<Events> {
     }
   }
 
-  /** `carryOn`: a session that stopped at its limit gets the continue prompt. */
+  /** `carryOn`: the session stopped at its limit and gets the continue prompt. */
   private async handOver(old: TerminalInfo, target: Account, carryOn: boolean): Promise<TerminalInfo | null> {
     const terminalId = old.id
     if (!old.sessionId) throw new Error('Welche Session in diesem Tab läuft, ist noch nicht bekannt.')
@@ -116,9 +147,11 @@ export class SessionHandoff extends TypedEmitter<Events> {
       await this.terminals.stop(terminalId)
       const options = await this.prepare(old.accountId, old.sessionId, cwd, target)
       // The session stopped at its limit: let Claude carry on where it was, so nobody has to type.
-      if (carryOn && old.limit && options.resumeSessionId) options.prompt = this.settings.get().claude.continuePrompt || null
+      if (carryOn && options.resumeSessionId) options.prompt = this.settings.get().claude.continuePrompt || null
       const info = this.terminals.create({
         ...options,
+        // `--model opus` and the like hold for the session, also with another account.
+        args: lastingArgs(old.args),
         title: old.fixedTitle ? old.title : null,
         muted: old.muted,
         // Its place in the tab order and in a split tab.

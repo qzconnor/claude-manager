@@ -34,6 +34,7 @@ import { useSessionsStore } from '@/stores/sessions'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import BrowserFavicon from './BrowserFavicon.vue'
+import SleepIcon from './SleepIcon.vue'
 
 /** Sessions listed at most for a search; with more, another word narrows it down better than scrolling. */
 const MAX_SESSIONS = 50
@@ -58,7 +59,8 @@ const ui = useUiStore()
 const launcher = useLauncher()
 const { closeTerminal } = useTerminalActions()
 const listbox = injectListboxRootContext()
-const now = useClock(60_000)
+// Every 30 seconds: `formatRelative` takes a time up to 45 seconds ahead of it as just now.
+const now = useClock(30_000)
 
 /** Titles are filtered on every key, the conversations shortly after typing stops. */
 const terms = computed(() => searchTerms(query.value))
@@ -154,7 +156,11 @@ function tabDetails(row: TabRow): string {
   const state =
     terminal.status === 'exited'
       ? 'Beendet'
-      : terminal.limit
+      : terminal.sleep
+        ? terminal.sleep.error
+          ? 'Startete nicht'
+          : 'Wartet auf den Start'
+        : terminal.limit
         ? 'Limit erreicht'
         : terminal.mode === 'login'
           ? 'Anmeldung'
@@ -264,6 +270,7 @@ const rowButtonClass =
         <span class="relative flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
           <KeyRoundIcon v-if="row.terminal.mode === 'login'" class="size-4" />
           <BrowserFavicon v-else-if="row.terminal.mode === 'browser'" :terminal-id="row.terminal.id" class="size-4" />
+          <SleepIcon v-else-if="row.terminal.status === 'asleep'" :sleep="row.terminal.sleep" class="size-4" />
           <TriangleAlertIcon v-else-if="row.terminal.limit" class="size-4 text-warning" />
           <SquareTerminalIcon v-else :class="cn('size-4', row.terminal.status === 'exited' && 'opacity-50')" />
           <AccountDot

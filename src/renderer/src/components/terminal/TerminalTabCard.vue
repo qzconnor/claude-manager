@@ -12,6 +12,7 @@ import {
   PencilIcon,
   ShrinkIcon,
   TagIcon,
+  TimerIcon,
   TriangleAlertIcon,
   WrenchIcon,
 } from '@lucide/vue'
@@ -26,8 +27,9 @@ import { attentionLook } from '@/lib/attention'
 import { accountKindLabel, formatReset } from '@/lib/format'
 import { fileManagerLabel } from '@/lib/platform'
 import { cn } from '@/lib/utils'
-import { limitLabel } from '@/lib/usage'
+import { limitLabel, resumeLabel } from '@/lib/usage'
 import BrowserFavicon from './BrowserFavicon.vue'
+import SleepIcon from './SleepIcon.vue'
 
 /**
  * What the hover card of a tab shows: the full title and where the session runs. The title is the
@@ -51,6 +53,12 @@ const attention = computed(() =>
   props.terminal.attention && props.terminal.attention !== 'limit' ? attentionLook[props.terminal.attention] : null,
 )
 const folder = computed(() => props.terminal.cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? props.terminal.cwd)
+/** A tab of the last run that waits to start (see `TerminalInfo.sleep`). */
+const sleepText = computed(() => {
+  const { sleep } = props.terminal
+  if (sleep?.error) return `Startete nicht: ${sleep.error}`
+  return sleep?.waking ? 'Startet …' : 'Vom letzten Mal: startet, sobald du den Tab öffnest'
+})
 
 // What runs, as the session's hooks tell it. A tool only counts while Claude works: after a declined
 // permission it stays behind.
@@ -164,11 +172,13 @@ const activity = computed(() => {
         <p class="min-w-0 flex-1">Fasst den Verlauf zusammen …</p>
       </div>
 
-      <div v-if="terminal.limit" class="flex gap-2 text-warning">
-        <TriangleAlertIcon class="mt-px size-3.5 shrink-0" />
+      <div v-if="terminal.limit || terminal.resume" class="flex gap-2 text-warning">
+        <TimerIcon v-if="terminal.resume" class="mt-px size-3.5 shrink-0" />
+        <TriangleAlertIcon v-else class="mt-px size-3.5 shrink-0" />
         <p class="min-w-0 flex-1">
-          {{ limitLabel(terminal.limit.type) }} erreicht
-          <template v-if="terminal.limit.resetsAt">· Reset {{ formatReset(terminal.limit.resetsAt) }}</template>
+          {{ terminal.limit ? `${limitLabel(terminal.limit.type)} erreicht` : 'Limit zurückgesetzt' }}
+          <template v-if="terminal.resume">· {{ resumeLabel(terminal.resume, now) }}</template>
+          <template v-else-if="terminal.limit?.resetsAt">· Reset {{ formatReset(terminal.limit.resetsAt) }}</template>
         </p>
       </div>
 
@@ -180,6 +190,11 @@ const activity = computed(() => {
       <div v-if="terminal.muted" class="flex gap-2 text-muted-foreground">
         <BellOffIcon class="mt-px size-3.5 shrink-0" />
         <p class="min-w-0 flex-1">Benachrichtigungen stummgeschaltet</p>
+      </div>
+
+      <div v-if="terminal.sleep" :class="cn('flex gap-2', terminal.sleep.error ? 'text-warning' : 'text-muted-foreground')">
+        <SleepIcon :sleep="terminal.sleep" class="mt-px shrink-0" />
+        <p class="min-w-0 flex-1 break-words">{{ sleepText }}</p>
       </div>
 
       <div v-if="terminal.status === 'exited'" class="flex gap-2 text-muted-foreground">

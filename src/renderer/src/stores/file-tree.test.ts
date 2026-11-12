@@ -13,6 +13,7 @@ function session(id: string, sessionId: string | null): TerminalInfo {
     authAccountId: 'a',
     sessionId,
     limit: null,
+    resume: null,
     context: null,
     busy: false,
     attention: null,
@@ -24,7 +25,9 @@ function session(id: string, sessionId: string | null): TerminalInfo {
     mode: 'session',
     url: null,
     resumeSessionId: null,
+    args: [],
     status: 'running',
+    sleep: null,
     exitCode: null,
     pid: 0,
     createdAt: '',
@@ -34,12 +37,15 @@ function session(id: string, sessionId: string | null): TerminalInfo {
     activity: null,
     subagents: 0,
     compacting: false,
+    turn: null,
+    prompt: null,
   }
 }
 
 let list: TerminalInfo[]
 let changed: (list: TerminalInfo[], splits: PaneSplit[]) => void
 let touched: (terminalId: string, touches: FileTouch[]) => void
+let filesChanged: (root: string, dirs: string[], git: boolean, repo: boolean) => void
 
 const api = {
   platform: 'win32',
@@ -57,7 +63,12 @@ const api = {
   },
   files: {
     watch: vi.fn(async () => {}),
-    onChanged: () => () => {},
+    list: vi.fn(async () => ({ entries: [], omitted: 0 })),
+    status: vi.fn(async () => null),
+    onChanged: (cb: typeof filesChanged) => {
+      filesChanged = cb
+      return () => {}
+    },
     onTouched: (cb: typeof touched) => {
       touched = cb
       return () => {}
@@ -91,6 +102,27 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.clearAllMocks()
+})
+
+describe('changes on disk', () => {
+  it('ask git again only when main says git may see them', async () => {
+    const fileTree = await load([session('s1', 'A')])
+    vi.useFakeTimers()
+    try {
+      fileTree.hold('C:\\dev')
+      await vi.advanceTimersByTimeAsync(1000)
+      api.files.status.mockClear()
+      // An install in node_modules: the folders it shows may reload, git isn't asked.
+      filesChanged('C:\\dev', ['node_modules/pkg'], false, false)
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(api.files.status).not.toHaveBeenCalled()
+      filesChanged('C:\\dev', [''], true, false)
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(api.files.status).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('activity', () => {

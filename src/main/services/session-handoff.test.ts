@@ -76,6 +76,7 @@ function tab(overrides: Partial<TerminalInfo>): TerminalInfo {
     authAccountId: 'own',
     sessionId: S,
     limit: null,
+    resume: null,
     context: null,
     busy: false,
     attention: null,
@@ -87,7 +88,9 @@ function tab(overrides: Partial<TerminalInfo>): TerminalInfo {
     mode: 'session',
     url: null,
     resumeSessionId: null,
+    args: [],
     status: 'running',
+    sleep: null,
     exitCode: null,
     pid: 1,
     createdAt: '2026-11-06T12:00:00.000Z',
@@ -97,6 +100,8 @@ function tab(overrides: Partial<TerminalInfo>): TerminalInfo {
     activity: null,
     subagents: 0,
     compacting: false,
+    turn: null,
+    prompt: null,
     ...overrides,
   }
 }
@@ -141,7 +146,7 @@ describe('SessionHandoff.continueTerminal', () => {
     const result = await handoff().continueTerminal('old', 'token')
     expect(result?.id).toBe('new')
     expect(terminalFns.trustedCwd).toHaveBeenCalledWith('own', cwd)
-    expect(createdOptions()).toEqual({ accountId: 'own', authAccountId: 'token', cwd, resumeSessionId: S, title: null, muted: false, replaces: 'old' })
+    expect(createdOptions()).toEqual({ accountId: 'own', authAccountId: 'token', cwd, resumeSessionId: S, args: [], title: null, muted: false, replaces: 'old' })
     expect(steps).toEqual(['stop old', 'create', 'close old'])
     expect(existsSync(transcriptOf('token'))).toBe(false)
   })
@@ -173,7 +178,7 @@ describe('SessionHandoff.continueTerminal', () => {
 
     await handoff().continueTerminal('old', 'other')
     expect(terminalFns.trustedCwd).toHaveBeenCalledWith('other', cwd)
-    expect(createdOptions()).toEqual({ accountId: 'other', cwd, resumeSessionId: S, title: null, muted: false, replaces: 'old' })
+    expect(createdOptions()).toEqual({ accountId: 'other', cwd, resumeSessionId: S, args: [], title: null, muted: false, replaces: 'old' })
     expect(await readFile(transcriptOf('other'), 'utf8')).toBe('{"type":"user"}\n')
     expect(await readFile(join(transcriptOf('other'), '..', S, 'subagents', 'agent-1.jsonl'), 'utf8')).toBe('sub\n')
     expect(steps).toEqual(['stop old', 'create', 'close old'])
@@ -183,16 +188,16 @@ describe('SessionHandoff.continueTerminal', () => {
     tabs.set('old', tab({ authAccountId: 'token' }))
     await writeTranscript()
     await handoff().continueTerminal('old', 'own')
-    expect(createdOptions()).toEqual({ accountId: 'own', cwd, resumeSessionId: S, title: null, muted: false, replaces: 'old' })
+    expect(createdOptions()).toEqual({ accountId: 'own', cwd, resumeSessionId: S, args: [], title: null, muted: false, replaces: 'old' })
   })
 
   it('starts a new session when nothing was written yet', async () => {
     await handoff().continueTerminal('old', 'key')
-    expect(createdOptions()).toEqual({ accountId: 'own', authAccountId: 'key', cwd, title: null, muted: false, replaces: 'old' })
+    expect(createdOptions()).toEqual({ accountId: 'own', authAccountId: 'key', cwd, args: [], title: null, muted: false, replaces: 'old' })
 
     vi.clearAllMocks()
     await handoff().continueTerminal('old', 'other')
-    expect(createdOptions()).toEqual({ accountId: 'other', cwd, title: null, muted: false, replaces: 'old' })
+    expect(createdOptions()).toEqual({ accountId: 'other', cwd, args: [], title: null, muted: false, replaces: 'old' })
   })
 
   it('keeps a chosen title and the muting', async () => {
@@ -200,6 +205,13 @@ describe('SessionHandoff.continueTerminal', () => {
     await writeTranscript()
     await handoff().continueTerminal('old', 'token')
     expect(createdOptions()).toMatchObject({ title: 'Refactoring', muted: true })
+  })
+
+  it('keeps the own Claude Code options, without the prompt and what picked the conversation', async () => {
+    tabs.set('old', tab({ args: ['--model', 'opus', '--worktree', 'feature', 'Fix the build'] }))
+    await writeTranscript()
+    await handoff().continueTerminal('old', 'other')
+    expect(createdOptions()).toMatchObject({ accountId: 'other', resumeSessionId: S, args: ['--model', 'opus'] })
   })
 
   it('lets Claude carry on after a limit', async () => {
@@ -268,7 +280,7 @@ describe('SessionHandoff.continueTerminal', () => {
     tabs.set('old', tab({ status: 'exited' }))
     await writeTranscript()
     await handoff().continueTerminal('old', 'own')
-    expect(createdOptions()).toEqual({ accountId: 'own', cwd, resumeSessionId: S, title: null, muted: false, replaces: 'old' })
+    expect(createdOptions()).toEqual({ accountId: 'own', cwd, resumeSessionId: S, args: [], title: null, muted: false, replaces: 'old' })
   })
 
   it.each([
@@ -284,6 +296,23 @@ describe('SessionHandoff.continueTerminal', () => {
   it('refuses the account the running tab already uses', async () => {
     tabs.set('old', tab({ authAccountId: 'token' }))
     await expect(handoff().continueTerminal('old', 'token')).rejects.toThrow('läuft schon über „Name token“')
+  })
+
+  it('lets a session at a limit go on with its own account once it has reset', async () => {
+    tabs.set('old', tab({ limit: { type: 'five_hour', resetsAt: '2026-11-06T12:00:00.000Z', message: 'limit' } }))
+    await writeTranscript()
+    await handoff().continueTerminal('old', 'own')
+    expect(createdOptions()).toMatchObject({ accountId: 'own', resumeSessionId: S, prompt: 'Mach weiter', replaces: 'old' })
+    expect(steps).toEqual(['stop old', 'create', 'close old'])
+  })
+
+  it('lets it go on with its own account when Claude Code no longer names the limit that has reset', async () => {
+    // The tab's limit is gone at the reset: AutoSwitch tells that it stood at one.
+    tabs.set('old', tab({}))
+    await writeTranscript()
+    await expect(handoff().continueTerminal('old', 'own')).rejects.toThrow('läuft schon über „Name own“')
+    await handoff().continueTerminal('old', 'own', true)
+    expect(createdOptions()).toMatchObject({ accountId: 'own', resumeSessionId: S, prompt: 'Mach weiter', replaces: 'old' })
   })
 
   it('refuses a second switch of the same tab while one is running', async () => {
@@ -311,7 +340,7 @@ describe('SessionHandoff.restartTerminal', () => {
     service.on('replaced', (oldId, info) => steps.push(`replaced ${oldId} by ${info.id}`))
     const result = await service.restartTerminal('old')
     expect(result?.id).toBe('new')
-    expect(createdOptions()).toEqual({ accountId: 'own', cwd, resumeSessionId: S, title: null, muted: false, replaces: 'old' })
+    expect(createdOptions()).toEqual({ accountId: 'own', cwd, resumeSessionId: S, args: [], title: null, muted: false, replaces: 'old' })
     expect(steps).toEqual(['stop old', 'create', 'replaced old by new', 'close old'])
   })
 
@@ -319,7 +348,7 @@ describe('SessionHandoff.restartTerminal', () => {
     tabs.set('old', tab({ authAccountId: 'token' }))
     await writeTranscript()
     await handoff().restartTerminal('old')
-    expect(createdOptions()).toEqual({ accountId: 'own', authAccountId: 'token', cwd, resumeSessionId: S, title: null, muted: false, replaces: 'old' })
+    expect(createdOptions()).toEqual({ accountId: 'own', authAccountId: 'token', cwd, resumeSessionId: S, args: [], title: null, muted: false, replaces: 'old' })
   })
 
   it('sends no continue prompt, even at a limit', async () => {
@@ -329,8 +358,68 @@ describe('SessionHandoff.restartTerminal', () => {
     expect(createdOptions().prompt).toBeUndefined()
   })
 
-  it('only restarts Claude sessions', async () => {
-    tabs.set('old', tab({ mode: 'shell' }))
+  it('goes on with the session the tab has now, not the one it was started with', async () => {
+    tabs.set('old', tab({ resumeSessionId: 'aaaaaaaa-0000-4000-8000-000000000000' }))
+    await writeTranscript()
+    await handoff().restartTerminal('old')
+    expect(createdOptions().resumeSessionId).toBe(S)
+  })
+
+  it('starts a shell again after its process has ended', async () => {
+    tabs.set('old', tab({ mode: 'shell', sessionId: null, title: 'Mein Shell', fixedTitle: true }))
+    const result = await handoff().restartTerminal('old')
+    expect(result?.id).toBe('new')
+    expect(createdOptions()).toEqual({
+      accountId: 'own',
+      authAccountId: undefined,
+      cwd,
+      mode: 'shell',
+      resumeSessionId: undefined,
+      args: [],
+      title: 'Mein Shell',
+      muted: false,
+      replaces: 'old',
+    })
+    expect(steps).toEqual(['stop old', 'create', 'close old'])
+    expect(terminalFns.trustedCwd).not.toHaveBeenCalled()
+  })
+
+  it('starts a session whose id is not known yet as it was started, in a trusted folder only', async () => {
+    tabs.set('old', tab({ sessionId: null, resumeSessionId: S }))
+    terminalFns.trustedCwd.mockResolvedValueOnce(null)
+    expect(await handoff().restartTerminal('old')).toBeNull()
+    expect(terminalFns.stop).not.toHaveBeenCalled()
+    await handoff().restartTerminal('old')
+    expect(createdOptions()).toMatchObject({ mode: 'session', resumeSessionId: S, replaces: 'old' })
+  })
+
+  it('keeps the own Claude Code options', async () => {
+    tabs.set('old', tab({ args: ['--model', 'opus', 'Fix the build'] }))
+    await writeTranscript()
+    await handoff().restartTerminal('old')
+    expect(createdOptions()).toMatchObject({ resumeSessionId: S, args: ['--model', 'opus'] })
+  })
+
+  it('starts a session whose id is not known yet with what picked its conversation, without the prompt', async () => {
+    tabs.set('old', tab({ sessionId: null, args: ['--continue', '--model', 'opus', 'Weiter'] }))
+    await handoff().restartTerminal('old')
+    expect(createdOptions()).toMatchObject({ args: ['--continue', '--model', 'opus'] })
+  })
+
+  it('starts nothing while the old process is still there', async () => {
+    await writeTranscript()
+    terminalFns.stop.mockRejectedValueOnce(new Error('lässt sich nicht beenden'))
+    const service = handoff()
+    await expect(service.restartTerminal('old')).rejects.toThrow('lässt sich nicht beenden')
+    expect(terminalFns.create).not.toHaveBeenCalled()
+    expect(terminalFns.close).not.toHaveBeenCalled()
+    // It may be tried again.
+    await service.restartTerminal('old')
+    expect(terminalFns.create).toHaveBeenCalledOnce()
+  })
+
+  it('does not restart a browser', async () => {
+    tabs.set('old', tab({ mode: 'browser' }))
     await expect(handoff().restartTerminal('old')).rejects.toThrow()
     expect(terminalFns.stop).not.toHaveBeenCalled()
   })
@@ -346,22 +435,37 @@ describe('SessionHandoff.moveTerminal', () => {
     expect((await service.moveTerminal('old', target()))?.id).toBe('new')
     expect(terminalFns.trustedCwd).toHaveBeenCalledWith('own', target())
     expect(sessionFns.move).toHaveBeenCalledWith('own', S, target())
-    expect(createdOptions()).toEqual({ accountId: 'own', cwd: target(), resumeSessionId: S, title: null, muted: false, replaces: 'old' })
+    expect(createdOptions()).toEqual({
+      accountId: 'own',
+      cwd: target(),
+      resumeSessionId: S,
+      args: [],
+      title: null,
+      muted: false,
+      replaces: 'old',
+    })
     expect(steps).toEqual(['stop old', 'move', 'create', 'replaced old by new', 'close old'])
     expect(existsSync(join(paths('own').projectsDir, projectKey(target()), `${S}.jsonl`))).toBe(true)
+  })
+
+  it('keeps the own Claude Code options', async () => {
+    tabs.set('old', tab({ args: ['--add-dir', '../shared', '--model', 'opus', '-n', 'Name'] }))
+    await writeTranscript()
+    await handoff().moveTerminal('old', target())
+    expect(createdOptions().args).toEqual(['--add-dir', '../shared', '--model', 'opus'])
   })
 
   it('keeps a lent login', async () => {
     tabs.set('old', tab({ authAccountId: 'token' }))
     await writeTranscript()
     await handoff().moveTerminal('old', target())
-    expect(createdOptions()).toEqual({ accountId: 'own', authAccountId: 'token', cwd: target(), resumeSessionId: S, title: null, muted: false, replaces: 'old' })
+    expect(createdOptions()).toEqual({ accountId: 'own', authAccountId: 'token', cwd: target(), resumeSessionId: S, args: [], title: null, muted: false, replaces: 'old' })
   })
 
   it('starts the session anew in the new folder when nothing was written yet', async () => {
     await handoff().moveTerminal('old', target())
     expect(sessionFns.move).not.toHaveBeenCalled()
-    expect(createdOptions()).toEqual({ accountId: 'own', cwd: target(), title: null, muted: false, replaces: 'old' })
+    expect(createdOptions()).toEqual({ accountId: 'own', cwd: target(), args: [], title: null, muted: false, replaces: 'old' })
   })
 
   it.each([

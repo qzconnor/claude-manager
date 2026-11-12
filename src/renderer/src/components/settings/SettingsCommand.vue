@@ -33,8 +33,9 @@ const registerHint = computed(() => {
     return isWindows ? 'Nur in der installierten App verfügbar.' : 'Nur als AppImage oder aus dem deb- bzw. rpm-Paket verfügbar.'
   }
   const hint = status.value?.hint
-  if (isWindows) return 'Wird bei der Installation eingerichtet: Benutzer-PATH und App-Pfad für den Explorer.'
-  const base = 'Beim ersten Start eingerichtet: ein kleines Skript in ~/.local/bin, das die App aktuell hält.'
+  const base = isWindows
+    ? 'Wird bei der Installation eingerichtet: Benutzer-PATH und App-Pfad für den Explorer.'
+    : 'Beim ersten Start eingerichtet: ein kleines Skript in ~/.local/bin, das die App aktuell hält.'
   return hint ? `${base} ${hint}` : base
 })
 
@@ -49,6 +50,7 @@ async function setRegistered(registered: boolean) {
   if (!next) return
   status.value = next
   if (next.registered) toast.success('„cm“ ist eingerichtet', { description: 'In neu geöffneten Terminals verfügbar.' })
+  else if (registered) toast.error('„cm“ ließ sich nicht einrichten', { description: next.hint ?? undefined })
 }
 </script>
 

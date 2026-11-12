@@ -5,16 +5,20 @@ import {
   BellOffIcon,
   CircleStopIcon,
   Columns2Icon,
+  CopyIcon,
   ExternalLinkIcon,
   FolderOpenIcon,
   GlobeIcon,
   KeyRoundIcon,
   LoaderCircleIcon,
+  Maximize2Icon,
+  Minimize2Icon,
   PencilIcon,
   RotateCwIcon,
   Rows2Icon,
   SquareArrowOutUpRightIcon,
   SquareTerminalIcon,
+  TimerIcon,
   TriangleAlertIcon,
   XIcon,
 } from '@lucide/vue'
@@ -42,28 +46,31 @@ import { useTerminalActions } from '@/composables/useTerminalActions'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
 import { attentionLook } from '@/lib/attention'
 import { attempt } from '@/lib/errors'
+import { openMenuBelow, tabKeyAction } from '@/lib/tab-keys'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
 import { useBrowsersStore } from '@/stores/browsers'
 import { useTerminalsStore, type TerminalTab } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import BrowserFavicon from './BrowserFavicon.vue'
+import SleepIcon from './SleepIcon.vue'
 import TerminalTabCard from './TerminalTabCard.vue'
 
 /**
  * A tab shows each of its terminals: one fills it, the terminals of a split tab sit side by side in
  * it (one below the other in the sidebar), each with its own close button. Hover card and menu act on
  * the terminal under the pointer, else on the one that has (or last had) the keyboard.
- * `vertical`: a full-width entry in the sidebar, with the hover card beside it.
+ * `vertical`: a full-width entry in the sidebar, with the hover card beside it. `tabStop`: the tab
+ * Tab stops at in the strip (the one in front); the others are reached with the arrow keys.
  */
-const props = defineProps<{ tab: TerminalTab; selected: boolean; vertical?: boolean }>()
+const props = defineProps<{ tab: TerminalTab; selected: boolean; vertical?: boolean; tabStop?: boolean }>()
 /** A terminal of the tab was clicked. */
 const emit = defineEmits<{ select: [id: string] }>()
 
 const accounts = useAccountsStore()
 const terminals = useTerminalsStore()
 const launcher = useLauncher()
-const { closeTerminal, closeTab, stopTerminal, restartTerminal } = useTerminalActions()
+const { closeTerminal, closeTab, closeOtherTabs, stopTerminal, restartTerminal, copyLastAnswer } = useTerminalActions()
 const accountSwitch = useAccountSwitch()
 
 const browsers = useBrowsersStore()
@@ -166,6 +173,16 @@ watch(hovered, (open) => {
   if (!open) point(null)
 })
 
+watch(
+  () => ui.tabRenameRequest,
+  (id) => {
+    if (!id || !props.tab.panes.some((p) => p.id === id)) return
+    ui.tabRenameRequest = null
+    startRename(id)
+  },
+  { immediate: true },
+)
+
 function startRename(id = terminal.value.id) {
   const pane = props.tab.panes.find((p) => p.id === id)
   if (!pane) return
@@ -194,9 +211,15 @@ async function commitRename() {
   }
 }
 
+/** Renaming started with F2 on the tab: Enter or Escape give the keyboard back to the tab. */
+let renameFromTab = false
+
 function onRenameKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' && event.key !== 'Escape') return
   if (event.key === 'Enter') void commitRename()
-  else if (event.key === 'Escape') renaming.value = null
+  else renaming.value = null
+  if (renameFromTab) void nextTick(() => tabEl.value?.focus())
+  renameFromTab = false
 }
 
 /** Renaming from the menu: the closed menu gives the keyboard to the rename field instead of the page. */
@@ -206,17 +229,26 @@ function onMenuCloseAutoFocus(event: Event) {
   focusRenameField()
 }
 
+/** The keys of the tab with the keyboard (see `tabKeyAction`); in a split tab they act on the terminal in front. */
+function onTabKey(event: KeyboardEvent) {
+  const action = tabKeyAction(event)
+  if (!action) return
+  event.preventDefault()
+  if (action === 'menu') openMenuBelow(event.currentTarget as HTMLElement)
+  else if (action === 'select') emit('select', props.tab.focused.id)
+  else if (action === 'close') void closeTab(props.tab)
+  else if (action === 'rename') {
+    renameFromTab = true
+    startRename(props.tab.focused.id)
+  }
+  else ui.focusTerminalRequest++
+}
+
 function onMouseDown(event: MouseEvent, id: string) {
   // Middle click closes like in Windows Terminal and browsers; in a split tab only that terminal.
   if (event.button === 1) {
     event.preventDefault()
     void closeTerminal(id)
-  }
-}
-
-async function closeOthers() {
-  for (const other of terminals.tabs.filter((t) => t.id !== props.tab.id)) {
-    await closeTab(other)
   }
 }
 
@@ -240,10 +272,11 @@ function openFolder() {
             role="tab"
             :data-terminal-id="tab.id"
             :aria-selected="selected"
+            :tabindex="tabStop ? 0 : -1"
             :class="
               cn(
                 // Dragged onto the page (data-docking) it fades in its place, the page shows where it goes.
-                'app-no-drag group/tab relative flex cursor-pointer text-xs transition-colors data-docking:opacity-50',
+                'app-no-drag group/tab relative flex cursor-pointer text-xs transition-colors data-docking:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset',
                 vertical
                   ? cn(
                       // While dragged (data-dragging, see useTabDrag) it looks lifted like the selected one.
@@ -267,6 +300,7 @@ function openFolder() {
             "
             :style="[joinedBackground, minWidth]"
             @pointerleave="onPointerLeave"
+            @keydown="onTabKey"
           >
             <template v-for="({ pane, color, attention, dimmed }, index) in entries" :key="pane.id">
               <span
@@ -303,6 +337,7 @@ function openFolder() {
                     />
                     <BrowserFavicon v-else :terminal-id="pane.id" class="size-3.5" />
                   </template>
+                  <SleepIcon v-else-if="pane.status === 'asleep'" :sleep="pane.sleep" />
                   <LoaderCircleIcon
                     v-else-if="pane.busy"
                     role="status"
@@ -311,6 +346,7 @@ function openFolder() {
                     :style="{ color: color || undefined }"
                   />
                   <SquareTerminalIcon v-else-if="pane.mode === 'shell'" class="size-3.5" />
+                  <TimerIcon v-else-if="pane.resume" class="size-3.5 text-warning" />
                   <TriangleAlertIcon v-else-if="pane.limit" class="size-3.5 text-warning" />
                   <AccountDot v-else :color="color" :class="cn(pane.status === 'exited' && 'opacity-40')" />
                 </span>
@@ -333,6 +369,7 @@ function openFolder() {
                     cn(
                       'min-w-0 flex-1 truncate',
                       pane.status === 'exited' && 'text-muted-foreground line-through',
+                      pane.status === 'asleep' && 'text-muted-foreground',
                       attention && pane.status !== 'exited' && 'font-medium text-foreground',
                     )
                   "
@@ -410,6 +447,10 @@ function openFolder() {
         </ContextMenuGroup>
         <template v-if="terminal.mode === 'session'">
           <ContextMenuSeparator />
+          <ContextMenuItem @select="copyLastAnswer(terminal.id)">
+            <CopyIcon />
+            Letzte Antwort kopieren
+          </ContextMenuItem>
           <ContextMenuSub>
             <ContextMenuSubTrigger :disabled="!canSwitch">
               <ArrowRightLeftIcon />
@@ -440,6 +481,11 @@ function openFolder() {
             <GlobeIcon />
             Browser daneben öffnen
           </ContextMenuItem>
+          <ContextMenuItem v-if="split" @select="terminals.toggleZoom(terminal.id)">
+            <Minimize2Icon v-if="terminals.zoomed === terminal.id" />
+            <Maximize2Icon v-else />
+            {{ terminals.zoomed === terminal.id ? 'Alle Teile zeigen' : 'Maximieren' }}
+          </ContextMenuItem>
           <ContextMenuItem v-if="split" @select="terminals.detach(terminal.id)">
             <SquareArrowOutUpRightIcon />
             In eigenen Tab verschieben
@@ -458,7 +504,7 @@ function openFolder() {
             Tab schließen
             <ContextMenuShortcut v-if="!split">Strg+Umschalt+W</ContextMenuShortcut>
           </ContextMenuItem>
-          <ContextMenuItem :disabled="terminals.tabs.length < 2" @select="closeOthers">
+          <ContextMenuItem :disabled="terminals.tabs.length < 2" @select="closeOtherTabs(tab)">
             Andere Tabs schließen
           </ContextMenuItem>
         </ContextMenuGroup>

@@ -72,6 +72,7 @@ function terminal(overrides: Partial<TerminalInfo> = {}): TerminalInfo {
     authAccountId: 'system',
     sessionId: null,
     limit: null,
+    resume: null,
     context: null,
     busy: false,
     attention: null,
@@ -83,7 +84,9 @@ function terminal(overrides: Partial<TerminalInfo> = {}): TerminalInfo {
     mode: 'session',
     url: null,
     resumeSessionId: null,
+    args: [],
     status: 'running',
+    sleep: null,
     exitCode: null,
     pid: 1,
     createdAt: '2026-11-06T12:00:00.000Z',
@@ -93,6 +96,8 @@ function terminal(overrides: Partial<TerminalInfo> = {}): TerminalInfo {
     activity: null,
     subagents: 0,
     compacting: false,
+    turn: null,
+    prompt: null,
     ...overrides,
   }
 }
@@ -111,7 +116,12 @@ function fakeApp(options: { terminals?: TerminalInfo[]; buffer?: { data: string;
       close: vi.fn(),
       buffer: () => options.buffer ?? { data: '', end: 0 },
     },
-    usage: { stats: vi.fn(async () => ({})), refresh: vi.fn(async () => []) },
+    usage: {
+      stats: vi.fn(async () => ({})),
+      history: vi.fn((accountId: string) => ({ accountId, fiveHour: [], sevenDay: [] })),
+      refresh: vi.fn(async () => []),
+      renewLogin: vi.fn(async () => 'renewed'),
+    },
     sessions: { get: vi.fn(async () => ({})) },
   }
   return app
@@ -270,10 +280,16 @@ describe('other terminal routes', () => {
   })
 
   it('writes input only to a running process', async () => {
-    const app = fakeApp({ terminals: [terminal(), terminal({ id: 't2', status: 'exited' })] })
+    const waiting = terminal({ id: 't3', status: 'asleep', sleep: { waking: false, error: null } })
+    const app = fakeApp({ terminals: [terminal(), terminal({ id: 't2', status: 'exited' }), waiting] })
     await call(app, 'POST', '/api/v1/terminals/t1/input', { data: 'hi\r' })
     expect(app.terminals.write).toHaveBeenCalledWith('t1', 'hi\r')
     await expectStatus(call(app, 'POST', '/api/v1/terminals/t2/input', { data: 'hi\r' }), 409)
+    // A tab of the last run starts once the app shows it.
+    const asleep = call(app, 'POST', '/api/v1/terminals/t3/input', { data: 'hi\r' })
+    await expectStatus(asleep, 409)
+    await asleep.catch((error: HttpError) => expect(error.message).toContain('startet erst'))
+    expect(app.terminals.write).toHaveBeenCalledOnce()
     await expectStatus(call(app, 'POST', '/api/v1/terminals/t1/input', {}), 400)
   })
 
@@ -293,6 +309,18 @@ describe('session and usage routes', () => {
     expect(app.sessions.get).not.toHaveBeenCalled()
   })
 
+  it('passes limit on and refuses one that is not a positive integer', async () => {
+    const app = fakeApp()
+    await call(app, 'GET', `/api/v1/sessions/system/${SESSION_ID}?limit=1500`)
+    expect(app.sessions.get).toHaveBeenLastCalledWith('system', SESSION_ID, 1500)
+    await call(app, 'GET', `/api/v1/sessions/system/${SESSION_ID}`)
+    expect(app.sessions.get).toHaveBeenLastCalledWith('system', SESSION_ID, undefined)
+    app.sessions.get.mockClear()
+    await expectStatus(call(app, 'GET', `/api/v1/sessions/system/${SESSION_ID}?limit=0`), 400)
+    await expectStatus(call(app, 'GET', `/api/v1/sessions/system/${SESSION_ID}?limit=abc`), 400)
+    expect(app.sessions.get).not.toHaveBeenCalled()
+  })
+
   it('turns a missing session into 404', async () => {
     const app = fakeApp()
     app.sessions.get.mockRejectedValueOnce(new Error('Session nicht gefunden.'))
@@ -308,6 +336,21 @@ describe('session and usage routes', () => {
       ['system', 7],
     ])
     await expectStatus(call(app, 'GET', '/api/v1/accounts/system/stats?days=400'), 400)
+  })
+
+  it('gives the history of the limits of a known account', async () => {
+    const app = fakeApp()
+    const { result } = await call(app, 'GET', '/api/v1/accounts/system/usage-history')
+    expect(result).toEqual({ accountId: 'system', fiveHour: [], sevenDay: [] })
+    await expectStatus(call(app, 'GET', '/api/v1/accounts/ghost/usage-history'), 404)
+    expect(app.usage.history.mock.calls).toEqual([['system']])
+  })
+
+  it('renews the login of a known account', async () => {
+    const app = fakeApp()
+    expect((await call(app, 'POST', '/api/v1/accounts/system/renew-login')).result).toEqual({ result: 'renewed' })
+    await expectStatus(call(app, 'POST', '/api/v1/accounts/ghost/renew-login'), 404)
+    expect(app.usage.renewLogin.mock.calls).toEqual([['system']])
   })
 
   it('refreshes the usage of one known account or all', async () => {

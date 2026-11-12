@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { searchTerms } from '@shared/utils'
-import { containsTerms, highlightParts, matchSpans, searchText, type TextPart } from './search'
+import { containsTerms, findSpans, highlightParts, matchSpans, searchText, type TextPart } from './search'
 
 describe('searchText', () => {
   it('joins the present fields in lower case', () => {
@@ -32,6 +32,16 @@ describe('containsTerms', () => {
 
   it('matches anything without terms', () => {
     expect(containsTerms(text, [])).toBe(true)
+  })
+
+  it('ignores accents in the text and in the terms, like the command palette', () => {
+    expect(containsTerms(searchText('Ordner öffnen'), searchTerms('offnen'))).toBe(true)
+    expect(containsTerms(searchText('Datei offnen'), searchTerms('ÖFFNEN'))).toBe(true)
+    expect(containsTerms(searchText('Café Crème'), searchTerms('cafe creme'))).toBe(true)
+    // An umlaut written as o and a combining diaeresis, as macOS names files.
+    expect(containsTerms(searchText('Öffnen'), searchTerms('öffnen'))).toBe(true)
+    // ß is a letter of its own, not an ss with an accent.
+    expect(containsTerms(searchText('Browser schliessen'), searchTerms('schließen'))).toBe(false)
   })
 })
 
@@ -67,6 +77,13 @@ describe('highlightParts', () => {
 
   it('returns one unmarked part when nothing matches', () => {
     expect(highlightParts('Hello', ['xyz'])).toEqual([{ text: 'Hello', match: false }])
+  })
+
+  it('marks matches whatever their accents, in the original spelling', () => {
+    expect(highlightParts('Ordner öffnen', searchTerms('offnen'))).toEqual([
+      { text: 'Ordner ', match: false },
+      { text: 'öffnen', match: true },
+    ])
   })
 
   it('keeps positions right after a dotted capital I', () => {
@@ -108,5 +125,33 @@ describe('matchSpans', () => {
     expect(matchSpans('Neue Session', [])).toEqual([])
     expect(matchSpans('Neue Session', ['xyz'])).toEqual([])
     expect(matchSpans('', ['a'])).toEqual([])
+  })
+})
+
+describe('findSpans', () => {
+  it('finds each place of the text, case and accents aside, one after the other', () => {
+    expect(findSpans('Öffnen, öffnen und OFFNEN', 'offnen')).toEqual([
+      [0, 6],
+      [8, 14],
+      [19, 25],
+    ])
+    // The same for what is searched.
+    expect(findSpans('Café und cafe', 'CAFÉ')).toEqual([
+      [0, 4],
+      [9, 13],
+    ])
+  })
+
+  it('takes spaces as they are and doesn’t overlap', () => {
+    expect(findSpans('npm run dev und npm  run', 'npm run')).toEqual([[0, 7]])
+    expect(findSpans('aaaa', 'aa')).toEqual([
+      [0, 2],
+      [2, 4],
+    ])
+  })
+
+  it('finds nothing for nothing', () => {
+    expect(findSpans('Text', '')).toEqual([])
+    expect(findSpans('', 'x')).toEqual([])
   })
 })

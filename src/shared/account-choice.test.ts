@@ -32,6 +32,36 @@ function context(accounts: Account[], extra: Partial<AccountChoiceContext> = {})
 
 const ids = (choices: { account: Account }[]) => choices.map((c) => c.account.id)
 
+describe('accountChoices with what is known of an account', () => {
+  const own = account('own', 'oauth')
+  const other = account('other', 'oauth')
+  const token = account('token', 'token')
+
+  it('takes the last known numbers when the latest query failed, until the window resets', () => {
+    const full = { ...usage('other', 100), status: 'rate-limited' } as AccountUsage
+    const reset = { ...full, fiveHour: { ...full.fiveHour!, resetsAt: EARLIER } } as AccountUsage
+    const offline = { ...usage('token', 100), status: 'error', fiveHour: { ...usage('token', 100).fiveHour!, resetsAt: LATER } } as AccountUsage
+    const choices = accountChoices(context([own, other, token], { usage: (id) => (id === 'other' ? full : id === 'token' ? offline : undefined) }), 'own', 'own')
+    expect(choices.map((c) => [c.account.id, c.limited])).toEqual([
+      ['other', true],
+      ['token', true],
+    ])
+    expect(suggestedChoice(choices)).toBeUndefined()
+    const later = accountChoices(context([own, other], { usage: () => reset }), 'own', 'own')
+    expect(later[0]!.limited).toBe(false)
+  })
+
+  it('counts a token Anthropic refuses, and an account without credentials, as logged out', () => {
+    const refused = { ...usage('token', 10), status: 'unauthorized' } as AccountUsage
+    const gone = { ...usage('other', 10), status: 'no-credentials' } as AccountUsage
+    const choices = accountChoices(context([own, other, token], { usage: (id) => (id === 'token' ? refused : gone) }), 'own', 'own')
+    expect(choices.every((c) => c.disabled)).toBe(true)
+    // A browser login without permission for the usage API can still work.
+    const forbidden = { ...usage('other', 10), status: 'unauthorized' } as AccountUsage
+    expect(accountChoices(context([own, other], { usage: () => forbidden }), 'own', 'own')[0]!.disabled).toBe(false)
+  })
+})
+
 describe('accountChoices', () => {
   const own = account('own', 'oauth')
   const other = account('other', 'oauth')
@@ -72,6 +102,12 @@ describe('accountChoices', () => {
     ])
   })
 
+  it('counts a browser login that can no longer be renewed as logged out', () => {
+    const dead = account('dead', 'oauth', { authState: 'dead' })
+    const [choice] = accountChoices(context([own, dead], { usage: () => usage('dead', 10) }), 'own', 'own')
+    expect(choice).toMatchObject({ standing: { kind: 'logged-out' }, disabled: true })
+  })
+
   it('counts an account as limited while a session stopped at its limit, until the reset', () => {
     const blocked = [
       { accountId: 'token', resetsAt: LATER },
@@ -104,9 +140,9 @@ describe('accountChoices', () => {
     ])
   })
 
-  it('knows nothing without usage that is ok', () => {
+  it('knows nothing without any numbers', () => {
     const choices = accountChoices(
-      context([own, other], { usage: () => ({ ...usage('other', 100), status: 'error' }) as AccountUsage }),
+      context([own, other], { usage: () => ({ ...usage('other', 100), status: 'error', fiveHour: null }) as AccountUsage }),
       'own',
       'own',
     )

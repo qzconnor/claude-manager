@@ -7,6 +7,7 @@ import type {
   BrowserDownloadAction,
   BrowserLoginRequest,
   ClaudeInChromeStatus,
+  ContentSearchResult,
   BrowserHighlight,
   BrowserOpenOptions,
   BrowserPage,
@@ -17,6 +18,7 @@ import type {
   AccountUsage,
   ApiStatus,
   AppInfo,
+  ArtifactList,
   CommandStatus,
   AppSettings,
   CswapImportInput,
@@ -30,6 +32,8 @@ import type {
   FileTreeWatch,
   GitBranch,
   GitTreeStatus,
+  LoginRenewResult,
+  ReviewBase,
   WorktreeCheck,
   PaneNode,
   PaneSplit,
@@ -38,18 +42,27 @@ import type {
   SessionGroup,
   SessionRef,
   SessionRemoveResult,
+  SessionChanges,
+  SessionChangeTexts,
+  SessionFileChange,
+  SessionFileEdit,
   SessionSearchHit,
-  SettingsImportResult,
+  SettingsImportPreview,
+  TerminalAttach,
   TerminalCreateOptions,
   FolderMovedEvent,
   FolderMoveResult,
   Workspace,
   WorkspaceCreateInput,
+  TabSet,
+  TabSetInput,
+  TabSetOpenResult,
   TerminalInfo,
   TranscriptToolDetail,
   ReleaseNote,
   ReleaseReference,
   UpdateState,
+  UsageHistory,
   WindowState,
 } from './types'
 import type { Shortcut } from './shortcuts'
@@ -65,6 +78,7 @@ export const IpcInvoke = {
   appMissingFolders: 'app:missing-folders',
   appListFonts: 'app:list-fonts',
   appClipboardHasImage: 'app:clipboard-has-image',
+  appScreenReader: 'app:screen-reader',
 
   windowMinimize: 'window:minimize',
   windowToggleMaximize: 'window:toggle-maximize',
@@ -76,13 +90,14 @@ export const IpcInvoke = {
   settingsUpdate: 'settings:update',
   settingsReset: 'settings:reset',
   settingsExport: 'settings:export',
-  settingsImport: 'settings:import',
+  settingsImportPreview: 'settings:import-preview',
 
   accountsList: 'accounts:list',
   accountsCreate: 'accounts:create',
   accountsUpdate: 'accounts:update',
   accountsRemove: 'accounts:remove',
   accountsRefresh: 'accounts:refresh',
+  accountsRenewLogin: 'accounts:renew-login',
 
   cswapStatus: 'cswap:status',
   cswapImport: 'cswap:import',
@@ -101,8 +116,11 @@ export const IpcInvoke = {
   terminalsArrange: 'terminals:arrange',
   terminalsOpenBrowser: 'terminals:open-browser',
   terminalsPastedImageIds: 'terminals:pasted-image-ids',
+  terminalsLastAnswer: 'terminals:last-answer',
+  terminalsResumeAtReset: 'terminals:resume-at-reset',
   terminalsPastedImage: 'terminals:pasted-image',
   terminalsKeepPastedImage: 'terminals:keep-pasted-image',
+  terminalsWake: 'terminals:wake',
   browserFavicon: 'browser:favicon',
   browserLog: 'browser:log',
   browserClearLog: 'browser:clear-log',
@@ -124,10 +142,17 @@ export const IpcInvoke = {
   sessionsGet: 'sessions:get',
   sessionsToolCall: 'sessions:tool-call',
   sessionsSearch: 'sessions:search',
+  sessionsEditedBy: 'sessions:edited-by',
+  sessionsChanges: 'sessions:changes',
+  sessionsRewindPreview: 'sessions:rewind-preview',
+  sessionsChangeTexts: 'sessions:change-texts',
   sessionsContinueWith: 'sessions:continue-with',
   sessionsRemove: 'sessions:remove',
   sessionsRename: 'sessions:rename',
   sessionsMove: 'sessions:move',
+  sessionsPin: 'sessions:pin',
+  sessionsTag: 'sessions:tag',
+  sessionsExportMarkdown: 'sessions:export-markdown',
 
   workspacesList: 'workspaces:list',
   workspacesCreate: 'workspaces:create',
@@ -139,6 +164,11 @@ export const IpcInvoke = {
   workspacesWritePrompt: 'workspaces:write-prompt',
   workspacesMove: 'workspaces:move',
   workspacesRelocate: 'workspaces:relocate',
+
+  tabSetsList: 'tab-sets:list',
+  tabSetsSave: 'tab-sets:save',
+  tabSetsRemove: 'tab-sets:remove',
+  tabSetsOpen: 'tab-sets:open',
 
   themesList: 'themes:list',
   themesCreate: 'themes:create',
@@ -153,6 +183,13 @@ export const IpcInvoke = {
   usageGet: 'usage:get',
   usageRefresh: 'usage:refresh',
   usageStats: 'usage:stats',
+  usageHistory: 'usage:history',
+
+  artifactsList: 'artifacts:list',
+  artifactsRename: 'artifacts:rename',
+  artifactsRemove: 'artifacts:remove',
+  artifactsPin: 'artifacts:pin',
+  artifactsThumbnail: 'artifacts:thumbnail',
 
   gitBranch: 'git:branch',
   gitWatch: 'git:watch',
@@ -165,6 +202,15 @@ export const IpcInvoke = {
   filesSearchList: 'files:search-list',
   filesWatch: 'files:watch',
   filesDiff: 'files:diff',
+  filesReviewBase: 'files:review-base',
+  filesCreate: 'files:create',
+  filesRename: 'files:rename',
+  filesTrash: 'files:trash',
+  filesGrep: 'files:grep',
+  filesStage: 'files:stage',
+  filesUnstage: 'files:unstage',
+  filesDiscard: 'files:discard',
+  filesHunk: 'files:hunk',
 
   commandStatus: 'command:status',
   commandSetRegistered: 'command:set-registered',
@@ -204,8 +250,11 @@ export const IpcEvent = {
   windowState: 'event:window-state',
   /** The app quits: the terminals close next, which the window mustn't take for closing them by hand. */
   appQuitting: 'event:app-quitting',
+  appScreenReader: 'event:app-screen-reader',
   settingsChanged: 'event:settings-changed',
   accountsChanged: 'event:accounts-changed',
+  /** A notification about a login that ended was clicked: the window shows the accounts page. */
+  accountsShow: 'event:accounts-show',
   terminalsChanged: 'event:terminals-changed',
   terminalData: 'event:terminal-data',
   terminalExit: 'event:terminal-exit',
@@ -250,6 +299,8 @@ export const IpcEvent = {
   workspacesChanged: 'event:workspaces-changed',
   /** A folder of a workspace was moved outside the app, and its sessions went along. */
   workspacesMoved: 'event:workspaces-moved',
+  /** A tab set was saved or deleted, with all of them. */
+  tabSetsChanged: 'event:tab-sets-changed',
   /** A file in the themes folder came, went or changed (also by hand). */
   themesChanged: 'event:themes-changed',
   /** The app wrote a theme (the window or Claude's theme tools), with the theme. */
@@ -282,6 +333,9 @@ export interface ManagerApi {
     listFonts(): Promise<string[]>
     /** Whether the clipboard holds an image, e.g. a screenshot. */
     clipboardHasImage(): Promise<boolean>
+    /** Whether the system reports a screen reader (Chromium's accessibility support is on). */
+    screenReader(): Promise<boolean>
+    onScreenReader(cb: (active: boolean) => void): Unsubscribe
     /** Path of a file dragged into the window; empty for files that don't exist on disk. */
     pathForFile(file: File): string
   }
@@ -303,8 +357,8 @@ export interface ManagerApi {
     reset(section?: keyof AppSettings): Promise<AppSettings>
     /** Saves the settings to a file the user picks, without accounts. The path, or null when cancelled. */
     export(): Promise<string | null>
-    /** Takes over the settings of a file the user picks; null when cancelled. */
-    import(): Promise<SettingsImportResult | null>
+    /** Reads what the settings of a file the user picks would change, without taking them over; null when cancelled. */
+    previewImport(): Promise<SettingsImportPreview | null>
     onChanged(cb: (settings: AppSettings) => void): Unsubscribe
   }
   accounts: {
@@ -313,7 +367,10 @@ export interface ManagerApi {
     update(id: string, patch: AccountUpdateInput): Promise<Account>
     remove(id: string, options: { deleteConfigDir: boolean }): Promise<void>
     refresh(): Promise<Account[]>
+    /** Gets a new access token for the browser login with its refresh token, also while the old one works. */
+    renewLogin(id: string): Promise<LoginRenewResult>
     onChanged(cb: (accounts: Account[]) => void): Unsubscribe
+    onShow(cb: () => void): Unsubscribe
   }
   /** Taking accounts over from claude-swap (only name, email and organization). */
   cswap: {
@@ -344,8 +401,9 @@ export interface ManagerApi {
     /**
      * Output produced so far, for a view of the tab; `end` is the stream offset after `data`.
      * `answered`: an earlier view already answered the queries in it, they mustn't be answered again.
+     * `cols`/`rows`: the terminal's size now, the size the output was last written for.
      */
-    attach(id: string): Promise<{ data: string; end: number; answered: boolean }>
+    attach(id: string): Promise<TerminalAttach>
     /**
      * Ends the tab and continues its session in a new one with `accountId`'s limits.
      * Tokens and API keys run the session where it lies; for a browser login it is copied over.
@@ -366,6 +424,10 @@ export interface ManagerApi {
      * to the transcript with a prompt, and those the app kept when they were pasted.
      */
     pastedImageIds(id: string): Promise<number[]>
+    /** Claude's last answer in the tab's session, as Markdown; null before the first one. */
+    lastAnswer(id: string): Promise<string | null>
+    /** The session at a limit goes on by itself at the reset (`on`), or no longer (see `TerminalInfo.resume`). */
+    resumeAtReset(id: string, on: boolean): Promise<void>
     /** Image `n` pasted into the tab's session; null when there is none. */
     pastedImage(id: string, n: number): Promise<PastedImage | null>
     /**
@@ -373,6 +435,11 @@ export interface ManagerApi {
      * from it: so it shows before it is sent. False when the clipboard holds no image.
      */
     keepPastedImage(id: string, n: number): Promise<boolean>
+    /**
+     * Starts a tab of the last run that waits (status `asleep`) in its place, once it is shown or to try
+     * again; one that doesn't start keeps waiting with the reason (see `TerminalInfo.sleep`).
+     */
+    wake(id: string): Promise<void>
     /** Tells which terminals the window shows (none: another page): their news counts as seen. */
     viewing(ids: string[]): void
     /** Tells whether the terminal theme is dark; programs that asked for it hear when that changes. */
@@ -438,7 +505,8 @@ export interface ManagerApi {
   }
   sessions: {
     list(accountId?: string): Promise<SessionGroup[]>
-    get(accountId: string, sessionId: string): Promise<SessionDetail>
+    /** `limit`: the newest so many messages (default `CONVERSATION_PAGE_MESSAGES`). */
+    get(accountId: string, sessionId: string, limit?: number): Promise<SessionDetail>
     /** Complete input and output of one tool call. */
     toolCall(accountId: string, sessionId: string, toolUseId: string): Promise<TranscriptToolDetail | null>
     /**
@@ -446,6 +514,14 @@ export interface ManagerApi {
      * An empty query only brings the search index up to date, e.g. while the search opens.
      */
     search(query: string): Promise<SessionSearchHit[]>
+    /** The sessions of all accounts that changed the file at `path`, the latest change first. */
+    editedBy(path: string): Promise<SessionFileEdit[]>
+    /** What the session changed prompt by prompt, from Claude Code's file history. */
+    changes(accountId: string, sessionId: string): Promise<SessionChanges>
+    /** What `/rewind` to the prompt `turnId` would do to the files: each from now back to then. */
+    rewindPreview(accountId: string, sessionId: string, turnId: string): Promise<SessionFileChange[]>
+    /** Both versions of a file of `changes` (`turn`) or `rewindPreview` (`rewind`). */
+    changeTexts(accountId: string, sessionId: string, turnId: string, path: string, kind: 'turn' | 'rewind'): Promise<SessionChangeTexts>
     /** Opens the session in a new tab that runs with `targetAccountId`'s limits; null when its folder isn't trusted. */
     continueWith(accountId: string, sessionId: string, targetAccountId: string): Promise<TerminalInfo | null>
     /**
@@ -463,6 +539,12 @@ export interface ManagerApi {
      * that folder's project folder. Fails while a Claude Code has it open; there `/cd` does it.
      */
     move(accountId: string, sessionId: string, to: string): Promise<void>
+    /** Pins the session to the top of the session list (with every account), or takes the pin away. */
+    pin(sessionId: string, pinned: boolean): Promise<void>
+    /** Gives the session these tags, cleaned and each once (see `cleanTags`); none takes them all away. */
+    tag(sessionId: string, tags: string[]): Promise<void>
+    /** Asks where to and saves the whole history as a Markdown file; resolves to its path, null when cancelled. */
+    exportMarkdown(accountId: string, sessionId: string): Promise<string | null>
     onChanged(cb: (accountId: string) => void): Unsubscribe
   }
   /** Folders whose projects (subfolders) share a system prompt, `cm_prompts.md` in the folder. */
@@ -493,6 +575,16 @@ export interface ManagerApi {
     /** A folder of a workspace was moved outside the app (e.g. in Explorer), its sessions went along. */
     onMoved(cb: (move: FolderMovedEvent) => void): Unsubscribe
   }
+  /** Tabs saved under a name, to open them all again with one click (`tab-sets.json`). */
+  tabSets: {
+    list(): Promise<TabSet[]>
+    /** Makes a set, or replaces the one with `input.id`. */
+    save(input: TabSetInput): Promise<TabSet>
+    remove(id: string): Promise<void>
+    /** Opens its tabs after the open ones; a session that runs in a tab already is that tab. */
+    open(id: string): Promise<TabSetOpenResult>
+    onChanged(cb: (sets: TabSet[]) => void): Unsubscribe
+  }
   /** The user's own themes, one JSON file each in the folder `themes` of the app's data. */
   themes: {
     /** Every file of the folder; ones that can't be used with the reason. */
@@ -520,10 +612,22 @@ export interface ManagerApi {
     /** Shows an example notification with the current settings. */
     test(): Promise<void>
   }
+  /** The pages and documents Claude published on claude.ai, per account (see `ArtifactService`). */
+  artifacts: {
+    list(accountId: string): Promise<ArtifactList>
+    rename(accountId: string, id: string, title: string): Promise<void>
+    /** Deletes an own artifact for good; `gone` when it was deleted already. */
+    remove(accountId: string, id: string): Promise<'deleted' | 'gone'>
+    setPinned(accountId: string, id: string, pinned: boolean): Promise<void>
+    /** Its thumbnail of the last list as a `data:` URL; null without one. */
+    thumbnail(accountId: string, id: string, dark: boolean): Promise<string | null>
+  }
   usage: {
     get(): Promise<AccountUsage[]>
     refresh(accountId?: string): Promise<AccountUsage[]>
     stats(accountId: string, days?: number): Promise<AccountTokenStats>
+    /** How full the limits of the account were over the last days. */
+    history(accountId: string): Promise<UsageHistory>
     onChanged(cb: (usage: AccountUsage[]) => void): Unsubscribe
     /** A warning about a limit was clicked. */
     onShow(cb: () => void): Unsubscribe
@@ -554,10 +658,46 @@ export interface ManagerApi {
     searchList(root: string): Promise<FileSearchList>
     /** Watches these trees, replacing the ones of the previous call; an empty list stops watching. */
     watch(trees: FileTreeWatch[]): Promise<void>
-    /** Entries of these folders (relative, '' is the root) may have changed; `git`: also the repository's state. */
-    onChanged(cb: (root: string, dirs: string[], git: boolean) => void): Unsubscribe
-    /** The changes of a file (relative to `root`) since the last commit; `full`: with the whole file around them. */
-    diff(root: string, path: string, full: boolean): Promise<FileDiff>
+    /**
+     * Entries of these folders (relative, '' is the root) may have changed; `git`: also what git sees
+     * (not for changes in folders it ignores); `repo`: the repository itself (a commit, a checkout).
+     */
+    onChanged(cb: (root: string, dirs: string[], git: boolean, repo: boolean) => void): Unsubscribe
+    /**
+     * The changes of a file (relative to `root`) since the last commit; `full`: with the whole file around
+     * them. With `base` (a commit's hash, see `reviewBase`) its changes since that commit.
+     */
+    diff(root: string, path: string, full: boolean, base?: string | null): Promise<FileDiff>
+    /** Where the work of the folder's branch started, with its commits and changed files since; null without. */
+    reviewBase(root: string): Promise<ReviewBase | null>
+    /**
+     * Makes an empty file or a folder (`dir`) at `path` of an open tree, with the folders on its way;
+     * never over an entry that is there.
+     */
+    create(root: string, path: string, dir: boolean): Promise<void>
+    /** Renames an entry of an open tree; never over another one. */
+    rename(root: string, from: string, to: string): Promise<void>
+    /** Moves an entry of an open tree to the recycle bin. */
+    trash(root: string, path: string): Promise<void>
+    /**
+     * The lines of the files of an open tree that hold `query` (as it is, any case), without those git
+     * ignores; a newer search of the tree ends this one.
+     */
+    grep(root: string, query: string): Promise<ContentSearchResult>
+    /** Stages a changed file of an open tree (`git add`). */
+    stage(root: string, path: string): Promise<void>
+    /** Takes a file of an open tree out of what is staged. */
+    unstage(root: string, path: string): Promise<void>
+    /**
+     * Gives a file of an open tree back the state of the last commit; the file as it was goes to the
+     * recycle bin, a new one whole.
+     */
+    discard(root: string, path: string): Promise<void>
+    /**
+     * Stages a section of a file's changes, or gives it back the state of the last commit (`discard`).
+     * `patch`: the changes as the view showed them (`diff` without the whole file); `index`: the section.
+     */
+    hunk(root: string, path: string, change: { patch: string; index: number; discard: boolean }): Promise<void>
     /** Files a session's Claude (or one of its subagents) reads, writes or commits, as it happens. */
     onTouched(cb: (terminalId: string, touches: FileTouch[]) => void): Unsubscribe
   }

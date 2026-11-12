@@ -1,5 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import type { BrowserOpenOptions, PaneSplit, TerminalInfo, TerminalMode } from '@shared/types'
 import { BROWSER_TAB, createWorkspace, diffTab, type Workspace } from '@/lib/workspace'
 
@@ -15,6 +16,7 @@ function terminal(id: string, mode: TerminalMode = 'session'): TerminalInfo {
     authAccountId: 'a',
     sessionId: null,
     limit: null,
+    resume: null,
     context: null,
     busy: false,
     attention: null,
@@ -26,7 +28,9 @@ function terminal(id: string, mode: TerminalMode = 'session'): TerminalInfo {
     mode,
     url: mode === 'browser' ? 'https://example.com/' : null,
     resumeSessionId: null,
+    args: [],
     status: 'running',
+    sleep: null,
     exitCode: null,
     pid: 0,
     createdAt: '',
@@ -36,6 +40,8 @@ function terminal(id: string, mode: TerminalMode = 'session'): TerminalInfo {
     activity: null,
     subagents: 0,
     compacting: false,
+    turn: null,
+    prompt: null,
   }
 }
 
@@ -81,15 +87,21 @@ const api = {
     reorder: vi.fn(),
     arrange: vi.fn(),
     close: vi.fn(),
+    wake: vi.fn(async () => {}),
   },
 }
 
-async function load(list: TerminalInfo[], splits: PaneSplit[], saved?: { workspace: Workspace; order: { id: string; mode: TerminalMode }[] }) {
+async function load(
+  list: TerminalInfo[],
+  splits: PaneSplit[],
+  saved?: { workspace: Workspace; order: { id: string; mode: TerminalMode }[]; active?: string },
+  tabPosition: 'groups' | 'top' = 'groups',
+) {
   main = { list, splits }
   if (saved) storage.set('claude-manager.workspace', JSON.stringify(saved))
   const { useTerminalsStore } = await import('./terminals')
   const { useSettingsStore } = await import('./settings')
-  useSettingsStore().settings.appearance.tabPosition = 'groups'
+  useSettingsStore().settings.appearance.tabPosition = tabPosition
   const terminals = useTerminalsStore()
   await terminals.load()
   return terminals
@@ -97,6 +109,11 @@ async function load(list: TerminalInfo[], splits: PaneSplit[], saved?: { workspa
 
 /** The tabs of each group, in the order of the layout. */
 const tabsOf = (terminals: Awaited<ReturnType<typeof load>>) => terminals.groups.map((g) => g.tabs.map((t) => t.id))
+
+/** In one tab bar, the terminals of each tab, in the order of the tabs. */
+const tabBar = (terminals: Awaited<ReturnType<typeof load>>) => terminals.tabs.map((t) => t.panes.map((p) => p.id))
+
+const sessions = (...ids: string[]) => ids.map((id) => terminal(id))
 
 beforeEach(() => {
   storage.clear()
@@ -288,5 +305,466 @@ describe('changes beside a session', () => {
     terminals.openDiffBeside(all, 's1')
     expect(tabsOf(terminals)).toEqual([['s1'], [diffTab(all)]])
     expect(terminals.groups[0].active).toBe('s1')
+  })
+})
+
+describe('the keys', () => {
+  it('go to no terminal while a page such as the settings has the keyboard', async () => {
+    const terminals = await load([terminal('s1'), terminal('b1', 'browser')], [])
+    terminals.activate('b1')
+    expect(terminals.keyboardTerminal).toBe('b1')
+    terminals.openPage('settings')
+    // The browser stays the active terminal, hidden behind the page: F5 must not reload it.
+    expect(terminals.activeId).toBe('b1')
+    expect(terminals.keyboardTerminal).toBeNull()
+    terminals.activate('s1')
+    expect(terminals.keyboardTerminal).toBe('s1')
+  })
+})
+
+describe('dragging a divider', () => {
+  it('keeps its share while main reports a working session, and takes main’s again once let go', async () => {
+    const terminals = await load([terminal('s1'), terminal('s2')], [beside('s1', 's2')])
+    const tab = terminals.tabs.find((t) => typeof t.layout !== 'string')!
+    const share = () => (terminals.tabs.find((t) => t.id === tab.id)?.layout as PaneSplit).ratio
+    terminals.resize(tab.id, [], 0.3, false)
+    // A session starts working: main sends its list with the share it knows.
+    changed(main.list.map((t) => (t.id === 's1' ? { ...t, busy: true } : t)), main.splits)
+    expect(share()).toBe(0.3)
+    terminals.resize(tab.id, [], 0.35, true)
+    expect(api.terminals.arrange).toHaveBeenCalledWith({ ...beside('s1', 's2'), ratio: 0.35 })
+    // From now on main's list counts again.
+    changed(main.list, [{ ...beside('s1', 's2'), ratio: 0.6 }])
+    expect(share()).toBe(0.6)
+  })
+})
+
+describe('one tab bar after the window loaded again', () => {
+  it('gives the keyboard back to the terminal that had it, not to the last tab', async () => {
+    const order = ['s1', 's2', 's3'].map((id) => ({ id, mode: 'session' as const }))
+    const saved = { workspace: { layout: 'g1', groups: [{ id: 'g1', tabs: ['s1', 's2', 's3'], active: 's1' }], activeGroup: 'g1' }, order, active: 's2' }
+    const terminals = await load([terminal('s1'), terminal('s2'), terminal('s3')], [], saved, 'top')
+    expect(terminals.activeId).toBe('s2')
+    // And keeps it for the next time.
+    expect(JSON.parse(storage.get('claude-manager.workspace')!).active).toBe('s2')
+  })
+})
+
+describe('the groups of the last run', () => {
+  it('come back although main reports its terminals before the window loaded them', async () => {
+    const saved: Workspace = {
+      layout: beside('g1', 'g2'),
+      groups: [
+        { id: 'g1', tabs: ['s1'], active: 's1' },
+        { id: 'g2', tabs: ['s2'], active: 's2' },
+      ],
+      activeGroup: 'g2',
+    }
+    const order = [
+      { id: 's1', mode: 'session' as const },
+      { id: 's2', mode: 'session' as const },
+    ]
+    // A terminal starts working while the window still loads: main reports all of them.
+    api.terminals.list.mockImplementationOnce(async () => {
+      changed(main.list, main.splits)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      return main.list
+    })
+    const terminals = await load([terminal('s1'), terminal('s2')], [], { workspace: saved, order })
+    expect(tabsOf(terminals)).toEqual([['s1'], ['s2']])
+  })
+
+  it('keep their tabs when another tab of the last run did not come back', async () => {
+    const saved: Workspace = {
+      layout: beside('g1', 'g2'),
+      groups: [
+        { id: 'g1', tabs: ['s1'], active: 's1' },
+        { id: 'g2', tabs: ['s2', 's3'], active: 's3' },
+      ],
+      activeGroup: 'g2',
+    }
+    const order = ['s1', 's2', 's3'].map((id) => ({ id, mode: 'session' as const }))
+    // Main opened them again with new ids; s2 could not start.
+    const list = [
+      { ...terminal('n1'), restoredFrom: 's1' },
+      { ...terminal('n3'), restoredFrom: 's3' },
+    ]
+    const terminals = await load(list, [], { workspace: saved, order })
+    expect(tabsOf(terminals)).toEqual([['n1'], ['n3']])
+    expect(terminals.restoredIds).toEqual(new Map([['s1', 'n1'], ['s3', 'n3']]))
+  })
+})
+
+describe('closed tabs', () => {
+  const talked = (t: TerminalInfo): TerminalInfo => ({ ...t, sessionId: `s-${t.id}`, context: { tokens: 1 } as unknown as TerminalInfo['context'] })
+
+  it('are remembered newest first, a session with its conversation, a browser not at all', async () => {
+    const terminals = await load([talked(terminal('s1')), terminal('sh', 'shell'), terminal('b1', 'browser')], [], undefined, 'top')
+    await terminals.close('s1')
+    await terminals.close('b1')
+    await terminals.close('sh')
+    expect(terminals.recentlyClosed.map((e) => [e.id, e.sessionId])).toEqual([
+      ['sh', null],
+      ['s1', 's-s1'],
+    ])
+  })
+
+  it('are remembered with every terminal of a closed split tab', async () => {
+    const terminals = await load([terminal('s1'), terminal('s2'), terminal('s3')], [beside('s1', 's2')], undefined, 'top')
+    await terminals.closeTab(terminals.tabOf('s1')!.id)
+    expect(terminals.recentlyClosed.map((e) => e.id).sort()).toEqual(['s1', 's2'])
+  })
+
+  it('are forgotten once opened again, and with their account', async () => {
+    const terminals = await load([terminal('s1'), { ...terminal('s2'), accountId: 'b' }], [], undefined, 'top')
+    await terminals.close('s1')
+    await terminals.close('s2')
+    terminals.forgetClosedOf('b')
+    expect(terminals.recentlyClosed.map((e) => e.id)).toEqual(['s1'])
+    terminals.forgetClosed('s1')
+    expect(terminals.recentlyClosed).toEqual([])
+  })
+})
+
+describe('a maximized part of a split tab', () => {
+  it('gets the keyboard, and gives way to all parts again', async () => {
+    const terminals = await load([terminal('s1'), terminal('s2'), terminal('s3')], [beside('s1', 's2')], undefined, 'top')
+    terminals.toggleZoom('s2')
+    expect(terminals.zoomed).toBe('s2')
+    expect(terminals.activeId).toBe('s2')
+    terminals.toggleZoom('s2')
+    expect(terminals.zoomed).toBeNull()
+  })
+
+  it('stays while another tab is in front, not once another part gets the keyboard', async () => {
+    const terminals = await load([terminal('s1'), terminal('s2'), terminal('s3')], [beside('s1', 's2')], undefined, 'top')
+    terminals.toggleZoom('s2')
+    terminals.activate('s3')
+    await nextTick()
+    terminals.activate('s2')
+    await nextTick()
+    expect(terminals.zoomed).toBe('s2')
+    terminals.activate('s1')
+    await nextTick()
+    expect(terminals.zoomed).toBeNull()
+  })
+
+  it('ends when its tab gets another part', async () => {
+    const terminals = await load([terminal('s1'), terminal('s2'), terminal('s3')], [beside('s1', 's2')], undefined, 'top')
+    terminals.toggleZoom('s2')
+    await nextTick()
+    changed(main.list, [beside('s1', beside('s2', 's3', 'column'))])
+    await nextTick()
+    expect(terminals.tabOf('s2')!.panes).toHaveLength(3)
+    expect(terminals.zoomed).toBeNull()
+  })
+
+  it('is no thing in groups, nor for a part alone in its tab', async () => {
+    const grouped = await load([terminal('s1'), terminal('s2')], [beside('s1', 's2')])
+    grouped.toggleZoom('s2')
+    expect(grouped.zoomed).toBeNull()
+    setActivePinia(createPinia())
+    const single = await load([terminal('s1'), terminal('s2')], [], undefined, 'top')
+    single.toggleZoom('s1')
+    expect(single.zoomed).toBeNull()
+  })
+})
+
+describe('where a terminal main reports goes', () => {
+  it('takes the place of the terminal it replaces in a split, not a new group beside the split', async () => {
+    const saved: Workspace = {
+      layout: beside('g1', 'g2'),
+      groups: [
+        { id: 'g1', tabs: ['s1'], active: 's1' },
+        { id: 'g2', tabs: ['s2', 's3'], active: 's3' },
+      ],
+      activeGroup: 'g1',
+    }
+    const order = ['s1', 's2', 's3'].map((id) => ({ id, mode: 'session' as const }))
+    const terminals = await load(sessions('s1', 's2', 's3'), [beside('s1', 's2')], { workspace: saved, order })
+    // Main starts n2 in the place of s2: right before it in its list, and in its part of the split.
+    changed(sessions('s1', 'n2', 's2', 's3'), [beside('s1', 'n2')])
+    expect(tabsOf(terminals)).toEqual([['s1'], ['n2', 's2', 's3']])
+    // Then s2 closes.
+    changed(sessions('s1', 'n2', 's3'), [beside('s1', 'n2')])
+    expect(tabsOf(terminals)).toEqual([['s1'], ['n2', 's3']])
+  })
+
+  it('goes into a new group on the side main split it off, also before the terminal it was split from', async () => {
+    const terminals = await load(sessions('s1', 's2'), [])
+    expect(tabsOf(terminals)).toEqual([['s1', 's2']])
+    const own = terminals.groupOf('s1')!.id
+    // Split off below s2.
+    changed(sessions('s1', 's2', 'n1'), [beside('s2', 'n1', 'column')])
+    const below = terminals.groupOf('n1')!.id
+    expect(terminals.workspace.layout).toEqual({ direction: 'column', ratio: 0.5, first: own, second: below })
+    // Main put n2 first, on the left of s1.
+    changed(sessions('s1', 's2', 'n1', 'n2'), [beside('s2', 'n1', 'column'), beside('n2', 's1')])
+    const left = terminals.groupOf('n2')!.id
+    expect(tabsOf(terminals)).toEqual([['n2'], ['s1', 's2'], ['n1']])
+    expect(terminals.workspace.layout).toEqual({
+      direction: 'column',
+      ratio: 0.5,
+      first: { direction: 'row', ratio: 0.5, first: left, second: own },
+      second: below,
+    })
+  })
+
+  it('goes right before the open terminal main lists after it, not after the shown tab', async () => {
+    const terminals = await load(sessions('s1', 's2'), [])
+    terminals.activate('s2')
+    changed(sessions('s1', 'n1', 's2'), [])
+    expect(tabsOf(terminals)).toEqual([['s1', 'n1', 's2']])
+  })
+})
+
+describe('tabs of the last run that wait to start', () => {
+  const waiting = (id: string, sleep: TerminalInfo['sleep']): TerminalInfo => ({ ...terminal(id), status: 'asleep', sleep })
+
+  it('starts those that are shown, but not one that is starting or did not start', async () => {
+    const terminals = await load(
+      [
+        waiting('w', { waking: false, error: null }),
+        waiting('starting', { waking: true, error: null }),
+        waiting('failed', { waking: false, error: 'Den Ordner gibt es nicht.' }),
+        terminal('running'),
+      ],
+      [],
+    )
+    terminals.wakeShown(['w', 'starting', 'failed', 'running', 'gone'])
+    expect(api.terminals.wake.mock.calls).toEqual([['w']])
+  })
+
+  it('starts one that did not start once more when asked', async () => {
+    const terminals = await load([waiting('failed', { waking: false, error: 'Den Ordner gibt es nicht.' })], [])
+    await terminals.wakeTerminal('failed')
+    expect(api.terminals.wake.mock.calls).toEqual([['failed']])
+  })
+})
+
+describe('the keyboard when its terminal closes by itself', () => {
+  it('goes to the tab that takes its place, at the end to the one before, and to none without tabs', async () => {
+    const terminals = await load(sessions('s1', 's2', 's3'), [], undefined, 'top')
+    terminals.activate('s2')
+    changed(sessions('s1', 's3'), [])
+    expect(terminals.activeId).toBe('s3')
+    changed(sessions('s1'), [])
+    expect(terminals.activeId).toBe('s1')
+    changed([], [])
+    expect(terminals.activeId).toBeNull()
+  })
+
+  it('stays in its tab with the part that had it last, wherever that tab now is in the tab bar', async () => {
+    // The parts of a split tab may lie apart in main's order: the tab sits where its first one is.
+    const terminals = await load(sessions('a', 's1', 'b', 's2', 's3'), [beside('s1', beside('s2', 's3', 'column'))], undefined, 'top')
+    expect(tabBar(terminals)).toEqual([['a'], ['s1', 's2', 's3'], ['b']])
+    terminals.activate('s2')
+    terminals.activate('s3')
+    terminals.activate('s1')
+    changed(sessions('a', 'b', 's2', 's3'), [beside('s2', 's3', 'column')])
+    expect(tabBar(terminals)).toEqual([['a'], ['b'], ['s2', 's3']])
+    expect(terminals.activeId).toBe('s3')
+  })
+
+  it('goes to the last tab when no terminal had it', async () => {
+    const terminals = await load([], [], undefined, 'top')
+    expect(terminals.activeId).toBeNull()
+    changed(sessions('s1', 's2'), [])
+    expect(terminals.activeId).toBe('s2')
+  })
+
+  it('in groups goes to the terminal on screen that had it last while a page is in front', async () => {
+    const saved: Workspace = {
+      layout: beside('g1', beside('g2', 'g3')),
+      groups: [
+        { id: 'g1', tabs: ['s1'], active: 's1' },
+        { id: 'g2', tabs: ['s2'], active: 's2' },
+        { id: 'g3', tabs: ['s3'], active: 's3' },
+      ],
+      activeGroup: 'g1',
+    }
+    const order = ['s1', 's2', 's3'].map((id) => ({ id, mode: 'session' as const }))
+    const terminals = await load(sessions('s1', 's2', 's3'), [], { workspace: saved, order })
+    terminals.activate('s2')
+    terminals.activate('s1')
+    terminals.activate('s3')
+    // The settings cover s1, which had the keyboard after s2.
+    terminals.openPage('settings')
+    expect(tabsOf(terminals)).toEqual([['s1', 'page:settings'], ['s2'], ['s3']])
+    expect(terminals.activeId).toBe('s3')
+    changed(sessions('s1', 's2'), [])
+    expect(tabsOf(terminals)).toEqual([['s1', 'page:settings'], ['s2']])
+    expect(terminals.focusedTab).toBe('page:settings')
+    expect(terminals.activeId).toBe('s2')
+  })
+})
+
+describe('docking a tab in one tab bar', () => {
+  it('puts it on the side of a terminal of another tab, where that tab is, with the keyboard', async () => {
+    const terminals = await load(sessions('s1', 's2', 's3'), [], undefined, 'top')
+    terminals.activate('s2')
+    terminals.dock('s3', 's1', 'up')
+    const layout = beside('s3', 's1', 'column')
+    // Shown right away, before main answers.
+    expect(tabBar(terminals)).toEqual([['s3', 's1'], ['s2']])
+    expect(terminals.tabOf('s1')!.layout).toEqual(layout)
+    expect(terminals.activeId).toBe('s3')
+    expect(api.terminals.arrange).toHaveBeenCalledWith(layout)
+    expect(api.terminals.reorder).toHaveBeenCalledWith(['s1', 's3', 's2'])
+  })
+
+  it('moves every part of a split tab, and gives the keyboard to the part that had it last', async () => {
+    const terminals = await load(sessions('s1', 's2', 's3'), [beside('s1', 's2')], undefined, 'top')
+    terminals.activate('s1')
+    terminals.activate('s2')
+    terminals.activate('s3')
+    terminals.dock('s1', 's3', 'right')
+    expect(tabBar(terminals)).toEqual([['s3', 's1', 's2']])
+    expect(terminals.tabOf('s3')!.layout).toEqual(beside('s3', beside('s1', 's2')))
+    expect(terminals.activeId).toBe('s2')
+  })
+
+  it('refuses the tab itself and a tree deeper than main takes, but not a part higher up', async () => {
+    // 16 splits one inside the other: t16 lies as deep as main takes.
+    const ids = Array.from({ length: 17 }, (_, i) => `t${i}`)
+    const chain = ids.slice(0, -1).reduceRight<string | PaneSplit>((rest, id) => beside(id, rest), ids.at(-1)!) as PaneSplit
+    const terminals = await load([...sessions(...ids), terminal('x')], [chain], undefined, 'top')
+    expect(terminals.tabs.map((t) => t.id)).toEqual(['t0', 'x'])
+    expect(terminals.dockLayout('t0', 't5', 'right')).toBeNull()
+    expect(terminals.dockLayout('nope', 't5', 'right')).toBeNull()
+    terminals.dock('x', 't16', 'right')
+    expect(terminals.tabs.map((t) => t.id)).toEqual(['t0', 'x'])
+    expect(api.terminals.arrange).not.toHaveBeenCalled()
+    terminals.dock('x', 't0', 'right')
+    expect(terminals.tabs.map((t) => t.id)).toEqual(['t0'])
+    expect(api.terminals.arrange).toHaveBeenCalledOnce()
+  })
+})
+
+describe('detaching a part of a split tab', () => {
+  it('gives it a tab of its own right after its old tab, with the keyboard, and shrinks the split at once', async () => {
+    const terminals = await load(sessions('s1', 's2', 's3', 's4'), [beside('s1', beside('s2', 's3', 'column'))], undefined, 'top')
+    terminals.detach('s2')
+    expect(tabBar(terminals)).toEqual([['s1', 's3'], ['s2'], ['s4']])
+    expect(terminals.activeId).toBe('s2')
+    expect(api.terminals.arrange).toHaveBeenLastCalledWith(beside('s1', 's3'))
+    expect(api.terminals.reorder).toHaveBeenLastCalledWith(['s1', 's3', 's2', 's4'])
+    // The last but one part: the other one is alone in its tab then, which main is told too.
+    terminals.detach('s3')
+    expect(tabBar(terminals)).toEqual([['s1'], ['s3'], ['s2'], ['s4']])
+    expect(api.terminals.arrange).toHaveBeenLastCalledWith('s1')
+  })
+
+  it('stays in its own tab when main then reports it unchanged, without its split', async () => {
+    const terminals = await load([terminal('s1'), terminal('b1', 'browser'), terminal('s2')], [beside('s1', 'b1')], undefined, 'top')
+    terminals.detach('b1')
+    expect(tabBar(terminals)).toEqual([['s1'], ['b1'], ['s2']])
+    // Main has the same b1: the store keeps its old object, the list from main has a new one.
+    changed([terminal('s1'), terminal('b1', 'browser'), terminal('s2')], [])
+    expect(tabBar(terminals)).toEqual([['s1'], ['b1'], ['s2']])
+    // The groups behind it, which the tabs in groups show, have it in the same place. (The browser tab
+    // is there since b1 was s1's page in their split.)
+    expect(tabsOf(terminals)).toEqual([['s1', 'b1', 's2'], [BROWSER_TAB]])
+  })
+
+  it('leaves a terminal alone in its tab as it is', async () => {
+    const terminals = await load(sessions('s1', 's2'), [], undefined, 'top')
+    terminals.activate('s1')
+    terminals.detach('s2')
+    expect(tabBar(terminals)).toEqual([['s1'], ['s2']])
+    expect(terminals.activeId).toBe('s1')
+    expect(api.terminals.arrange).not.toHaveBeenCalled()
+    expect(api.terminals.reorder).not.toHaveBeenCalled()
+  })
+})
+
+describe('resizing a split tab', () => {
+  it('keeps every share between 5 and 95 percent, also inside a split, and leaves the other tabs as they are', async () => {
+    const terminals = await load(
+      sessions('s1', 's2', 's3', 's4', 's5'),
+      [beside('s1', beside('s2', 's3', 'column')), beside('s4', 's5')],
+      undefined,
+      'top',
+    )
+    const tab = terminals.tabOf('s1')!.id
+    terminals.resize(tab, ['second'], 0.99, true)
+    const inner = beside('s1', { ...beside('s2', 's3', 'column'), ratio: 0.95 })
+    expect(terminals.tabOf('s1')!.layout).toEqual(inner)
+    expect(api.terminals.arrange).toHaveBeenLastCalledWith(inner)
+    terminals.resize(tab, [], -1, true)
+    expect(terminals.tabOf('s1')!.layout).toEqual({ ...inner, ratio: 0.05 })
+    expect(api.terminals.arrange).toHaveBeenLastCalledWith({ ...inner, ratio: 0.05 })
+    expect(terminals.tabOf('s4')!.layout).toEqual(beside('s4', 's5'))
+  })
+
+  it('ignores a tab without a split, and one that is gone', async () => {
+    const terminals = await load(sessions('s1', 's2'), [], undefined, 'top')
+    terminals.resize('s1', [], 0.3, true)
+    terminals.resize('nope', [], 0.3, true)
+    expect(tabBar(terminals)).toEqual([['s1'], ['s2']])
+    expect(terminals.tabOf('s1')!.layout).toBe('s1')
+    expect(api.terminals.arrange).not.toHaveBeenCalled()
+  })
+})
+
+describe('the groups of the last run, restored', () => {
+  const saved: Workspace = {
+    layout: beside('g1', 'g2'),
+    groups: [
+      { id: 'g1', tabs: ['s1', 'page:settings'], active: 's1' },
+      { id: 'g2', tabs: ['s2'], active: 's2' },
+    ],
+    activeGroup: 'g1',
+  }
+
+  it('find their terminals by their order when main names no old ids, leaving logins out', async () => {
+    const order = [
+      { id: 's1', mode: 'session' as const },
+      { id: 'l1', mode: 'login' as const },
+      { id: 's2', mode: 'session' as const },
+    ]
+    const terminals = await load(sessions('n1', 'n2'), [], { workspace: saved, order })
+    expect(tabsOf(terminals)).toEqual([['n1', 'page:settings'], ['n2']])
+    expect(terminals.restoredIds).toEqual(new Map([['s1', 'n1'], ['s2', 'n2']]))
+  })
+
+  it('keep only their pages when the order does not tell which terminal is which', async () => {
+    // A session in the place of a browser can't be the terminal of the last run.
+    const order = [
+      { id: 's1', mode: 'session' as const },
+      { id: 's2', mode: 'browser' as const },
+    ]
+    const terminals = await load(sessions('n1', 'n2'), [], { workspace: saved, order })
+    const [group, ...others] = tabsOf(terminals)
+    expect(others).toEqual([])
+    expect(group[0]).toBe('page:settings')
+    expect(group.slice(1).sort()).toEqual(['n1', 'n2'])
+    expect(terminals.restoredIds).toEqual(new Map())
+  })
+
+  it('start afresh from a saved layout that can’t be read', async () => {
+    const order = [{ id: 's1', mode: 'session' }]
+    const broken = [
+      '{"workspace":',
+      JSON.stringify({ workspace: { layout: 42, groups: [] }, order }),
+      // A group the layout doesn't name.
+      JSON.stringify({ workspace: { layout: 'g1', groups: [{ id: 'g2', tabs: ['page:settings', 's1'], active: 's1' }] }, order }),
+      JSON.stringify({ workspace: createWorkspace('g1', ['page:settings', 's1']), order: 'x' }),
+    ]
+    for (const raw of broken) {
+      setActivePinia(createPinia())
+      storage.set('claude-manager.workspace', raw)
+      const terminals = await load(sessions('s1', 's2'), [])
+      expect(tabsOf(terminals), raw).toEqual([['s1', 's2']])
+      expect(terminals.restoredIds, raw).toEqual(new Map())
+    }
+  })
+
+  it('give the keyboard back in one tab bar to the terminal that had it, under its new id', async () => {
+    const order = ['s1', 's2', 's3'].map((id) => ({ id, mode: 'session' as const }))
+    const workspace = createWorkspace('g1', ['s1', 's2', 's3'])
+    const list = ['1', '2', '3'].map((n) => ({ ...terminal(`n${n}`), restoredFrom: `s${n}` }))
+    const terminals = await load(list, [], { workspace, order, active: 's2' }, 'top')
+    expect(terminals.activeId).toBe('n2')
   })
 })

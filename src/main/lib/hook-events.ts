@@ -2,6 +2,7 @@ import { isAbsolute, resolve } from 'node:path'
 import type { FileTouch, TerminalActivity } from '@shared/types'
 import { isPlainObject } from '@shared/utils'
 import { toolSummary } from '../workers/transcript-parser'
+import { oneLine } from './plain-text'
 import { SESSION_ID_RE, waitingDetail } from './session-files'
 import { shellFiles } from './shell-files'
 
@@ -95,10 +96,11 @@ export function readUserSettings(value: string, cwd: string, readFile: (path: st
 
 /** One hook call of Claude Code, as far as the app needs it. */
 export type HookEvent =
-  | { kind: 'prompt' }
-  /** A tool starts; `subagent`: in a subagent, not the session's own turn. */
-  | { kind: 'tool'; tool: string; detail: string | null; subagent: boolean }
-  | { kind: 'toolDone'; subagent: boolean }
+  /** The user sent a prompt: its beginning on one line. */
+  | { kind: 'prompt'; prompt?: string }
+  /** A tool starts; `agent`: the subagent it runs in, null in the session's own turn. */
+  | { kind: 'tool'; tool: string; detail: string | null; agent: string | null }
+  | { kind: 'toolDone'; agent: string | null }
   /** Claude Code asks the user: a permission, a question, the approval of a plan, input for an MCP server. */
   | { kind: 'input'; tool: string; detail: string | null }
   /** `background`: the turn waits for tasks that still run (e.g. a subagent), Claude goes on after them. */
@@ -106,6 +108,9 @@ export type HookEvent =
   | { kind: 'failure'; error: string; message: string | null }
   | { kind: 'subagent'; id: string; running: boolean }
   | { kind: 'compact'; running: boolean }
+
+/** How much of a prompt the app keeps, for the overview of the tabs. */
+const MAX_PROMPT_CHARS = 300
 
 /** Tools that wait for the user by themselves, without a permission prompt. */
 const ASKING_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode'])
@@ -152,8 +157,23 @@ const READING_TOOLS = new Set(['Read'])
 const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
 const SEARCH_TOOLS = new Set(['Grep', 'Glob'])
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
-/** A shell command that commits: `git commit`, also with options between (`git -C repo commit`). */
-const COMMIT_RE = /\bgit\b[^;&|\n]*\scommit\b/
+/**
+ * Whether a shell command (bash or PowerShell) commits: `git commit`, also with options between
+ * (`git -C repo commit`), as `git.exe` or `& git`. Part by part (`;`, `&`, `|`, new line) instead of one
+ * pattern over all: `git[^;]*\scommit` backtracks over each `git` of a long command, 64 KB of them took
+ * most of a second. A line ending in `\` (bash) or a backtick (PowerShell) goes on in the next one.
+ */
+export function commitsInShell(command: string): boolean {
+  return command
+    .replace(/[\\`]\r?\n/g, ' ')
+    .split(/[;&|\n]/)
+    .some((part) => {
+      // Windows finds the program in any case (`GIT commit`), git its own commands only in lower case.
+      const git = /\bgit\b/i.exec(part)
+      return git !== null && /\scommit\b/.test(part.slice(git.index + 3))
+    })
+}
+
 /** The most files of a search that light up. */
 const MAX_FOUND = 20
 
@@ -197,7 +217,7 @@ export function fileActivity(body: Record<string, unknown>): FileActivity | null
       ]
       return { ...(maybe.length && { maybe }), shell: { id, cwd, end: false, writes: [] } }
     }
-    const commit = event === 'PostToolUse' && tool === 'Bash' && COMMIT_RE.test(command)
+    const commit = event === 'PostToolUse' && commitsInShell(command)
     return { ...(commit && { commit: cwd }), shell: { id, cwd, end: true, writes: files.writes } }
   }
   return null
@@ -230,17 +250,19 @@ function runsInBackground(tasks: unknown): boolean {
 
 function parseEvent(body: Record<string, unknown>): HookEvent | null {
   const tool = text(body.tool_name)
-  const subagent = text(body.agent_id) !== null
+  const agent = text(body.agent_id)
   switch (body.hook_event_name) {
-    case 'UserPromptSubmit':
-      return { kind: 'prompt' }
+    case 'UserPromptSubmit': {
+      const prompt = oneLine(text(body.prompt), MAX_PROMPT_CHARS)
+      return prompt ? { kind: 'prompt', prompt } : { kind: 'prompt' }
+    }
     case 'PreToolUse':
       if (!tool) return null
       if (ASKING_TOOLS.has(tool)) return { kind: 'input', tool, detail: text(waitingDetail(tool, body.tool_input)) }
-      return { kind: 'tool', tool, detail: text(toolSummary(tool, body.tool_input)), subagent }
+      return { kind: 'tool', tool, detail: text(toolSummary(tool, body.tool_input)), agent }
     case 'PostToolUse':
     case 'PostToolUseFailure':
-      return { kind: 'toolDone', subagent }
+      return { kind: 'toolDone', agent }
     case 'PermissionRequest':
       return tool ? { kind: 'input', tool, detail: text(waitingDetail(tool, body.tool_input)) } : null
     case 'Elicitation':
@@ -292,6 +314,27 @@ export type HookTurnEnd =
   | { kind: 'input'; tool: string; detail: string | null }
   | { kind: 'limit'; tool: null; detail: string | null }
 
+/** A subagent that works runs: one lost track of (see `interruptedHookState`) counts again. */
+function working(subagents: string[], agent: string): string[] {
+  return subagents.includes(agent) ? subagents : [...subagents, agent]
+}
+
+/**
+ * Claude Code has been idle for a while: no compaction runs, nor a tool of the turn unless it waits
+ * for the user. Esc stops them without a hook (no PostCompact, no PostToolUseFailure).
+ */
+export function idleHookState(state: HookState): HookState {
+  return { ...state, compacting: false, activity: state.ended ? state.activity : null }
+}
+
+/**
+ * Esc ended the turn (the transcript says so): its subagents stopped with it, without SubagentStop.
+ * One that goes on in the background counts again with its next tool.
+ */
+export function interruptedHookState(state: HookState): HookState {
+  return { ...idleHookState(state), activity: null, subagents: [] }
+}
+
 /** The state after a call, and the end of the turn it tells, if it tells one. */
 export function applyHookCall(state: HookState, { sessionId, event }: HookCall, now: string): { state: HookState; end: HookTurnEnd | null } {
   // Another session in the same process (`/clear`, `/resume`): nothing of the old one runs any more.
@@ -304,11 +347,11 @@ function applyEvent(state: HookState, event: HookEvent, now: string): { state: H
     case 'prompt':
       return { state: { ...state, activity: null, ended: false, waitingFor: null }, end: null }
     case 'tool':
-      if (event.subagent) return { state, end: null }
+      if (event.agent) return { state: { ...state, subagents: working(state.subagents, event.agent) }, end: null }
       return { state: { ...state, activity: { tool: event.tool, detail: event.detail, since: now } }, end: null }
     case 'toolDone':
       // An answered permission of a subagent: its next one is news again.
-      if (event.subagent) return { state: { ...state, waitingFor: null }, end: null }
+      if (event.agent) return { state: { ...state, subagents: working(state.subagents, event.agent), waitingFor: null }, end: null }
       return { state: { ...state, activity: null, ended: false, waitingFor: null }, end: null }
     case 'input': {
       const waitingFor = `${event.tool}\n${event.detail ?? ''}`
@@ -317,14 +360,18 @@ function applyEvent(state: HookState, event: HookEvent, now: string): { state: H
     }
     case 'stop':
       // Waits for tasks in the background: the turn that ends is the one after them.
-      if (event.background) return { state: { ...state, activity: null }, end: null }
-      return { state: { ...state, activity: null, ended: true, waitingFor: null }, end: { kind: 'done', tool: null, detail: event.message } }
+      if (event.background) return { state: { ...state, activity: null, compacting: false }, end: null }
+      // Nothing of the turn runs any more, also what ended without telling.
+      return {
+        state: { ...state, activity: null, subagents: [], compacting: false, ended: true, waitingFor: null },
+        end: { kind: 'done', tool: null, detail: event.message },
+      }
     case 'failure': {
       const end: HookTurnEnd =
         event.error === 'rate_limit'
           ? { kind: 'limit', tool: null, detail: event.message }
           : { kind: 'done', tool: null, detail: event.message }
-      return { state: { ...state, activity: null, ended: true, waitingFor: null }, end }
+      return { state: { ...state, activity: null, compacting: false, ended: true, waitingFor: null }, end }
     }
     case 'subagent': {
       const others = state.subagents.filter((id) => id !== event.id)

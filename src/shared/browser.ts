@@ -68,6 +68,17 @@ const NETWORK_LABELS: Record<BrowserNetworkPreset, string> = {
 }
 
 /** A page that pretends nothing. */
+/**
+ * Drops the oldest lines of a browser's log beyond `limit`, the sensitive ones (uploads, cookies …)
+ * only when nothing else is left, so they stay to be looked up.
+ */
+export function trimLog(log: { sensitive: boolean }[], limit: number): void {
+  while (log.length > limit) {
+    const plain = log.findIndex((line) => !line.sensitive)
+    log.splice(plain === -1 ? 0 : plain, 1)
+  }
+}
+
 export const NO_EMULATION: BrowserEmulation = {
   colorScheme: null,
   reducedMotion: false,

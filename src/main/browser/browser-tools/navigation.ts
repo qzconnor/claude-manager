@@ -23,7 +23,7 @@ export const navigationTools: ToolDefinition<never>[] = [
     label: ({ url }) => `Öffnet ${shortAddress(url)}`,
     run: async (ctx, { url }) => {
       ctx.highlight(`Öffnet ${shortAddress(url)}`)
-      const failure = await loadPage(ctx, () => ctx.page.contents.loadURL(url))
+      const failure = await loadPage(ctx, url, () => ctx.page.contents.loadURL(url))
       ctx.record([`await page.goto(${str(url)})`])
       return { text: `${failure ?? `Opened ${url}.`}\n\n${await pageState(ctx)}` }
     },

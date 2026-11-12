@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, reactive, ref, shallowReactive } from 'vue'
+import { computed, reactive, ref, shallowReactive, watch } from 'vue'
 import type {
   BrowserActivity,
   BrowserControlState,
@@ -10,6 +10,8 @@ import type {
   BrowserLoginRequest,
   ClaudeInChromeStatus,
 } from '@shared/types'
+import { trimLog } from '@shared/browser'
+import { useTerminalsStore } from './terminals'
 
 /** What a browser pane shows of its page, for its tab. */
 export interface BrowserViewState {
@@ -79,10 +81,21 @@ export const useBrowsersStore = defineStore('browsers', () => {
     if (index >= 0) log[index] = activity
     else {
       log.push(activity)
-      if (log.length > LOG_LIMIT) log.splice(0, log.length - LOG_LIMIT)
+      trimLog(log, LOG_LIMIT)
     }
   })
   window.api.browser.onHighlight((id, highlight) => highlights.set(id, { ...highlight, seq: ++highlightCount }))
+
+  // What Claude does in a browser (taken over, its log) belongs to the browser, not to its pane: the
+  // pane mounts anew when the layout of the tabs changes or the tab wakes up. It goes with the tab.
+  const terminals = useTerminalsStore()
+  watch(
+    () => terminals.terminals.map((t) => t.id).join(' '),
+    () => {
+      const open = new Set(terminals.terminals.map((t) => t.id))
+      for (const map of [controls, logs, highlights]) for (const id of [...map.keys()]) if (!open.has(id)) map.delete(id)
+    },
+  )
 
   /** The browser's downloads, all tabs together, oldest first. */
   const downloads = ref<BrowserDownload[]>([])
@@ -137,8 +150,6 @@ export const useBrowsersStore = defineStore('browsers', () => {
     register: (id: string, view: BrowserView) => void views.set(id, view),
     unregister: (id: string) => {
       views.delete(id)
-      controls.delete(id)
-      logs.delete(id)
       highlights.delete(id)
     },
     loadLog,

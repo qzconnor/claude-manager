@@ -11,8 +11,10 @@ import {
   scanTranscript,
   SEARCH_ASSISTANT,
   SEARCH_USER,
+  toolDetail,
   toolSummary,
 } from './transcript-parser'
+import type { TranscriptMessage, TranscriptToolCall } from '@shared/types'
 
 const SESSION = '3f2b8c1e-9a4d-4e7b-8c2a-1d5e6f7a8b9c'
 const MODEL = 'claude-opus-4-5-20251101'
@@ -127,6 +129,11 @@ describe('cleanPrompt', () => {
     expect(cleanPrompt('<bash-stdout>On branch main</bash-stdout><bash-stderr></bash-stderr>')).toBe('')
   })
 
+  it('takes pasted text and leaves out background tasks reporting back', () => {
+    expect(cleanPrompt('Schau:\n<pasted_content id="63cd">\nGucke dir die App an\n</pasted_content id="63cd">')).toBe('Schau:\nGucke dir die App an')
+    expect(cleanPrompt('<task-notification>\n<summary>Done</summary>\n</task-notification>')).toBe('')
+  })
+
   it('keeps other markup and text as it is', () => {
     expect(cleanPrompt('  Why does <div> overflow?  ')).toBe('Why does <div> overflow?')
     expect(cleanPrompt('<system-reminder>unclosed')).toBe('<system-reminder>unclosed')
@@ -174,10 +181,10 @@ describe('parseTranscript', () => {
   it('counts the tokens of every request once, by local day', () => {
     // 23:00 UTC is already the next day in Berlin.
     expect(parseTranscript(session, SESSION, true).usage).toEqual([
-      ['msg_01:req_msg_01', '2026-11-06', MODEL, 10, 20, 300, 4000],
-      ['msg_02:req_msg_02', '2026-11-06', MODEL, 10, 20, 300, 4000],
+      ['msg_01:req_msg_01', '2026-11-06', MODEL, 10, 20, 300, 4000, 0, 0],
+      ['msg_02:req_msg_02', '2026-11-06', MODEL, 10, 20, 300, 4000, 0, 0],
       // Subagents cost tokens as well.
-      ['msg_03:req_msg_03', '2026-11-06', 'claude-haiku-4-5', 10, 20, 300, 4000],
+      ['msg_03:req_msg_03', '2026-11-06', 'claude-haiku-4-5', 10, 20, 300, 4000, 0, 0],
     ])
   })
 
@@ -197,9 +204,28 @@ describe('parseTranscript', () => {
       assistant('msg_05', [text('No response requested.')], '2026-11-06T10:00:04.000Z', {}, { model: '<synthetic>' }),
     )
     expect(parseTranscript(buf, SESSION, false).usage).toEqual([
-      ['msg_01:req_a', '2026-11-06', MODEL, 10, 20, 300, 4000],
-      ['msg_01:req_b', '2026-11-06', MODEL, 10, 20, 300, 4000],
-      ['msg_02:', '2026-11-06', 'unknown', 0, 5, 0, 0],
+      ['msg_01:req_a', '2026-11-06', MODEL, 10, 20, 300, 4000, 0, 0],
+      ['msg_01:req_b', '2026-11-06', MODEL, 10, 20, 300, 4000, 0, 0],
+      ['msg_02:', '2026-11-06', 'unknown', 0, 5, 0, 0, 0, 0],
+    ])
+  })
+
+  it('notes the cache writes for an hour and fast mode, for the costs', () => {
+    const usage = {
+      input_tokens: 1,
+      output_tokens: 2,
+      cache_creation_input_tokens: 700,
+      cache_read_input_tokens: 4,
+      cache_creation: { ephemeral_5m_input_tokens: 200, ephemeral_1h_input_tokens: 500 },
+      speed: 'fast',
+    }
+    const buf = jsonl(
+      assistant('msg_01', [text('a')], '2026-11-06T10:00:00.000Z', {}, { usage }),
+      assistant('msg_02', [text('b')], '2026-11-06T10:00:01.000Z', {}, { usage: { ...usage, cache_creation: null, speed: 'standard' } }),
+    )
+    expect(parseTranscript(buf, SESSION, false).usage).toEqual([
+      ['msg_01:req_msg_01', '2026-11-06', MODEL, 1, 2, 700, 4, 500, 1],
+      ['msg_02:req_msg_02', '2026-11-06', MODEL, 1, 2, 700, 4, 0, 0],
     ])
   })
 
@@ -356,7 +382,170 @@ describe('parseTranscript', () => {
         continuedIn: null,
       },
       usage: [],
+      files: [],
+      edits: [],
     })
+  })
+})
+
+describe('the files a session changed', () => {
+  const backup = (realParentDir: string | undefined, backupTime: string, version = 1) => ({
+    backupFileName: version > 1 ? `abc@v${version}` : null,
+    version,
+    backupTime,
+    ...(realParentDir ? { realParentDir } : {}),
+  })
+  const snapshot = (files: Record<string, unknown>) => ({
+    type: 'file-history-snapshot',
+    messageId: 'm',
+    snapshot: { messageId: 'm', trackedFileBackups: files, timestamp: '2026-11-05T23:59:00.000Z' },
+    isSnapshotUpdate: false,
+  })
+  const delta = (trackingPath: string, b: unknown, timestamp = '2026-11-06T09:00:00.000Z') => ({
+    type: 'file-history-delta',
+    messageId: 'm',
+    snapshotMessageId: 'm',
+    trackingPath,
+    backup: b,
+    timestamp,
+  })
+
+  it('reads them from the snapshots and the lines of newer versions, each with its latest change', () => {
+    const buf = jsonl(
+      user('Fix it', '2026-11-05T22:59:00.000Z'),
+      snapshot({
+        'src/auth.ts': backup('/home/dev/app/src', '2026-11-05T23:00:00.000Z'),
+        '/tmp/notes.md': backup('/tmp', '2026-11-05T23:01:00.000Z'),
+      }),
+      // A later snapshot starts anew: the files before still count.
+      snapshot({ 'src/auth.ts': backup('/home/dev/app/src', '2026-11-05T23:30:00.000Z', 2) }),
+      delta('README.md', backup('/home/dev/app', '2026-11-06T09:00:00.000Z')),
+      // An older time doesn't replace a newer one.
+      delta('src/auth.ts', backup('/home/dev/app/src', '2026-11-05T22:00:00.000Z')),
+      assistant('msg_01', [text('Done.')], '2026-11-05T23:02:00.000Z'),
+    )
+    const result = parseTranscript(buf, SESSION, true)
+    expect(Object.fromEntries(result.files)).toEqual({
+      '/home/dev/app/src/auth.ts': '2026-11-05T23:30:00.000Z',
+      '/tmp/notes.md': '2026-11-05T23:01:00.000Z',
+      '/home/dev/app/README.md': '2026-11-06T09:00:00.000Z',
+    })
+    // The backups' times are not the conversation's.
+    expect(result.summary.updatedAt).toBe('2026-11-05T23:02:00.000Z')
+    expect(result.summary.messageCount).toBe(2)
+  })
+
+  it('joins Windows paths as such, and keeps the path as given where the folder was reached over a link', () => {
+    const buf = jsonl(
+      user('Fix it', '2026-11-05T22:59:00.000Z', { cwd: 'F:\\Projekte\\app' }),
+      delta('src\\a.ts', backup('F:\\Projekte\\app\\src', '2026-11-06T09:00:00.000Z')),
+      delta('D:\\link\\b.ts', backup('E:\\real', '2026-11-06T09:01:00.000Z')),
+    )
+    expect(parseTranscript(buf, SESSION, true).files.map(([path]) => path)).toEqual([
+      'F:\\Projekte\\app\\src\\a.ts',
+      'E:\\real\\b.ts',
+      'D:\\link\\b.ts',
+    ])
+  })
+
+  it('takes a path relative to the session folder without the real folder, and skips broken lines', () => {
+    const buf = jsonl(
+      user('Fix it', '2026-11-05T22:59:00.000Z'),
+      delta('lib/x.ts', backup(undefined, '2026-11-06T09:00:00.000Z')),
+      delta('', backup('/home/dev/app', '2026-11-06T09:00:00.000Z')),
+      delta('lib/y.ts', null),
+      { type: 'file-history-snapshot', messageId: 'm' },
+      snapshot({ 'lib/z.ts': 'not a backup' }),
+    )
+    expect(parseTranscript(buf, SESSION, true).files).toEqual([['/home/dev/app/lib/x.ts', '2026-11-06T09:00:00.000Z']])
+  })
+
+  it('follows a session moved with /cd for relative paths', () => {
+    const buf = jsonl(
+      user('Fix it', '2026-11-05T22:59:00.000Z'),
+      { type: 'relocated', relocatedCwd: '/home/dev/other' },
+      delta('lib/x.ts', backup(undefined, '2026-11-06T09:00:00.000Z')),
+    )
+    expect(parseTranscript(buf, SESSION, true).files.map(([path]) => path)).toEqual(['/home/dev/other/lib/x.ts'])
+  })
+
+  it('reads them on as the transcript grows, not from subagents, and keeps at most 5000', () => {
+    const scan = newTranscriptScan(true)
+    scanTranscript(scan, jsonl(user('Fix it', '2026-11-05T22:59:00.000Z'), delta('a.ts', backup('/w', '2026-11-06T09:00:00.000Z'))))
+    scanTranscript(scan, jsonl(delta('b.ts', backup('/w', '2026-11-06T09:01:00.000Z'))))
+    expect(scanResult(scan, SESSION).files.map(([path]) => path)).toEqual(['/w/a.ts', '/w/b.ts'])
+
+    const sub = newTranscriptScan(false)
+    scanTranscript(sub, jsonl(delta('a.ts', backup('/w', '2026-11-06T09:00:00.000Z'))))
+    expect(scanResult(sub, SESSION).files).toEqual([])
+
+    const many = newTranscriptScan(true)
+    const files = Object.fromEntries(Array.from({ length: 5003 }, (_, i) => [`f${i}.ts`, backup('/w', '2026-11-06T09:00:00.000Z')]))
+    scanTranscript(many, jsonl(snapshot(files)))
+    scanTranscript(many, jsonl(delta('f0.ts', backup('/w', '2026-11-07T09:00:00.000Z'))))
+    const kept = scanResult(many, SESSION).files
+    expect(kept).toHaveLength(5000)
+    // One known already still gets its later change.
+    expect(kept[0]).toEqual(['/w/f0.ts', '2026-11-07T09:00:00.000Z'])
+  })
+
+  it("notes the files of Claude's calls that change them, at the time of the call", () => {
+    const buf = jsonl(
+      user('Fix it', '2026-11-05T22:59:00.000Z'),
+      assistant(
+        'msg_01',
+        [
+          toolUse('toolu_01', 'Edit', { file_path: '/home/dev/app/src/a.ts', old_string: 'x', new_string: 'y' }),
+          toolUse('toolu_02', 'Write', { file_path: 'notes/b.md', content: '' }),
+          toolUse('toolu_03', 'Read', { file_path: '/home/dev/app/c.ts' }),
+        ],
+        '2026-11-05T23:00:00.000Z',
+      ),
+      assistant(
+        'msg_02',
+        [
+          toolUse('toolu_04', 'MultiEdit', { file_path: '/home/dev/app/src/./a.ts', edits: [] }),
+          toolUse('toolu_05', 'NotebookEdit', { notebook_path: '/home/dev/app/n.ipynb' }),
+          toolUse('toolu_06', 'Edit', { file_path: 42 }),
+          toolUse('toolu_07', 'constructor', { file_path: '/home/dev/app/proto.ts' }),
+          { type: 'server_tool_use', id: 'srvtoolu_01', name: 'Edit', input: { file_path: '/home/dev/app/server.ts' } },
+          { type: 'tool_use', id: 'toolu_08', name: 'Edit' },
+          null as unknown as Entry,
+        ],
+        '2026-11-05T23:05:00.000Z',
+        { cwd: '/home/dev/other' },
+      ),
+      // An older call doesn't replace a newer one.
+      assistant('msg_03', [toolUse('toolu_09', 'Edit', { file_path: '/home/dev/app/src/a.ts' })], '2026-11-05T22:00:00.000Z'),
+    )
+    expect(Object.fromEntries(parseTranscript(buf, SESSION, true).edits)).toEqual({
+      '/home/dev/app/src/a.ts': '2026-11-05T23:05:00.000Z',
+      '/home/dev/app/notes/b.md': '2026-11-05T23:00:00.000Z',
+      '/home/dev/app/n.ipynb': '2026-11-05T23:05:00.000Z',
+    })
+  })
+
+  it('takes a relative path of a call from the folder Claude worked in then, also under Windows', () => {
+    const buf = jsonl(
+      user('Fix it', '2026-11-05T22:59:00.000Z', { cwd: 'F:\\Projekte\\app' }),
+      assistant('msg_01', [toolUse('toolu_01', 'Edit', { file_path: 'src\\a.ts' })], '2026-11-05T23:00:00.000Z', { cwd: 'F:\\Projekte\\app' }),
+      assistant('msg_02', [toolUse('toolu_02', 'Edit', { file_path: 'b.ts' })], '2026-11-05T23:01:00.000Z', { cwd: 'F:\\Projekte\\app\\lib' }),
+      // Without its own folder the session's.
+      assistant('msg_03', [toolUse('toolu_03', 'Write', { file_path: 'c.ts' })], '2026-11-05T23:02:00.000Z', { cwd: undefined }),
+    )
+    expect(parseTranscript(buf, SESSION, true).edits.map(([path]) => path)).toEqual([
+      'F:\\Projekte\\app\\src\\a.ts',
+      'F:\\Projekte\\app\\lib\\b.ts',
+      'F:\\Projekte\\app\\c.ts',
+    ])
+    // Subagents' transcripts don't count.
+    expect(parseTranscript(buf, SESSION, false).edits).toEqual([])
+  })
+
+  it('leaves the file history out of what else reads the transcript', () => {
+    const seen: Entry[] = []
+    forEachEntry(jsonl(delta('a.ts', backup('/w', '2026-11-06T09:00:00.000Z')), user('Hi', '2026-11-05T22:59:00.000Z')), (e) => seen.push(e))
+    expect(seen.map((e) => e.type)).toEqual(['user'])
   })
 })
 
@@ -441,6 +630,16 @@ describe('toolSummary', () => {
   })
 })
 
+/** A message of the history with what is the same for most. */
+function said(message: Pick<TranscriptMessage, 'uuid' | 'role' | 'kind' | 'timestamp' | 'text'> & Partial<TranscriptMessage>): TranscriptMessage {
+  return { output: null, failed: false, tools: [], model: message.role === 'assistant' ? MODEL : null, ...message }
+}
+
+/** A tool call of the history, as the parser makes it of a `tool_use` block. */
+function call(id: string | null, name: string, summary: string, status: TranscriptToolCall['status'], extra: Partial<TranscriptToolCall> = {}): TranscriptToolCall {
+  return { id, name, summary, detail: null, description: null, command: null, status, ...extra }
+}
+
 describe('readConversation', () => {
   const conversation = jsonl(
     user('Fix the tests', '2026-11-06T10:00:00.000Z', { uuid: 'u1' }),
@@ -467,44 +666,36 @@ describe('readConversation', () => {
   it('builds the conversation with tool calls and their outcome', () => {
     expect(readConversation(conversation, 100)).toEqual({
       truncated: false,
+      total: 6,
       messages: [
-        { uuid: 'u1', role: 'user', timestamp: '2026-11-06T10:00:00.000Z', text: 'Fix the tests', tools: [], model: null },
-        {
+        said({ uuid: 'u1', role: 'user', kind: 'prompt', timestamp: '2026-11-06T10:00:00.000Z', text: 'Fix the tests' }),
+        said({
           uuid: 'a1',
           role: 'assistant',
+          kind: 'answer',
           timestamp: '2026-11-06T10:00:01.000Z',
           text: 'Running them.',
-          tools: [{ id: 'toolu_01', name: 'Bash', summary: 'npm test', status: 'error' }],
-          model: MODEL,
-        },
-        {
+          tools: [call('toolu_01', 'Bash', 'npm test', 'error', { command: 'npm test' })],
+        }),
+        said({
           uuid: 'a4',
           role: 'assistant',
+          kind: 'answer',
           timestamp: '2026-11-06T10:00:05.000Z',
           text: '',
-          tools: [
-            { id: 'toolu_02', name: 'Edit', summary: 'src/a.ts', status: 'ok' },
-            { id: 'toolu_03', name: 'Read', summary: 'src/b.ts', status: null },
-          ],
-          model: MODEL,
-        },
-        { uuid: 'a5', role: 'assistant', timestamp: '2026-11-06T10:00:07.000Z', text: 'Done.\n\nAll green.', tools: [], model: MODEL },
-        {
-          uuid: 's1',
-          role: 'system',
-          timestamp: '2026-11-06T10:01:00.000Z',
-          text: 'Konversation wurde komprimiert (/compact).',
-          tools: [],
-          model: null,
-        },
-        { uuid: 'u4', role: 'user', timestamp: '2026-11-06T10:01:04.000Z', text: '/cost', tools: [], model: null },
+          tools: [call('toolu_02', 'Edit', 'src/a.ts', 'ok'), call('toolu_03', 'Read', 'src/b.ts', null)],
+        }),
+        said({ uuid: 'a5', role: 'assistant', kind: 'answer', timestamp: '2026-11-06T10:00:07.000Z', text: 'Done.\n\nAll green.' }),
+        said({ uuid: 's1', role: 'system', kind: 'compact', timestamp: '2026-11-06T10:01:00.000Z', text: 'Konversation wurde komprimiert (/compact).' }),
+        said({ uuid: 'u4', role: 'user', kind: 'command', timestamp: '2026-11-06T10:01:04.000Z', text: '/cost' }),
       ],
     })
   })
 
   it('keeps the latest messages when there are too many', () => {
-    const { messages, truncated } = readConversation(conversation, 2)
+    const { messages, truncated, total } = readConversation(conversation, 2)
     expect(truncated).toBe(true)
+    expect(total).toBe(6)
     expect(messages.map((m) => m.uuid)).toEqual(['s1', 'u4'])
     expect(readConversation(conversation, 6).truncated).toBe(false)
   })
@@ -515,16 +706,128 @@ describe('readConversation', () => {
       { type: 'assistant', message: { content: [text('Hello'), { type: 'tool_use', input: { command: 'ls' } }, null] } },
     )
     expect(readConversation(buf, 10).messages).toEqual([
-      { uuid: '0', role: 'user', timestamp: null, text: 'Hi', tools: [], model: null },
-      {
-        uuid: '1',
-        role: 'assistant',
-        timestamp: null,
-        text: 'Hello',
-        tools: [{ id: null, name: 'Tool', summary: 'ls', status: null }],
-        model: null,
-      },
+      said({ uuid: '0', role: 'user', kind: 'prompt', timestamp: null, text: 'Hi' }),
+      said({ uuid: '1', role: 'assistant', kind: 'answer', timestamp: null, text: 'Hello', tools: [call(null, 'Tool', 'ls', null)], model: null }),
     ])
+  })
+
+  it('shows a slash command with what it printed, also as an entry of its own of newer versions', () => {
+    const t = '2026-11-06T10:00:00.000Z'
+    const local = (content: string, uuid: string): Entry => ({ type: 'system', subtype: 'local_command', content, uuid, timestamp: t, isMeta: false })
+    const buf = jsonl(
+      user('<local-command-caveat>Caveat: …</local-command-caveat>', t, { isMeta: true }),
+      user('<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>sonnet</command-args>', t, { uuid: 'c1' }),
+      user('<local-command-stdout>Set model to \u001b[1mSonnet\u001b[22m</local-command-stdout>', t, { uuid: 'o1' }),
+      user('<command-name>/clear</command-name>\n<command-args></command-args>', t, { uuid: 'c2' }),
+      local('<local-command-stdout></local-command-stdout>', 'o2'),
+      local('<command-name>/context</command-name>\n<command-args></command-args>', 'c3'),
+      local('<local-command-stdout>(no content)</local-command-stdout>', 'o3'),
+      local('<command-name>/doctor</command-name>', 'c4'),
+      local('<local-command-stderr>Not available</local-command-stderr>', 'o4'),
+      // Output without a command before it isn't shown.
+      local('<local-command-stdout>stray</local-command-stdout>', 'o5'),
+    )
+    expect(readConversation(buf, 10).messages).toEqual([
+      said({ uuid: 'c1', role: 'user', kind: 'command', timestamp: t, text: '/model sonnet', output: 'Set model to Sonnet' }),
+      said({ uuid: 'c2', role: 'user', kind: 'command', timestamp: t, text: '/clear' }),
+      said({ uuid: 'c3', role: 'user', kind: 'command', timestamp: t, text: '/context' }),
+      said({ uuid: 'c4', role: 'user', kind: 'command', timestamp: t, text: '/doctor', output: 'Not available', failed: true }),
+    ])
+  })
+
+  it('shows a command typed after ! with what it printed, errors too', () => {
+    const t = '2026-11-06T10:00:00.000Z'
+    const buf = jsonl(
+      user('<bash-input> git status </bash-input>', t, { uuid: 'b1' }),
+      user('<bash-stdout>On branch main\n</bash-stdout><bash-stderr></bash-stderr>', t, { uuid: 'o1' }),
+      user('<bash-input>Stop-Process -Id 1</bash-input>', t, { uuid: 'b2' }),
+      user('<bash-stdout></bash-stdout><bash-stderr>bash: Stop-Process: command not found\n</bash-stderr>', t, { uuid: 'o2' }),
+      user('Why did that fail?', t, { uuid: 'u1' }),
+      // A command's output after a prompt doesn't go to the command before it.
+      user('<bash-stdout>late</bash-stdout>', t, { uuid: 'o3' }),
+    )
+    expect(readConversation(buf, 10).messages).toEqual([
+      said({ uuid: 'b1', role: 'user', kind: 'shell', timestamp: t, text: 'git status', output: 'On branch main' }),
+      said({ uuid: 'b2', role: 'user', kind: 'shell', timestamp: t, text: 'Stop-Process -Id 1', output: 'bash: Stop-Process: command not found', failed: true }),
+      said({ uuid: 'u1', role: 'user', kind: 'prompt', timestamp: t, text: 'Why did that fail?' }),
+    ])
+  })
+
+  it('shows a background task reporting back by its summary, with its result', () => {
+    const t = '2026-11-06T10:00:00.000Z'
+    const notice = (status: string, summary: string, result = '') =>
+      `<task-notification>\n<task-id>b1</task-id>\n<tool-use-id>toolu_01</tool-use-id>\n<status>${status}</status>\n<summary>${summary}</summary>\n${result ? `<result>${result}</result>\n` : ''}</task-notification>`
+    const buf = jsonl(
+      user(notice('completed', 'Agent "Tests" finished', '## Report\nAll green.'), t, { uuid: 't1' }),
+      user(notice('failed', 'Background command "npm run build" failed with exit code 1'), t, { uuid: 't2' }),
+      user('<task-notification>\n<status>killed</status>\n</task-notification>', t, { uuid: 't3' }),
+    )
+    expect(readConversation(buf, 10).messages).toEqual([
+      said({ uuid: 't1', role: 'user', kind: 'task', timestamp: t, text: 'Agent "Tests" finished', output: '## Report\nAll green.' }),
+      said({ uuid: 't2', role: 'user', kind: 'task', timestamp: t, text: 'Background command "npm run build" failed with exit code 1', failed: true }),
+      said({ uuid: 't3', role: 'user', kind: 'task', timestamp: t, text: 'Eine Hintergrundaufgabe hat sich gemeldet.', failed: true }),
+    ])
+  })
+
+  it('shows what a compaction kept as a summary, not as a prompt, and keeps pasted text in its tags', () => {
+    const t = '2026-11-06T10:00:00.000Z'
+    const prompt = 'Schau dir das an:\n\n<pasted_content id="63cd">\nZeile 1\n</pasted_content id="63cd">\n'
+    const buf = jsonl(
+      user('This session is being continued.\n\n<system-reminder>\nTools: Read\n</system-reminder>\nSummary:\n1. Fixed it', t, {
+        uuid: 's1',
+        isCompactSummary: true,
+        isVisibleInTranscriptOnly: true,
+      }),
+      user(prompt, t, { uuid: 'u1' }),
+    )
+    expect(readConversation(buf, 10).messages).toEqual([
+      said({ uuid: 's1', role: 'user', kind: 'summary', timestamp: t, text: 'This session is being continued.\n\n\nSummary:\n1. Fixed it' }),
+      said({ uuid: 'u1', role: 'user', kind: 'prompt', timestamp: t, text: prompt.trim() }),
+    ])
+  })
+
+  it('sends a shell command whole up to 4000 characters, with what Claude said it is for', () => {
+    const long = `echo ${'x'.repeat(5000)}`
+    const buf = jsonl(
+      assistant(
+        'msg_01',
+        [
+          toolUse('toolu_01', 'PowerShell', { command: 'Get-ChildItem\n  | Select-Object Name', description: 'List the files' }),
+          toolUse('toolu_02', 'Bash', { command: long }),
+          toolUse('toolu_03', 'Read', { file_path: 'src/a.ts', offset: 10, limit: 50 }),
+        ],
+        't',
+      ),
+    )
+    const [answer] = readConversation(buf, 10).messages
+    expect(answer.tools[0]).toEqual(
+      call('toolu_01', 'PowerShell', 'Get-ChildItem | Select-Object Name', null, { command: 'Get-ChildItem\n  | Select-Object Name', description: 'List the files' }),
+    )
+    expect(answer.tools[1].command).toHaveLength(4001)
+    expect(answer.tools[1].command!.endsWith('x…')).toBe(true)
+    expect(answer.tools[2]).toEqual(call('toolu_03', 'Read', 'src/a.ts', null, { detail: 'Zeilen 10–59' }))
+  })
+})
+
+describe('toolDetail', () => {
+  it('says which lines or pages a Read took', () => {
+    expect(toolDetail('Read', { file_path: 'a', offset: 10, limit: 50 })).toBe('Zeilen 10–59')
+    expect(toolDetail('Read', { file_path: 'a', offset: 200 })).toBe('ab Zeile 200')
+    expect(toolDetail('Read', { file_path: 'a', limit: 30 })).toBe('Zeilen 1–30')
+    expect(toolDetail('Read', { file_path: 'a.pdf', pages: '1-5' })).toBe('Seiten 1-5')
+    expect(toolDetail('Read', { file_path: 'a', offset: -1, limit: 'x' })).toBeNull()
+  })
+
+  it('says where a search looked and how many edits or tasks a call has', () => {
+    expect(toolDetail('Grep', { pattern: 'x', path: 'src', glob: '*.ts' })).toBe('in src · *.ts')
+    expect(toolDetail('Grep', { pattern: 'x', type: 'py' })).toBe('in py')
+    expect(toolDetail('Glob', { pattern: '**/*.vue' })).toBeNull()
+    expect(toolDetail('Edit', { file_path: 'a', replace_all: true })).toBe('alle Stellen')
+    expect(toolDetail('MultiEdit', { file_path: 'a', edits: [{}, {}] })).toBe('2 Änderungen')
+    expect(toolDetail('TodoWrite', { todos: [{}] })).toBe('1 Aufgabe')
+    expect(toolDetail('Agent', { description: 'x', subagent_type: 'Explore' })).toBe('Explore')
+    expect(toolDetail('WebSearch', { query: 'x' })).toBeNull()
+    expect(toolDetail('Read', null)).toBeNull()
   })
 })
 

@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { useElementSize } from '@vueuse/core'
+import { computed, ref, watch } from 'vue'
 import { layoutPanes, type PaneDivider, type PaneRect } from '@shared/panes'
+import { separatorValue } from '@/lib/separator-keys'
 import { dockRect } from '@/lib/tab-drag'
+import { inOpeningOrder } from '@/lib/tabs'
 import { cn } from '@/lib/utils'
 import { useBrowsersStore } from '@/stores/browsers'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import BrowserPane from './BrowserPane.vue'
+import SleepingPane from './SleepingPane.vue'
 import TerminalEmptyState from './TerminalEmptyState.vue'
 import TerminalPane from './TerminalPane.vue'
 
@@ -29,6 +33,11 @@ const layout = computed(() => {
   return tab ? layoutPanes(tab.layout) : null
 })
 const split = computed(() => (terminals.activeTab?.panes.length ?? 0) > 1)
+/** The part of the tab shown alone over the whole tab, if any (see `terminals.toggleZoom`). */
+const zoomed = computed(() => {
+  const id = terminals.zoomed
+  return id && inActiveTab(id) ? id : null
+})
 
 const percent = (value: number) => `${value * 100}%`
 const FULL: PaneRect = { left: 0, top: 0, width: 1, height: 1 }
@@ -38,6 +47,7 @@ function rectStyle(rect: PaneRect) {
 }
 
 function paneStyle(id: string) {
+  if (zoomed.value === id) return rectStyle(FULL)
   return rectStyle(layout.value?.panes.get(id) ?? FULL)
 }
 
@@ -93,6 +103,24 @@ function onDividerReset(divider: PaneDivider) {
   if (terminals.activeTab) terminals.resize(terminals.activeTab.id, divider.path, 0.5, true)
 }
 
+const { width: rootWidth, height: rootHeight } = useElementSize(root)
+/** The least share a divider leaves either of its parts, so none gets smaller than `MIN_PANE_PX`. */
+function minRatio(divider: PaneDivider): number {
+  const size = (divider.direction === 'row' ? rootWidth.value * divider.area.width : rootHeight.value * divider.area.height) || 1
+  return Math.min(0.5, MIN_PANE_PX / size)
+}
+
+/** A divider moved with the keyboard, 2 % of its parts a step; Enter shares them in half again. */
+function onDividerKey(event: KeyboardEvent, divider: PaneDivider) {
+  const tab = terminals.activeTab
+  if (!tab) return
+  const min = minRatio(divider) * 100
+  const percent = separatorValue(event, divider.direction === 'row', { value: divider.ratio * 100, min, max: 100 - min, step: 2, initial: 50 })
+  if (percent === null) return
+  event.preventDefault()
+  terminals.resize(tab.id, divider.path, percent / 100, true)
+}
+
 /** A tab dragged over the page: the half of the part it will get, and what it shows. */
 const dockPreview = computed(() => {
   const dock = ui.tabDock
@@ -108,7 +136,16 @@ const inActiveTab = (id: string) => terminals.activeTab?.panes.some((p) => p.id 
  * and neither its screenshots nor the clicks on it would work.
  */
 const driven = (id: string) => browsers.controls.get(id)?.active === true
-const inBackground = (id: string) => !inActiveTab(id) && driven(id)
+/**
+ * Not in the order of the tabs: reordering them would move the elements, and a browser would load again.
+ * Browsers of the last run load once they are shown or Claude drives them (see `terminals.sleeping`).
+ */
+const panes = computed(() => inOpeningOrder(terminals.terminals.filter((t) => !terminals.sleeping.has(t.id))))
+/** In the tab in front, unless another part of it is maximized. */
+const onScreen = (id: string) => inActiveTab(id) && (!zoomed.value || zoomed.value === id)
+const inBackground = (id: string) => !onScreen(id) && driven(id)
+const waking = computed(() => [...terminals.sleeping].filter((id) => onScreen(id) || browsers.controls.get(id)?.busy === true || driven(id)))
+watch(waking, (ids) => ids.forEach((id) => terminals.wake(id)), { immediate: true })
 </script>
 
 <template>
@@ -126,41 +163,45 @@ const inBackground = (id: string) => !inActiveTab(id) && driven(id)
   >
     <!-- A browser tab shows its page instead of a terminal. -->
     <component
-      :is="terminal.mode === 'browser' ? BrowserPane : TerminalPane"
-      v-for="terminal in terminals.terminals"
-      v-show="inActiveTab(terminal.id) || inBackground(terminal.id)"
+      :is="terminal.mode === 'browser' ? BrowserPane : terminal.status === 'asleep' ? SleepingPane : TerminalPane"
+      v-for="terminal in panes"
+      v-show="onScreen(terminal.id) || inBackground(terminal.id)"
       :key="terminal.id"
       :class="cn('absolute', inBackground(terminal.id) && 'pointer-events-none -z-10 opacity-0')"
       :inert="!props.visible && !driven(terminal.id)"
       :aria-hidden="inBackground(terminal.id) || undefined"
-      :style="inActiveTab(terminal.id) ? paneStyle(terminal.id) : inBackground(terminal.id) ? backgroundStyle(terminal.id) : undefined"
+      :style="onScreen(terminal.id) ? paneStyle(terminal.id) : inBackground(terminal.id) ? backgroundStyle(terminal.id) : undefined"
       :terminal="terminal"
       :active="props.visible && terminal.id === terminals.activeId"
-      :dimmed="split && terminal.id !== terminals.activeId"
+      :dimmed="split && !zoomed && terminal.id !== terminals.activeId"
       @focus="terminals.activate(terminal.id)"
     />
-    <template v-if="split && layout">
+    <template v-if="split && layout && !zoomed">
       <div
         v-for="divider in layout.dividers"
         :key="divider.path.join('-') || 'root'"
         role="separator"
         :aria-orientation="divider.direction === 'row' ? 'vertical' : 'horizontal'"
         :aria-valuenow="Math.round(divider.ratio * 100)"
+        :aria-valuemin="Math.round(minRatio(divider) * 100)"
+        :aria-valuemax="Math.round((1 - minRatio(divider)) * 100)"
         aria-label="Größe der Bereiche ändern"
+        tabindex="0"
         :class="
           cn(
-            'group/divider absolute z-30 flex items-center justify-center',
+            'group/divider absolute z-30 flex items-center justify-center outline-none',
             divider.direction === 'row' ? 'w-2 -translate-x-1/2 cursor-col-resize' : 'h-2 -translate-y-1/2 cursor-row-resize',
           )
         "
         :style="dividerStyle(divider)"
         @pointerdown="onDividerDown($event, divider)"
         @dblclick="onDividerReset(divider)"
+        @keydown="onDividerKey($event, divider)"
       >
         <div
           :class="
             cn(
-              'bg-border transition-colors group-hover/divider:bg-primary/60',
+              'bg-border transition-colors group-hover/divider:bg-primary/60 group-focus-visible/divider:bg-primary',
               divider.direction === 'row' ? 'h-full w-px' : 'h-px w-full',
               dragging?.path.join() === divider.path.join() && 'bg-primary/60',
             )

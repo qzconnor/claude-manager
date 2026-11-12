@@ -4,6 +4,7 @@ import { moveItem } from '@shared/order'
 import {
   dropPanes,
   hasPane,
+  holdSplit,
   insertPane,
   isSplit,
   mapPanes,
@@ -18,7 +19,9 @@ import {
 } from '@shared/panes'
 import type { BrowserOpenOptions, PaneNode, PaneSplit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
 import { sameData } from '@shared/utils'
+import { closedTabOf, rememberClosed, type ClosedTab } from '@/lib/closed-tabs'
 import { groupTabs, type TerminalTabGroup } from '@/lib/tabs'
+import { terminalBus } from '@/lib/terminal-bus'
 import {
   addTab,
   allTabs,
@@ -74,10 +77,20 @@ type Placement = { beside: string; side: PaneDirection } | { before: string } | 
 
 const STORAGE_KEY = 'claude-manager.workspace'
 
+function readSaved(): string | null {
+  try {
+    return localStorage.getItem(STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
 interface SavedWorkspace {
   workspace: Workspace
   /** The terminals in the order main restores them, with their mode: after a restart they have new ids. */
   order: { id: string; mode: TerminalInfo['mode'] }[]
+  /** The terminal with the keyboard: in one tab bar the groups don't tell it. */
+  active?: string | null
 }
 
 /** A copy without Vue's proxies, which IPC can't send. */
@@ -141,6 +154,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
   const terminals = ref<TerminalInfo[]>([])
   /** The tabs with more than one terminal, as the main process keeps them. */
   const splits = ref<PaneSplit[]>([])
+  /** The split whose divider is being dragged, with its share so far: main knows it once it is let go. */
+  let resizing: PaneSplit | null = null
   /** The terminals in main's order with their modes: the order main restores them in on the next start. */
   const mainOrder = ref<SavedWorkspace['order']>([])
   /** The groups and their tabs. */
@@ -198,6 +213,57 @@ export const useTerminalsStore = defineStore('terminals', () => {
     ),
   )
   const activeTab = computed(() => tabOf(activeId.value))
+
+  /** Sessions and shells the user closed, newest first, for „Geschlossenen Tab wieder öffnen“. */
+  const recentlyClosed = ref<ClosedTab[]>([])
+
+  function rememberClosing(ids: readonly string[]): void {
+    for (const id of ids) {
+      const terminal = byId.value.get(id)
+      const entry = terminal && closedTabOf(terminal)
+      if (entry) recentlyClosed.value = rememberClosed(recentlyClosed.value, entry)
+    }
+  }
+
+  function forgetClosed(id: string): void {
+    recentlyClosed.value = recentlyClosed.value.filter((entry) => entry.id !== id)
+  }
+
+  /** A removed account takes its closed tabs along: they can't open again. */
+  function forgetClosedOf(accountId: string): void {
+    recentlyClosed.value = recentlyClosed.value.filter((entry) => entry.accountId !== accountId)
+  }
+
+  /**
+   * In one tab bar: the part of a split tab that is shown alone over the whole tab, until it is
+   * restored. It ends once another part of the tab gets the keyboard or the tab gains or loses a part.
+   */
+  const zoomedId = ref<string | null>(null)
+  const zoomed = computed(() => {
+    const id = zoomedId.value
+    if (!id || grouped.value) return null
+    return (tabOf(id)?.panes.length ?? 0) > 1 ? id : null
+  })
+
+  function toggleZoom(id: string): void {
+    if (zoomed.value === id) {
+      zoomedId.value = null
+      return
+    }
+    zoomedId.value = id
+    activate(id)
+  }
+
+  watch(activeId, (id) => {
+    const zoom = zoomedId.value
+    if (zoom && id && id !== zoom && tabOf(id) === tabOf(zoom)) zoomedId.value = null
+  })
+  watch(
+    () => ({ id: zoomedId.value, parts: zoomedId.value ? (tabOf(zoomedId.value)?.panes.length ?? 0) : 0 }),
+    (now, before) => {
+      if (now.id && now.id === before.id && now.parts !== before.parts) zoomedId.value = null
+    },
+  )
 
   function tabOf(id: string | null): TerminalTab | null {
     return id ? (tabs.value.find((tab) => tab.panes.some((p) => p.id === id)) ?? null) : null
@@ -269,9 +335,12 @@ export const useTerminalsStore = defineStore('terminals', () => {
   }
 
   function focus(id: string | null): void {
+    const again = id !== null && id === activeId.value
     activeId.value = id
     if (id) focusedAt.set(id, ++focusCount)
     follow(id)
+    // Its tab was clicked again: the click took the keyboard, which its view takes back.
+    if (again) terminalBus.focus(id)
   }
 
   // ── Browsers and their sessions ──
@@ -306,7 +375,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
   const browserSessionId = ref<string | null>(null)
   /** The page the browser tab shows of a session, by the session; without one the page that had the keyboard last. */
   const shownPages = reactive(new Map<string, string>())
-  /** Browsers of the last run that aren't loaded yet; with the tabs in groups they load once shown or driven by Claude. */
+  /** Browsers of the last run that aren't loaded yet; they load once shown or driven by Claude. */
   const sleeping = reactive(new Set<string>())
   /** The session pages seen so far: a new one brings the browser tab back. */
   const knownPages = new Set<string>()
@@ -337,6 +406,12 @@ export const useTerminalsStore = defineStore('terminals', () => {
     if (tab === BROWSER_TAB) return browserPage.value?.id ?? null
     return tab && byId.value.has(tab) ? tab : null
   }
+
+  /**
+   * The terminal or browser the keys go to: in groups the one the tab with the keyboard shows (none for
+   * a page such as the settings), in one tab bar the active one.
+   */
+  const keyboardTerminal = computed(() => (grouped.value ? terminalOfTab(focusedTab.value) : activeId.value))
 
   /**
    * The browser tab follows the terminal that gets the keyboard: a session or shell, or a page and its
@@ -481,7 +556,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
    * which leaves the tabs of main), or beside the terminal it shares a split with.
    */
   function placementOf(ws: Workspace, terminal: TerminalInfo, list: TerminalInfo[], before: PaneSplit[], after: PaneSplit[]): Placement {
-    const index = list.indexOf(terminal)
+    // By id: the store keeps the old object of a terminal whose data stayed the same, main's list has a new one.
+    const index = list.findIndex((t) => t.id === terminal.id)
     const following = list[index + 1]
     const inSplits = (all: PaneSplit[], id: string) => all.some((s) => hasPane(s, id))
     const placed = following && groupOfTab(ws, following.id)
@@ -520,7 +596,10 @@ export const useTerminalsStore = defineStore('terminals', () => {
     const added = next.filter((n) => !retired.has(n.id) && !previous.has(n.id)).map((n) => incoming.get(n.id)!)
     const list = [...known, ...added]
     if (!sameItems(list, current)) terminals.value = list
-    if (!sameData(toRaw(splits.value), nextSplits)) splits.value = nextSplits
+    // A divider being dragged keeps its share: main knows it once it is let go.
+    let incomingSplits = nextSplits
+    if (resizing) ({ splits: incomingSplits, held: resizing } = holdSplit(nextSplits, resizing))
+    if (!sameData(toRaw(splits.value), incomingSplits)) splits.value = incomingSplits
     const order = next.map((t) => ({ id: t.id, mode: t.mode }))
     if (!sameData(toRaw(mainOrder.value), order)) mainOrder.value = order
     const ids = new Set(list.map((t) => t.id))
@@ -572,10 +651,10 @@ export const useTerminalsStore = defineStore('terminals', () => {
    * The groups of the last run, their terminals found again by their order if they have new ids; with
    * the old ids mapped to the new ones.
    */
-  function restore(list: TerminalInfo[]): { workspace: Workspace; ids: Map<string, string> } | null {
+  function restore(list: TerminalInfo[]): { workspace: Workspace; ids: Map<string, string>; active: string | null } | null {
     let saved: SavedWorkspace | null = null
     try {
-      saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null') as SavedWorkspace | null
+      saved = JSON.parse(savedAtStart ?? 'null') as SavedWorkspace | null
     } catch {
       return null
     }
@@ -583,10 +662,17 @@ export const useTerminalsStore = defineStore('terminals', () => {
     if (!ws || !Array.isArray(saved?.order)) return null
     const ids = new Set(list.map((t) => t.id))
     const savedTerminals = allTabs(ws).filter((tab) => !isViewTab(tab))
-    let map = new Map<string, string>()
-    if (savedTerminals.every((id) => ids.has(id))) {
-      map = new Map(savedTerminals.map((id) => [id, id]))
-    } else {
+    // After the window loaded again the terminals are the same; after a start main names the id each
+    // one had in the last run. One that didn't come back leaves its group, the others keep theirs.
+    const restoredFrom = new Map(list.flatMap((t) => (t.restoredFrom ? [[t.restoredFrom, t.id] as const] : [])))
+    let map = new Map(
+      savedTerminals.flatMap((id) => {
+        const now = ids.has(id) ? id : restoredFrom.get(id)
+        return now ? [[id, now] as const] : []
+      }),
+    )
+    if (map.size === 0 && restoredFrom.size === 0) {
+      // Main of an older version restored them: only their order tells which is which.
       // Logins aren't restored. Terminals that can't be matched lose their tabs, the pages stay.
       const order = saved.order.filter((entry) => entry.mode !== 'login')
       const current = list.filter((t) => t.mode !== 'login')
@@ -599,11 +685,17 @@ export const useTerminalsStore = defineStore('terminals', () => {
     const modes = new Map(list.map((t) => [t.id, t.mode]))
     const sessionBack = [...map.values()].some((id) => modes.get(id) !== 'browser')
     const kept = (tab: string) => (tab === BROWSER_TAB ? sessionBack : isViewTab(tab))
-    return { workspace: mapTabs(ws, (tab) => (kept(tab) ? tab : (map.get(tab) ?? null))), ids: map }
+    const active = typeof saved.active === 'string' ? (map.get(saved.active) ?? null) : null
+    return { workspace: mapTabs(ws, (tab) => (kept(tab) ? tab : (map.get(tab) ?? null))), ids: map, active }
   }
 
   /** Set once the terminals are loaded; the setting loads before them. */
   let loaded = false
+  /**
+   * The groups of the last run as the window found them: read before anything can change them, since
+   * main may report its terminals before they are loaded.
+   */
+  const savedAtStart = readSaved()
 
   async function load(): Promise<void> {
     const [list, layouts] = await Promise.all([window.api.terminals.list(), window.api.terminals.layouts()])
@@ -616,6 +708,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
       if (restored) knownPages.add(terminal.id)
     }
     sync(list, layouts)
+    // In one tab bar the terminal that had the keyboard gets it back, not the last tab; groups know theirs.
+    if (!grouped.value && restored?.active && byId.value.has(restored.active)) focus(restored.active)
     loaded = true
     restoredIds.value = restored?.ids ?? new Map()
   }
@@ -625,10 +719,11 @@ export const useTerminalsStore = defineStore('terminals', () => {
   window.api.app.onQuitting(() => (quitting = true))
 
   // The groups are kept for the next start, in both ways of showing tabs, so they can come back.
-  watch([workspace, mainOrder], ([ws, order]) => {
-    if (quitting) return
+  watch([workspace, mainOrder, activeId], ([ws, order, active]) => {
+    // Before the terminals are loaded the layout is still empty: the one of the last run must stay.
+    if (quitting || !loaded) return
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ workspace: ws, order } satisfies SavedWorkspace))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ workspace: ws, order, active } satisfies SavedWorkspace))
     } catch {
       // Storage full or blocked: the layout is just not kept.
     }
@@ -797,6 +892,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
    * end; in groups, the group shows the neighbour tab once main reports the terminal gone.
    */
   async function close(id: string): Promise<void> {
+    rememberClosing([id])
     if (!grouped.value && activeId.value === id) {
       const tab = tabOf(id)
       const others = tab?.panes.filter((p) => p.id !== id) ?? []
@@ -811,6 +907,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     const index = tabs.value.findIndex((tab) => tab.id === tabId)
     if (index === -1) return
     const tab = tabs.value[index]
+    rememberClosing(tab.panes.map((p) => p.id))
     if (tab.panes.some((p) => p.id === activeId.value)) focus(neighbourTab(index)?.focused.id ?? null)
     await Promise.all(tab.panes.map((p) => window.api.terminals.close(p.id)))
   }
@@ -821,6 +918,23 @@ export const useTerminalsStore = defineStore('terminals', () => {
 
   async function rename(id: string, title: string): Promise<void> {
     await window.api.terminals.rename(id, title)
+  }
+
+  /**
+   * Starts the tabs among `ids` that wait to (see `TerminalInfo.sleep`), unless they are starting or
+   * didn't start the last time: those wait for „Erneut versuchen“.
+   */
+  function wakeShown(ids: readonly string[]): void {
+    for (const id of ids) {
+      const sleep = byId.value.get(id)?.sleep
+      if (!sleep || sleep.waking || sleep.error) continue
+      window.api.terminals.wake(id).catch((error: unknown) => console.warn('[terminals] a waiting tab did not start', error))
+    }
+  }
+
+  /** Starts a tab of the last run that waits, also once more after it didn't start. */
+  async function wakeTerminal(id: string): Promise<void> {
+    await window.api.terminals.wake(id)
   }
 
   async function setMuted(id: string, muted: boolean): Promise<void> {
@@ -861,26 +975,6 @@ export const useTerminalsStore = defineStore('terminals', () => {
   }
 
   /** Starts the same command again in a new terminal in the same place; the old one stays without trust. */
-  async function restart(id: string): Promise<void> {
-    const old = terminals.value.find((t) => t.id === id)
-    // A browser has no command; its pane loads the page again instead.
-    if (!old || old.mode === 'browser') return
-    const info = await window.api.terminals.create({
-      accountId: old.accountId,
-      authAccountId: old.authAccountId,
-      cwd: old.cwd,
-      mode: old.mode,
-      resumeSessionId: old.resumeSessionId,
-      title: old.fixedTitle ? old.title : null,
-      muted: old.muted,
-      replaces: id,
-    })
-    if (!info) return
-    // Before the old one closes, so its group doesn't go with it.
-    replace(id, info)
-    await window.api.terminals.close(id)
-  }
-
   /** Continues the terminal's session with another account's limits, in a new one in the same place. */
   async function continueWith(id: string, accountId: string): Promise<TerminalInfo | null> {
     if (!byId.value.has(id)) return null
@@ -889,9 +983,13 @@ export const useTerminalsStore = defineStore('terminals', () => {
     return info
   }
 
-  /** Starts a session again in its place; it goes on with its conversation. */
+  /**
+   * Starts a terminal again in its place once its process has ended; a session goes on with its
+   * conversation. A browser has no command: its pane loads the page again instead.
+   */
   async function restartSession(id: string): Promise<TerminalInfo | null> {
-    if (!byId.value.has(id)) return null
+    const old = byId.value.get(id)
+    if (!old || old.mode === 'browser') return null
     const info = await window.api.terminals.restartSession(id)
     if (info) replace(id, info)
     return info
@@ -1046,6 +1144,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     const layout = setRatio(tab.layout, path, ratio) as PaneSplit
     const ids = new Set(paneIds(layout))
     splits.value = [...dropPanes(splits.value, ids), layout]
+    resizing = save ? null : (plain(layout) as PaneSplit)
     if (save) void window.api.terminals.arrange(plain(layout))
   }
 
@@ -1094,7 +1193,10 @@ export const useTerminalsStore = defineStore('terminals', () => {
     if (byId.value.has(oldId) || groupOfTab(workspace.value, oldId)) replace(oldId, info, activeId.value === oldId)
   })
 
-  window.api.terminals.onChanged((next, layouts) => sync(next, layouts))
+  // Before `load` the list is not taken in: `load` gets the current one and restores the groups with it.
+  window.api.terminals.onChanged((next, layouts) => {
+    if (loaded) sync(next, layouts)
+  })
 
   function onReplaced(listener: (oldId: string, newId: string) => void): () => void {
     replacedListeners.add(listener)
@@ -1109,10 +1211,16 @@ export const useTerminalsStore = defineStore('terminals', () => {
     groups,
     activeGroup,
     focusedTab,
+    keyboardTerminal,
     focusedPage,
     activeId,
     active,
     activeTab,
+    recentlyClosed,
+    forgetClosed,
+    forgetClosedOf,
+    zoomed,
+    toggleZoom,
     visibleIds,
     restoredIds,
     onReplaced,
@@ -1135,6 +1243,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
     closeBrowserTab,
     sleeping,
     wake,
+    wakeShown,
+    wakeTerminal,
     focusedAt: focusedAtOf,
     runningCount,
     load,
@@ -1155,7 +1265,6 @@ export const useTerminalsStore = defineStore('terminals', () => {
     kill,
     rename,
     setMuted,
-    restart,
     continueWith,
     restartSession,
     moveSession,

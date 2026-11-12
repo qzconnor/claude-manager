@@ -51,6 +51,44 @@ export function bodyText(body: string, mimeType: string | null): string {
   return text.length > MAX_BODY_CHARS ? `${text.slice(0, MAX_BODY_CHARS)}\n… (cut: ${text.length} characters in all)` : text
 }
 
+/** Fields of a form or JSON body that hold passwords and the like: Claude gets their names only. */
+const SECRET_FIELD = /password|passwd|passphrase|secret|^pwd$|^pin$|^otp$|cvc|cvv|card.?number/i
+const HIDDEN = '•••• (hidden)'
+
+/**
+ * A request body as Claude reads it (see bodyText), with the values of password-like fields of forms,
+ * JSON and multipart bodies hidden, e.g. of a login the page sends.
+ */
+export function requestBodyText(body: string, mimeType: string | null): string {
+  const type = mimeType ?? ''
+  let text = body
+  if (/x-www-form-urlencoded/i.test(type)) {
+    const params = new URLSearchParams(body)
+    if ([...params.keys()].some((key) => SECRET_FIELD.test(key))) {
+      text = [...params].map(([key, value]) => `${key}=${SECRET_FIELD.test(key) ? HIDDEN : value}`).join('&')
+    }
+  } else if (/multipart\/form-data/i.test(type)) {
+    text = body.replace(/(name="([^"]*)"[^\r\n]*\r?\n(?:[^\r\n]+\r?\n)*\r?\n)([^\r\n]*)/g, (all, head: string, name: string) =>
+      SECRET_FIELD.test(name) ? `${head}${HIDDEN}` : all,
+    )
+  } else if (/json/i.test(type) || /^\s*[[{]/.test(body)) {
+    try {
+      text = JSON.stringify(hideSecretFields(JSON.parse(body)))
+    } catch {
+      // Not JSON after all: as it came.
+    }
+  }
+  return bodyText(text, mimeType)
+}
+
+function hideSecretFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(hideSecretFields)
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value).map(([key, inner]) => [key, SECRET_FIELD.test(key) && (typeof inner === 'string' || typeof inner === 'number') ? HIDDEN : hideSecretFields(inner)]),
+  )
+}
+
 export async function responseBody(ctx: ActionContext, entry: NetworkEntry): Promise<string> {
   if (!isTextType(entry.mimeType)) return `(${entry.mimeType}, ${entry.encodedBytes !== null ? formatBytes(entry.encodedBytes) : 'size unknown'}; not text, not shown)`
   try {

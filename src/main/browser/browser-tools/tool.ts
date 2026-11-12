@@ -25,6 +25,12 @@ export interface ToolDefinition<P> {
   readOnly?: boolean
   /** It deletes something of the user's (the client may ask before it runs). */
   destructive?: boolean
+  /**
+   * It reaches beyond what the page shows: local files, the site's cookies and storage, the contents
+   * of its requests, scripts in it, its data. Claude asks before it unless the settings allow it, and
+   * the log marks it (and keeps it when it drops old lines).
+   */
+  sensitive?: boolean
   kind: string
   whileDialog?: boolean
   parse(args: Args): P
@@ -76,17 +82,28 @@ export async function untilBlocked(ctx: ActionContext, work: () => Promise<void>
   await Promise.race([work(), ctx.untilDialog(), ctx.untilLogin()])
 }
 
-/** Loads a page; a failure is returned for the result, unless a newer navigation took over. */
-export async function loadPage(ctx: ActionContext, load: () => Promise<void>): Promise<string | null> {
+/** How long a load that was aborted may take to show where the page went (ms). */
+const ABORTED_SETTLE_MS = 1500
+
+/**
+ * Loads `url`; a failure is returned for the result, unless a newer navigation took over. Electron
+ * ends a load with ERR_ABORTED both when the page went on elsewhere (a redirect by its script) and
+ * when it stayed where it was (the address is a download, answered without content such as 204, or
+ * was refused): only the first is a success.
+ */
+export async function loadPage(ctx: ActionContext, url: string, load: () => Promise<void>): Promise<string | null> {
+  const before = ctx.page.contents.getURL()
   try {
     await untilBlocked(ctx, () => withTimeout(load(), NAVIGATION_WAIT_MS, 'timeout'))
     return null
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (message === 'timeout') return `The page is still loading after ${NAVIGATION_WAIT_MS / 1000} s.`
-    // ERR_ABORTED: a redirect of the page or another navigation took over.
-    if (message.includes('ERR_ABORTED') || message.includes('(-3)')) return null
-    throw new ToolError(`The page could not be opened: ${message}`)
+    if (!message.includes('ERR_ABORTED') && !message.includes('(-3)')) throw new ToolError(`The page could not be opened: ${message}`)
+    await ctx.page.settle(ABORTED_SETTLE_MS).catch(() => undefined)
+    const now = ctx.page.contents.getURL()
+    if (now !== before || before === url) return null
+    return `The browser did not open ${url} as a page and stayed at ${now}: the address may be a download (see below) or answered without content.`
   }
 }
 

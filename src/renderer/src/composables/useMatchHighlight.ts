@@ -1,5 +1,5 @@
 import { onBeforeUnmount, watch } from 'vue'
-import { matchSpans } from '@/lib/search'
+import { locate, matchSpans } from '@/lib/search'
 
 /** The name the style sheet colors (`::highlight(search-match)` in main.css). */
 const NAME = 'search-match'
@@ -61,16 +61,4 @@ export function useMatchHighlight(root: () => HTMLElement | null | undefined, te
     observer.disconnect()
     CSS.highlights.delete(NAME)
   })
-}
-
-/** The text node and offset at `position` of the nodes' joined text; an end prefers the node it ends in. */
-function locate(nodes: Text[], position: number, end: boolean): { node: Text; offset: number } {
-  let rest = position
-  for (const node of nodes) {
-    const length = node.data.length
-    if (rest < length || (end && rest === length)) return { node, offset: rest }
-    rest -= length
-  }
-  const last = nodes[nodes.length - 1]
-  return { node: last, offset: last.data.length }
 }

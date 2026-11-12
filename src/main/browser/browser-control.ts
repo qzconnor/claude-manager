@@ -1,10 +1,11 @@
+import { tmpdir } from 'node:os'
 import { webContents, type WebContents } from 'electron'
-import { BLANK_PAGE } from '@shared/browser'
+import { BLANK_PAGE, trimLog } from '@shared/browser'
 import type { BrowserActivity, BrowserControlState, BrowserDownload, BrowserEmulation, BrowserHighlight, BrowserLoginRequest, BrowserViewport } from '@shared/types'
 import { TypedEmitter } from '../lib/typed-emitter'
 import { browserDownloads } from '../window/browser-downloads'
 import { browserLogins } from '../window/browser-logins'
-import { browserPermissions } from '../window/browser-permissions'
+import { browserPermissions, originOf } from '../window/browser-permissions'
 import type { TerminalService } from '../services/terminal-service'
 import type { ActionContext, ActionStep, BrowserTab, ConsoleEntry, FileChooser, PageEvent, RecordedStep } from './action-context'
 import { autoAttachFrames, PageFrames } from './frames'
@@ -25,7 +26,7 @@ import {
   type DialogSignal,
   type PageDialog,
 } from './page-dialogs'
-import { applyEmulation, applyFrameEmulation, isEmulating, setPhoneMode, untilViewport } from './page-emulation'
+import { applyEmulation, applyFrameEmulation, isEmulating, permissionsKey, setPhoneMode, untilViewport } from './page-emulation'
 import { pointerMoveMs, type PointerSpot } from './pointer'
 import { snapshotChanges } from './snapshot-diff'
 import { ToolError } from './tool-args'
@@ -42,6 +43,14 @@ const CONSOLE_LIMIT = 300
 const PAGE_EVENT_LIMIT = 50
 /** Steps of a session's recording (browser_generate_test); older ones go. */
 const RECORDING_LIMIT = 500
+/** Network events with what the page sends or gets anew; left out while the user has the page. */
+const PRIVATE_NETWORK_EVENTS = new Set([
+  'Network.requestWillBeSent',
+  'Network.webSocketCreated',
+  'Network.webSocketFrameSent',
+  'Network.webSocketFrameReceived',
+  'Network.eventSourceMessageReceived',
+])
 
 interface Control {
   sessionId: string
@@ -81,6 +90,8 @@ interface Browser {
   lastSnapshot: { sessionId: string; doc: string; text: string } | null
   /** What the page pretends for Claude; it ends with the session. */
   emulation: BrowserEmulation | null
+  /** The site Claude's grants of permissions are for: the one open when it gave them. */
+  permissionOrigin: string | null
   dialog: PageDialog | null
   dialogSignal: DialogSignal
   caught: CaughtDialog[]
@@ -232,6 +243,7 @@ export class BrowserControl extends TypedEmitter<Events> {
       kind: 'control',
       label: takenOver ? 'Du hast den Browser übernommen' : 'Du hast den Browser an Claude zurückgegeben',
       status: 'done',
+      detail: takenOver ? 'Privat: Was du tippst und die Seite sendet oder in die Konsole schreibt, bekommt Claude nicht.' : null,
     })
     if (!takenOver) {
       for (const resolve of browser.releaseWaiters) resolve()
@@ -271,9 +283,10 @@ export class BrowserControl extends TypedEmitter<Events> {
   private async dropEmulation(browser: Browser): Promise<void> {
     if (!browser.emulation) return
     browser.emulation = null
+    browser.permissionOrigin = null
     const contents = browser.contents
     if (!contents || contents.isDestroyed()) return
-    browserPermissions.set(contents, {})
+    browserPermissions.set(contents, {}, null)
     if (!contents.debugger.isAttached()) return
     await applyEmulation(new PageDriver(contents), null, browser.viewport?.mobile ?? false, browser.frames.frameSessions()).catch(() => undefined)
   }
@@ -338,7 +351,12 @@ export class BrowserControl extends TypedEmitter<Events> {
     const wasActive = this.isActive(browser)
     browser.control = { sessionId, busy: true, takenOver: false, lastActionAt: Date.now() }
     this.emitControl(browser)
-    const activity = this.addActivity(browser, { kind: step.kind, label: step.label, status: 'running' })
+    const activity = this.addActivity(browser, {
+      kind: step.kind,
+      label: step.label,
+      status: 'running',
+      sensitive: step.sensitive === true,
+    })
     const started = Date.now()
     let detail: string | null = null
     let image: string | null = null
@@ -464,8 +482,11 @@ export class BrowserControl extends TypedEmitter<Events> {
       networkEntries: () => [...browser.network.values()].sort((a, b) => a.id - b.id),
       emulation: () => (browser.emulation ? { ...browser.emulation } : null),
       setEmulation: async (emulation) => {
+        const before = browser.emulation
         browser.emulation = emulation && isEmulating(emulation) ? { ...emulation } : null
-        await applyEmulation(page, browser.emulation, browser.viewport?.mobile ?? false, browser.frames.frameSessions())
+        // Grants go to the site open now, not to the next one the tab goes to.
+        if (permissionsKey(before) !== permissionsKey(browser.emulation)) browser.permissionOrigin = originOf(page.contents.getURL())
+        await applyEmulation(page, browser.emulation, browser.viewport?.mobile ?? false, browser.frames.frameSessions(), browser.permissionOrigin)
         this.emitControl(browser)
       },
       routes: () => browser.routes.map(routeState),
@@ -518,6 +539,12 @@ export class BrowserControl extends TypedEmitter<Events> {
       },
       fileChooser: () => browser.chooser,
       clearFileChooser: () => (browser.chooser = null),
+      uploadFolders: () => {
+        const id = browser.control?.sessionId
+        const session = id ? this.terminals.list().find((t) => t.id === id) : undefined
+        const folders = [session?.cwd, session?.worktree?.path].filter((folder): folder is string => !!folder)
+        return [...folders, tmpdir()]
+      },
       interceptFileChooser: async (work) => {
         await page.cdp('Page.setInterceptFileChooserDialog', { enabled: true }).catch(() => undefined)
         try {
@@ -663,7 +690,9 @@ export class BrowserControl extends TypedEmitter<Events> {
     await autoAttachFrames(page, undefined)
     // A new connection starts without the phone mode and the emulation Claude chose.
     if (browser.viewport?.mobile) await setPhoneMode(page, true, browser.emulation?.locale ?? null).catch(() => undefined)
-    if (browser.emulation) await applyEmulation(page, browser.emulation, browser.viewport?.mobile ?? false, []).catch(() => undefined)
+    if (browser.emulation) {
+      await applyEmulation(page, browser.emulation, browser.viewport?.mobile ?? false, [], browser.permissionOrigin).catch(() => undefined)
+    }
     if (browser.routes.length) await enableRoutes(page, undefined, browser.routes).catch(() => undefined)
     browser.dialogScript = null
     browser.protocol = true
@@ -707,6 +736,9 @@ export class BrowserControl extends TypedEmitter<Events> {
     }
     if (browser.contents !== contents) return
     if (method.startsWith('Network.')) {
+      // While the user has the page, nothing new goes into the log Claude reads: what they type and
+      // send (a login) stays theirs. Requests from before end as usual.
+      if (browser.control?.takenOver && PRIVATE_NETWORK_EVENTS.has(method)) return
       const warning = networkEvent(browser, method, params, session)
       if (warning) this.pageWarning(browser, 'network', warning)
       return
@@ -766,6 +798,8 @@ export class BrowserControl extends TypedEmitter<Events> {
 
   /** A message of the console or an error the page didn't catch; both report such an error, it is one entry. */
   private addConsole(browser: Browser, entry: ConsoleEntry): void {
+    // While the user has the page, what it logs (also what they typed, an app's debug output) isn't Claude's.
+    if (browser.control?.takenOver) return
     if (!mergeError(browser.consoleEntries, entry)) return
     if (browser.consoleEntries.length > CONSOLE_LIMIT) browser.consoleEntries.shift()
     if (entry.level === 'error') this.pageWarning(browser, 'console', `Konsole: ${entry.text.split('\n')[0].slice(0, 200)}`)
@@ -867,6 +901,7 @@ export class BrowserControl extends TypedEmitter<Events> {
         frames: new PageFrames(),
         lastSnapshot: null,
         emulation: null,
+        permissionOrigin: null,
         dialog: null,
         dialogSignal: dialogSignal(),
         caught: [],
@@ -937,17 +972,21 @@ export class BrowserControl extends TypedEmitter<Events> {
     }, ACTIVE_MS + 100)
   }
 
-  private addActivity(browser: Browser, entry: Pick<BrowserActivity, 'kind' | 'label' | 'status'>): BrowserActivity {
+  private addActivity(
+    browser: Browser,
+    entry: Pick<BrowserActivity, 'kind' | 'label' | 'status'> & Partial<Pick<BrowserActivity, 'detail' | 'sensitive'>>,
+  ): BrowserActivity {
     const activity: BrowserActivity = {
       id: browser.nextActivity++,
       at: new Date().toISOString(),
       detail: null,
       durationMs: null,
       image: null,
+      sensitive: false,
       ...entry,
     }
     browser.log.push(activity)
-    if (browser.log.length > LOG_LIMIT) browser.log.splice(0, browser.log.length - LOG_LIMIT)
+    trimLog(browser.log, LOG_LIMIT)
     this.emit('activity', browser.id, { ...activity })
     return activity
   }

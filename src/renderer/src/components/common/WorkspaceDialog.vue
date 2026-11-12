@@ -48,7 +48,7 @@ const loadingPrompt = ref(false)
 const saving = ref(false)
 const touched = ref(false)
 /** Moves into the new workspace once it is made. */
-const moving = ref<{ path: string; sessions: number } | null>(null)
+const moving = ref<{ path: string } | null>(null)
 /** The folder of a new workspace is there already: it is used as it is, with what lies in it. */
 const existing = ref(false)
 /** The prompt was typed in, not taken over from the `cm_prompts.md` of a folder that is there. */
@@ -183,7 +183,7 @@ async function save() {
       if (move) {
         // Asked already: choosing a new workspace for it was the question.
         ui.workspaceRequest = null
-        await folderMove.move(move.path, created.path, move.sessions, false)
+        await folderMove.move(move.path, created.path, false)
         return
       }
       if (!reused) toast.success(`Workspace „${created.name}“ angelegt`)
@@ -229,7 +229,7 @@ async function save() {
           <template v-if="mode === 'adopt'">In der Session-Übersicht steht er dann als eigener Workspace.</template>
         </DialogDescription>
         <DialogDescription v-if="mode === 'create' && moving">
-          „{{ splitFolder(moving.path).name }}“ zieht danach hinein{{ moving.sessions > 0 ? ', mit seinen Sessions' : '' }}.
+          „{{ splitFolder(moving.path).name }}“ zieht danach hinein{{ folderMove.sessionsIn(moving.path) > 0 ? ', mit seinen Sessions' : '' }}.
         </DialogDescription>
       </DialogHeader>
 

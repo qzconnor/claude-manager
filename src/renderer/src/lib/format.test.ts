@@ -4,11 +4,16 @@ import {
   accountKindLabel,
   formatBytes,
   formatClock,
+  formatCost,
+  formatCountdown,
   formatDateTime,
   formatNumber,
+  formatPeriod,
   formatRelative,
   formatReset,
+  formatShortDate,
   formatTokens,
+  formatUpcoming,
   identityLabel,
   organizationLabel,
   planLabel,
@@ -34,7 +39,23 @@ describe('formatRelative', () => {
   it('says "gerade eben" within 45 seconds, both ways', () => {
     expect(formatRelative(at(0), NOW)).toBe('gerade eben')
     expect(formatRelative(at(-44 * SECOND), NOW)).toBe('gerade eben')
+    // A session just written, a little ahead of the list's clock.
     expect(formatRelative(at(44 * SECOND), NOW)).toBe('gerade eben')
+  })
+
+  it('says "gleich" for a time just ahead, as the next fetch', () => {
+    expect(formatUpcoming(at(44 * SECOND), NOW)).toBe('gleich')
+    expect(formatUpcoming(at(5 * MINUTE), NOW)).toBe('in 5 Minuten')
+    expect(formatUpcoming(null, NOW)).toBe('–')
+  })
+
+  it('counts days by the calendar, not in blocks of 24 hours', () => {
+    // Wednesday 23:59 on Friday at 6:00: 30 hours, but the day before yesterday.
+    expect(formatRelative('2026-11-04T22:59:00Z', Date.parse('2026-11-06T05:00:00Z'))).toBe('vorgestern')
+    // Thursday 0:00 on Friday at 23:00: 47 hours, but yesterday.
+    expect(formatRelative('2026-11-04T23:00:00Z', Date.parse('2026-11-05T22:00:00Z') + DAY)).toBe('gestern')
+    // Nearly a day, still today.
+    expect(formatRelative('2026-11-05T23:10:00Z', Date.parse('2026-11-06T22:50:00Z'))).toBe('vor 24 Stunden')
   })
 
   it('counts minutes, hours and days', () => {
@@ -76,6 +97,49 @@ describe('formatDateTime', () => {
   })
 })
 
+describe('formatShortDate', () => {
+  const now = Date.parse('2026-11-12T12:00:00Z')
+
+  it('is relative within the last week', () => {
+    expect(formatShortDate('2026-11-12T11:59:40Z', now)).toBe('gerade eben')
+    expect(formatShortDate('2026-11-12T09:00:00Z', now)).toBe('vor 3 Stunden')
+    expect(formatShortDate('2026-11-06T12:00:00Z', now)).toBe('vor 6 Tagen')
+  })
+
+  it('names the day before that, the year only when it is another one', () => {
+    expect(formatShortDate('2026-11-05T12:00:00Z', now)).toBe('5. Nov.')
+    expect(formatShortDate('2026-09-16T11:18:00Z', now)).toBe('16. Sept.')
+    expect(formatShortDate('2025-12-24T12:00:00Z', now)).toBe('24. Dez. 2025')
+  })
+
+  it('has a dash without a time', () => {
+    expect(formatShortDate(null, now)).toBe('–')
+    expect(formatShortDate('kaputt', now)).toBe('–')
+  })
+})
+
+describe('formatPeriod', () => {
+  it('names the day once for a span within it', () => {
+    expect(formatPeriod('2026-11-06T08:10:00Z', '2026-11-06T12:00:00Z')).toBe('06.11.2026, 09:10 – 13:00')
+  })
+
+  it('names both days for a span over midnight, by local time', () => {
+    expect(formatPeriod('2026-11-05T22:30:00Z', '2026-11-06T00:15:00Z')).toBe('05.11.2026, 23:30 – 06.11.2026, 01:15')
+    // 22:59 and 23:01 UTC are the same day in UTC, but not in Berlin.
+    expect(formatPeriod('2026-11-05T22:59:00Z', '2026-11-05T23:01:00Z')).toBe('05.11.2026, 23:59 – 06.11.2026, 00:01')
+  })
+
+  it('shows one time when both ends are the same minute', () => {
+    expect(formatPeriod('2026-11-06T12:00:00Z', '2026-11-06T12:00:40Z')).toBe('06.11.2026, 13:00')
+  })
+
+  it('falls back to the end that can be read', () => {
+    expect(formatPeriod(null, '2026-11-06T12:00:00Z')).toBe('06.11.2026, 13:00')
+    expect(formatPeriod('2026-11-06T12:00:00Z', 'kaputt')).toBe('06.11.2026, 13:00')
+    expect(formatPeriod(null, null)).toBe('–')
+  })
+})
+
 describe('formatClock', () => {
   it('shows only the time within a day, both ways', () => {
     expect(formatClock(at(6 * HOUR + 40 * MINUTE), NOW)).toBe('19:40')
@@ -92,6 +156,25 @@ describe('formatClock', () => {
   it('shows a dash for missing or invalid dates', () => {
     expect(formatClock(null, NOW)).toBe('–')
     expect(formatClock('nope', NOW)).toBe('–')
+  })
+})
+
+describe('formatCountdown', () => {
+  const now = Date.parse('2026-11-12T12:00:00.000Z')
+  const at = (seconds: number) => new Date(now + seconds * 1000).toISOString()
+
+  it('counts down like a clock', () => {
+    expect(formatCountdown(at(5), now)).toBe('0:05')
+    expect(formatCountdown(at(12 * 60 + 34), now)).toBe('12:34')
+    expect(formatCountdown(at(3600 + 2 * 60 + 3), now)).toBe('1:02:03')
+    expect(formatCountdown(at(2 * 86400 + 4 * 3600 + 3 * 60 + 10), now)).toBe('2 T. 4:03:10')
+  })
+
+  it('rounds a started second up and stops at zero', () => {
+    expect(formatCountdown(new Date(now + 1200).toISOString(), now)).toBe('0:02')
+    expect(formatCountdown(at(0), now)).toBe('0:00')
+    expect(formatCountdown(at(-90), now)).toBe('0:00')
+    expect(formatCountdown('kaputt', now)).toBe('0:00')
   })
 })
 
@@ -136,6 +219,24 @@ describe('formatTokens', () => {
     const plain = (text: string) => text.replace(/\s/g, ' ')
     expect(plain(formatTokens(1_500_000))).toBe('1,5 Mio.')
     expect(plain(formatTokens(2_340_000_000))).toBe('2,3 Mrd.')
+  })
+})
+
+describe('formatCost', () => {
+  const plain = (text: string) => text.replace(/\s/g, ' ')
+
+  it('writes dollars with cents, from 100 $ whole', () => {
+    expect(plain(formatCost(0))).toBe('0,00 $')
+    expect(plain(formatCost(0.005))).toBe('0,01 $')
+    expect(plain(formatCost(12.345))).toBe('12,35 $')
+    expect(plain(formatCost(99.99))).toBe('99,99 $')
+    expect(plain(formatCost(100))).toBe('100 $')
+    expect(plain(formatCost(1234.5))).toBe('1.235 $')
+  })
+
+  it('shows that there is a cost below a cent', () => {
+    expect(plain(formatCost(0.0049))).toBe('< 0,01 $')
+    expect(plain(formatCost(0.000_001))).toBe('< 0,01 $')
   })
 })
 

@@ -7,8 +7,9 @@ import { useClock } from '@/composables/useClock'
 import { useTerminal } from '@/composables/useTerminal'
 import { useTerminalActions } from '@/composables/useTerminalActions'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
-import { formatArgs } from '@/lib/args'
 import { FILE_TREE_DRAG_TYPE } from '@/lib/file-tree'
+import { shellKind } from '@/lib/platform'
+import { pastedPaths } from '@/lib/shell-quote'
 import { terminalBus } from '@/lib/terminal-bus'
 import { cn } from '@/lib/utils'
 import { useBrowsersStore } from '@/stores/browsers'
@@ -17,6 +18,7 @@ import { useUiStore } from '@/stores/ui'
 import TerminalChromeBanner from './TerminalChromeBanner.vue'
 import TerminalImageDialog from './TerminalImageDialog.vue'
 import TerminalImagePreview from './TerminalImagePreview.vue'
+import TerminalLinkHint from './TerminalLinkHint.vue'
 import TerminalLimitBanner from './TerminalLimitBanner.vue'
 import TerminalSearch from './TerminalSearch.vue'
 
@@ -36,7 +38,7 @@ const term = useTerminal({
   container,
   active: toRef(props, 'active'),
 })
-const { imagePreview, openedImage } = term
+const { imagePreview, openedImage, linkHint } = term
 const { containerBackground, inactiveVeil } = useTerminalAppearance()
 const settings = useSettingsStore()
 const ui = useUiStore()
@@ -50,6 +52,12 @@ const exited = computed(() => props.terminal.status === 'exited')
 
 // Text from elsewhere in the window, e.g. a file the file tree mentions to Claude.
 onBeforeUnmount(terminalBus.onPaste(props.terminal.id, (text) => term.paste(text)))
+// Its tab clicked while it is the active one already: the keyboard comes back here.
+onBeforeUnmount(
+  terminalBus.onFocus(props.terminal.id, () => {
+    if (props.active) term.focus()
+  }),
+)
 
 // Files dropped on the terminal: their paths are pasted, like in Windows Terminal. Claude Code
 // attaches pasted image paths as images. Entries of the file tree come the same way.
@@ -81,21 +89,27 @@ function onDrop(event: DragEvent) {
   event.preventDefault()
   const fromTree = event.dataTransfer!.getData(FILE_TREE_DRAG_TYPE)
   const paths = fromTree ? [fromTree] : [...event.dataTransfer!.files].map((file) => window.api.app.pathForFile(file)).filter(Boolean)
-  if (paths.length) term.paste(formatArgs(paths))
+  if (paths.length) term.paste(pastedPaths(paths, props.terminal.mode, shellKind))
 }
 
 // The limit hint stays away once dismissed, until the session hits a limit again.
 const now = useClock(30_000)
 const dismissedLimit = ref<string | null>(null)
-const limitKey = computed(() => {
-  const { limit, sessionId } = props.terminal
-  return limit ? `${sessionId}|${limit.resetsAt}|${limit.message}` : null
-})
+/** The limit the session stands at; kept past its reset, while the session is about to go on by itself. */
+const limitKey = ref<string | null>(null)
+watch(
+  () => props.terminal.limit,
+  (current) => {
+    if (current) limitKey.value = `${props.terminal.sessionId}|${current.resetsAt}|${current.message}`
+  },
+  { immediate: true },
+)
 const limit = computed(() => {
   const current = props.terminal.limit
-  if (!current || limitKey.value === dismissedLimit.value) return null
+  if (!current) return null
   return current.resetsAt && Date.parse(current.resetsAt) <= now.value ? null : current
 })
+const limitHint = computed(() => limitKey.value !== dismissedLimit.value && (limit.value !== null || props.terminal.resume !== null))
 
 // A session with the app's browser that also starts with Claude in Chrome: Claude might take Chrome.
 const browsers = useBrowsersStore()
@@ -148,11 +162,11 @@ function closeSearch() {
     <div ref="container" class="flex size-full flex-col justify-end *:shrink-0" />
 
     <div
-      v-if="limit || chromeHint"
+      v-if="limitHint || chromeHint"
       class="pointer-events-none absolute inset-x-0 top-3 z-10 flex flex-col items-center gap-2 px-4"
     >
       <TerminalLimitBanner
-        v-if="limit"
+        v-if="limitHint"
         class="pointer-events-auto"
         :terminal="terminal"
         :limit="limit"
@@ -163,6 +177,7 @@ function closeSearch() {
 
     <TerminalImagePreview v-if="imagePreview?.image" :id="imagePreview.id" :x="imagePreview.x" :y="imagePreview.y" :image="imagePreview.image" />
     <TerminalImageDialog :image="openedImage" @close="term.closeImage()" />
+    <TerminalLinkHint v-if="linkHint" :url="linkHint.url" :x="linkHint.x" :y="linkHint.y" :ctrl="linkHint.ctrl" />
 
     <div v-if="searchOpen" class="absolute top-3 right-5 z-10">
       <TerminalSearch ref="search" :find-next="term.findNext" :find-previous="term.findPrevious" @close="closeSearch" />

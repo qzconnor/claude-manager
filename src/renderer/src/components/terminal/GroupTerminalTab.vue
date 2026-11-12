@@ -5,6 +5,7 @@ import {
   BellOffIcon,
   CircleStopIcon,
   Columns2Icon,
+  CopyIcon,
   ExternalLinkIcon,
   FolderOpenIcon,
   GlobeIcon,
@@ -16,6 +17,7 @@ import {
   RotateCwIcon,
   Rows2Icon,
   SquareTerminalIcon,
+  TimerIcon,
   TriangleAlertIcon,
   XIcon,
 } from '@lucide/vue'
@@ -41,12 +43,14 @@ import { useLauncher } from '@/composables/useLauncher'
 import { useTerminalActions } from '@/composables/useTerminalActions'
 import { attentionLook } from '@/lib/attention'
 import { attempt } from '@/lib/errors'
+import { openMenuBelow, tabKeyAction } from '@/lib/tab-keys'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
 import { useBrowsersStore } from '@/stores/browsers'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import BrowserFavicon from './BrowserFavicon.vue'
+import SleepIcon from './SleepIcon.vue'
 import TerminalTabCard from './TerminalTabCard.vue'
 
 /**
@@ -61,7 +65,7 @@ const terminals = useTerminalsStore()
 const browsers = useBrowsersStore()
 const launcher = useLauncher()
 const ui = useUiStore()
-const { closeTerminal, closeTabs, stopTerminal, restartTerminal } = useTerminalActions()
+const { closeTerminal, closeTabs, stopTerminal, restartTerminal, copyLastAnswer } = useTerminalActions()
 const accountSwitch = useAccountSwitch()
 
 const tabEl = ref<HTMLElement | null>(null)
@@ -121,6 +125,16 @@ function onMenuOpen(open: boolean) {
   if (open) hovered.value = false
 }
 
+watch(
+  () => ui.tabRenameRequest,
+  (id) => {
+    if (id !== props.terminal.id) return
+    ui.tabRenameRequest = null
+    startRename()
+  },
+  { immediate: true },
+)
+
 function startRename() {
   draft.value = props.terminal.title
   renaming.value = true
@@ -144,15 +158,36 @@ async function commitRename() {
   }
 }
 
+/** Renaming started with F2 on the tab: Enter or Escape give the keyboard back to the tab. */
+let renameFromTab = false
+
 function onRenameKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' && event.key !== 'Escape') return
   if (event.key === 'Enter') void commitRename()
-  else if (event.key === 'Escape') renaming.value = false
+  else renaming.value = false
+  if (renameFromTab) void nextTick(() => tabEl.value?.focus())
+  renameFromTab = false
 }
 
 function onMenuCloseAutoFocus(event: Event) {
   if (!renaming.value) return
   event.preventDefault()
   focusRenameField()
+}
+
+/** The keys of the tab with the keyboard (see `tabKeyAction`). */
+function onTabKey(event: KeyboardEvent) {
+  const action = tabKeyAction(event)
+  if (!action) return
+  event.preventDefault()
+  if (action === 'menu') openMenuBelow(event.currentTarget as HTMLElement)
+  else if (action === 'select') emit('select', props.terminal.id)
+  else if (action === 'close') void closeTerminal(props.terminal.id)
+  else if (action === 'rename') {
+    renameFromTab = true
+    startRename()
+  }
+  else ui.focusTerminalRequest++
 }
 
 function onMouseDown(event: MouseEvent) {
@@ -178,12 +213,13 @@ function openFolder() {
           <div
             ref="tabEl"
             role="tab"
+            :tabindex="selected ? 0 : -1"
             :data-terminal-id="terminal.id"
             :data-linked-hover="linkedHover || undefined"
             :aria-selected="selected"
             :class="
               cn(
-                'app-no-drag group/tab relative flex h-full min-w-28 shrink-0 cursor-pointer items-center gap-2 rounded-t-lg border pr-1 pl-3 text-xs transition-colors data-docking:opacity-50',
+                'app-no-drag group/tab relative flex h-full min-w-28 shrink-0 cursor-pointer items-center gap-2 rounded-t-lg border pr-1 pl-3 text-xs transition-colors data-docking:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset',
                 // Room for the session's name too.
                 session ? 'max-w-72' : 'max-w-56',
                 selected
@@ -195,6 +231,7 @@ function openFolder() {
             @click="emit('select', terminal.id)"
             @dblclick="startRename"
             @mousedown="onMouseDown"
+            @keydown="onTabKey"
             @pointerenter="ui.hoveredTab = terminal.id"
             @pointerleave="onPointerLeave"
           >
@@ -209,6 +246,7 @@ function openFolder() {
                 />
                 <BrowserFavicon v-else :terminal-id="terminal.id" class="size-3.5" />
               </template>
+              <SleepIcon v-else-if="terminal.status === 'asleep'" :sleep="terminal.sleep" />
               <LoaderCircleIcon
                 v-else-if="terminal.busy"
                 role="status"
@@ -217,6 +255,7 @@ function openFolder() {
                 :style="{ color: color || undefined }"
               />
               <SquareTerminalIcon v-else-if="terminal.mode === 'shell'" class="size-3.5" />
+              <TimerIcon v-else-if="terminal.resume" class="size-3.5 text-warning" />
               <TriangleAlertIcon v-else-if="terminal.limit" class="size-3.5 text-warning" />
               <AccountDot v-else :color="color" :class="cn(exited && 'opacity-40')" />
             </span>
@@ -239,6 +278,7 @@ function openFolder() {
                   cn(
                     'min-w-0 truncate',
                     exited && 'text-muted-foreground line-through',
+                    terminal.status === 'asleep' && 'text-muted-foreground',
                     attention && !exited && 'font-medium text-foreground',
                   )
                 "
@@ -315,6 +355,10 @@ function openFolder() {
         </ContextMenuGroup>
         <template v-if="terminal.mode === 'session'">
           <ContextMenuSeparator />
+          <ContextMenuItem @select="copyLastAnswer(terminal.id)">
+            <CopyIcon />
+            Letzte Antwort kopieren
+          </ContextMenuItem>
           <ContextMenuSub>
             <ContextMenuSubTrigger :disabled="!canSwitch">
               <ArrowRightLeftIcon />

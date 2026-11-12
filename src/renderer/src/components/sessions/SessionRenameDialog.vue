@@ -24,6 +24,8 @@ const open = computed({
 const sessionId = ref('')
 const named = ref(false)
 const name = ref('')
+/** What the field showed when the dialog opened. */
+const initial = ref('')
 const saving = ref(false)
 
 watch(
@@ -33,10 +35,20 @@ watch(
     sessionId.value = request.sessionId
     named.value = request.name !== null
     name.value = request.name ?? request.title
+    initial.value = name.value
     saving.value = false
   },
   { immediate: true },
 )
+
+/**
+ * Enter without a change only closes: without a name of its own, saving would make Claude's title of
+ * the moment the session's name, and later titles of Claude wouldn't show any more.
+ */
+function submit() {
+  if (name.value.trim() === initial.value.trim()) open.value = false
+  else void save(name.value)
+}
 
 async function save(next: string) {
   if (saving.value) return
@@ -71,7 +83,7 @@ function selectAll(event: Event) {
         </DialogDescription>
       </DialogHeader>
 
-      <form id="session-rename-form" class="flex flex-col gap-5" @submit.prevent="save(name)">
+      <form id="session-rename-form" class="flex flex-col gap-5" @submit.prevent="submit">
         <FieldGroup>
           <Field>
             <FieldLabel for="session-name">Name</FieldLabel>

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import type { ActionStep } from './action-context'
+import type { BrowserControl } from './browser-control'
+import { BrowserTools } from './browser-tools'
 import { NO_EMULATION } from '@shared/browser'
 import { describeEmulation, mergePermissions, parseEmulation } from './browser-tools/emulation-args'
-import { bodyText, formatBytes, headerLines } from './browser-tools/network-format'
+import { bodyText, formatBytes, headerLines, requestBodyText } from './browser-tools/network-format'
 import { formatMs, formatPerformance, type PerformanceReport } from './browser-tools/performance'
+import { cookieLine, type Cookie } from './browser-tools/storage'
 
 describe('parseEmulation', () => {
   it('takes only what is given', () => {
@@ -113,6 +117,35 @@ describe('bodyText', () => {
   })
 })
 
+describe('requestBodyText', () => {
+  it('hides passwords in a form, keeps the other fields', () => {
+    expect(requestBodyText('user=ann&password=hunter2&remember=1', 'application/x-www-form-urlencoded')).toBe(
+      'user=ann&password=•••• (hidden)&remember=1',
+    )
+  })
+
+  it('hides password-like fields in JSON, also nested', () => {
+    const text = requestBodyText('{"email":"a@b.c","auth":{"passphrase":"x","newPassword":"y"},"pin":1234}', 'application/json')
+    expect(text).not.toContain('"x"')
+    expect(text).not.toContain('"y"')
+    expect(text).not.toContain('1234')
+    expect(text).toContain('a@b.c')
+    expect(text).toContain('"newPassword": "•••• (hidden)"')
+  })
+
+  it('hides password fields of a multipart form', () => {
+    const body = '--b\r\nContent-Disposition: form-data; name="user"\r\n\r\nann\r\n--b\r\nContent-Disposition: form-data; name="password"\r\n\r\nhunter2\r\n--b--'
+    const text = requestBodyText(body, 'multipart/form-data; boundary=b')
+    expect(text).toContain('ann')
+    expect(text).not.toContain('hunter2')
+  })
+
+  it('leaves bodies without such fields as bodyText shows them', () => {
+    expect(requestBodyText('{"a":1}', 'application/json')).toBe(bodyText('{"a":1}', 'application/json'))
+    expect(requestBodyText('q=pass', 'application/x-www-form-urlencoded')).toBe('q=pass')
+  })
+})
+
 describe('formatting', () => {
   it('writes sizes and times for people', () => {
     expect(formatBytes(512)).toBe('512 B')
@@ -165,5 +198,51 @@ describe('formatPerformance', () => {
     expect(text).toContain('- JS heap 8.0 MB, 1200 DOM nodes')
     expect(text).not.toContain('layouts')
     expect(text).not.toContain('While loading')
+  })
+})
+
+describe('cookieLine', () => {
+  const cookie = (over: Partial<Cookie>): Cookie => ({
+    name: 'sid',
+    value: 'abc123',
+    domain: '.example.com',
+    path: '/',
+    expires: 0,
+    size: 9,
+    httpOnly: false,
+    secure: true,
+    session: true,
+    ...over,
+  })
+
+  it('shows the value of a cookie scripts can read', () => {
+    expect(cookieLine(cookie({}), 200)).toBe('- sid=abc123 (domain .example.com, secure, session)')
+  })
+
+  it('withholds the value of an httpOnly cookie, a login mostly', () => {
+    const line = cookieLine(cookie({ name: 'user_session', value: 'secret-token', httpOnly: true, sameSite: 'Lax' }), 20_000)
+    expect(line).toBe('- user_session (value withheld, 12 characters) (domain .example.com, httpOnly, secure, SameSite=Lax, session)')
+    expect(line).not.toContain('secret-token')
+  })
+})
+
+describe('BrowserTools.call', () => {
+  /** The step a tool hands to the browser's control, without running it. */
+  async function stepOf(name: string, args: Record<string, unknown>): Promise<ActionStep> {
+    let step: ActionStep | null = null
+    const control = {
+      perform: async (_sessionId: string, given: ActionStep) => {
+        step = given
+        throw new Error('not run')
+      },
+    }
+    await expect(new BrowserTools(control as unknown as BrowserControl).call('session', name, args)).rejects.toThrow('not run')
+    return step!
+  }
+
+  it('marks the steps that reach beyond the page for the log', async () => {
+    expect((await stepOf('browser_evaluate', { function: '() => 1' })).sensitive).toBe(true)
+    expect((await stepOf('browser_storage', {})).sensitive).toBe(true)
+    expect((await stepOf('browser_snapshot', {})).sensitive).toBe(false)
   })
 })

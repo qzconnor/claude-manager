@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { readJson, readJsonSync, writeJsonAtomic, writeJsonAtomicSync } from './json-file'
+import { readJson, readJsonGuarded, readJsonGuardedSync, readJsonSync, takeJsonProblems, writeJsonAtomic, writeJsonAtomicSync } from './json-file'
 
 let dir: string
 
@@ -102,4 +102,84 @@ describe('writeJsonAtomicSync', () => {
     expect(() => writeJsonAtomicSync(file, { a: 1 })).toThrow()
     expect(await readdir(dir)).toEqual(['state.json'])
   })
+})
+
+describe.each([
+  ['readJsonGuarded', (file: string) => readJsonGuarded<unknown>(file)],
+  ['readJsonGuardedSync', (file: string) => Promise.resolve(readJsonGuardedSync<unknown>(file))],
+])('%s', (_name, read) => {
+  afterEach(() => {
+    takeJsonProblems()
+  })
+
+  it('reads a valid file and reports nothing', async () => {
+    await writeFile(join(dir, 'a.json'), '{"a":1}')
+    expect(await read(join(dir, 'a.json'))).toEqual({ a: 1 })
+    expect(takeJsonProblems()).toEqual([])
+  })
+
+  it('returns null for a missing file, without a message', async () => {
+    expect(await read(join(dir, 'missing.json'))).toBeNull()
+    expect(takeJsonProblems()).toEqual([])
+  })
+
+  it('moves a broken file aside and loads the last good version', async () => {
+    const file = join(dir, 'accounts.json')
+    await writeFile(file, '')
+    await writeFile(`${file}.bak`, '{"accounts":[1]}')
+    expect(await read(file)).toEqual({ accounts: [1] })
+    // The good version is back in place, the broken one kept beside it.
+    expect(await readJson(file)).toEqual({ accounts: [1] })
+    const names = await readdir(dir)
+    expect(names.some((name) => name.startsWith('accounts.json.broken-'))).toBe(true)
+    const [problem] = takeJsonProblems()
+    expect(problem.file).toBe(file)
+    expect(problem.message).toContain('letzte funktionierende Fassung')
+  })
+
+  it('keeps a broken file without backup and starts empty', async () => {
+    const file = join(dir, 'settings.json')
+    await writeFile(file, '{"a":')
+    expect(await read(file)).toBeNull()
+    const names = await readdir(dir)
+    expect(names.some((name) => name.startsWith('settings.json.broken-'))).toBe(true)
+    expect(takeJsonProblems()[0].message).toContain('keine frühere Fassung')
+    // The file was moved aside, so a new state may be written.
+    await writeJsonAtomic(file, { fresh: true }, { guarded: true })
+    expect(await readJson(file)).toEqual({ fresh: true })
+  })
+})
+
+describe('guarded writes', () => {
+  afterEach(() => {
+    takeJsonProblems()
+  })
+
+  it('keeps the previous valid version as .bak', async () => {
+    const file = join(dir, 'state.json')
+    await writeJsonAtomic(file, { v: 1 }, { guarded: true })
+    await writeJsonAtomic(file, { v: 2 }, { guarded: true })
+    expect(await readJson(file)).toEqual({ v: 2 })
+    expect(await readJson(`${file}.bak`)).toEqual({ v: 1 })
+    writeJsonAtomicSync(file, { v: 3 }, { guarded: true })
+    expect(await readJson(`${file}.bak`)).toEqual({ v: 2 })
+  })
+
+  it('does not keep an invalid file as .bak', async () => {
+    const file = join(dir, 'state.json')
+    await writeFile(`${file}.bak`, '{"good":true}')
+    await writeFile(file, 'not json')
+    await writeJsonAtomic(file, { v: 1 }, { guarded: true })
+    expect(await readJson(`${file}.bak`)).toEqual({ good: true })
+  })
+
+  it('refuses to replace a file that could not be read', async () => {
+    // A folder can't be read as a file: like a file locked by another program.
+    const file = join(dir, 'locked.json')
+    await mkdir(file)
+    expect(await readJsonGuarded(file)).toBeNull()
+    expect(takeJsonProblems()[0].message).toContain('ließ sich nicht lesen')
+    await expect(writeJsonAtomic(file, { lost: true }, { guarded: true })).rejects.toThrow('erst nach einem Neustart')
+    expect(() => writeJsonAtomicSync(file, { lost: true }, { guarded: true })).toThrow('erst nach einem Neustart')
+  }, 10_000)
 })

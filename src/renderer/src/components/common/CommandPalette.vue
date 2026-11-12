@@ -34,8 +34,21 @@ function done(keep = false) {
   ui.paletteOpen = false
 }
 
+/** The tab in front gets the keyboard: in groups the one of the group that has it. */
+function focusTabs() {
+  const group = terminals.grouped ? document.querySelector(`[data-group-id="${CSS.escape(terminals.activeGroup?.id ?? '')}"]`) : document
+  group?.querySelector<HTMLElement>('[data-terminal-tabs] [role="tab"][tabindex="0"]')?.focus()
+}
+
 /** Back to the terminal with the keyboard instead of the title bar, also after Escape. */
 function onCloseAutoFocus(event: Event) {
+  if (ui.focusTabsRequest) {
+    ui.focusTabsRequest = false
+    keepFocus = false
+    event.preventDefault()
+    focusTabs()
+    return
+  }
   if (keepFocus) {
     keepFocus = false
     event.preventDefault()

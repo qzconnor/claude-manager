@@ -41,9 +41,9 @@ const CLAUDE_FOLDER_MS = 10_000
  */
 const REVEAL_LIMIT: Record<FileTouchKind, number> = { read: 30, write: 30, commit: 30, search: 10 }
 /** The share of a tab the changes of a file take beside its terminal, and its bounds. */
-const DEFAULT_DIFF_SHARE = 0.5
-const MIN_DIFF_SHARE = 0.2
-const MAX_DIFF_SHARE = 0.8
+export const DEFAULT_DIFF_SHARE = 0.5
+export const MIN_DIFF_SHARE = 0.2
+export const MAX_DIFF_SHARE = 0.8
 /** The most files a session's activity keeps; the ones Claude left alone the longest go first. */
 const MAX_ACTIVITY = 2000
 
@@ -74,6 +74,8 @@ interface Saved {
   hiddenKinds: FileTouchKind[]
   /** Long lines of the review of all changes wrap. */
   diffWrap: boolean
+  /** A file's changes show side by side. */
+  diffSplit: boolean
   /** Tabs of a file's changes shown without the tree (see `bare`). */
   bare: string[]
 }
@@ -100,6 +102,8 @@ export interface TreeModel {
   searchStale: boolean
   /** What is typed into the tree's search. */
   query: string
+  /** The search looks into the files, not at their names. */
+  searchContent: boolean
   /** Folders closed while the tree is filtered (open is the default there). */
   collapsedFiltered: Set<string>
   /** The selected entry, also the one the keyboard moves from. */
@@ -152,6 +156,8 @@ export const useFileTreeStore = defineStore('file-tree', () => {
   const filtersOpen = ref(saved.filtersOpen === true)
   /** Long lines of the review of all changes wrap (the default), or scroll sideways. */
   const diffWrap = ref(saved.diffWrap !== false)
+  /** A file's changes show side by side, the old file left and the new one right; or one below the other (the default). */
+  const diffSplit = ref(saved.diffSplit === true)
   const hiddenStatuses = reactive(new Set(knownValues(saved.hiddenStatuses, GIT_STATUSES)))
   const hiddenKinds = reactive(new Set(knownValues(saved.hiddenKinds, TOUCH_KINDS)))
   /**
@@ -244,6 +250,7 @@ export const useFileTreeStore = defineStore('file-tree', () => {
         hiddenStatuses: [...hiddenStatuses],
         hiddenKinds: [...hiddenKinds],
         diffWrap: diffWrap.value,
+        diffSplit: diffSplit.value,
         bare: [...bare],
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
@@ -252,7 +259,7 @@ export const useFileTreeStore = defineStore('file-tree', () => {
     }
   }
   watch(
-    [width, showIgnored, diffShare, filtersOpen, diffWrap, filters, hiddenStatuses, hiddenKinds, () => [...open].join('\n'), () => [...bare].join('\n')],
+    [width, showIgnored, diffShare, filtersOpen, diffWrap, diffSplit, filters, hiddenStatuses, hiddenKinds, () => [...open].join('\n'), () => [...bare].join('\n')],
     save,
   )
 
@@ -340,14 +347,25 @@ export const useFileTreeStore = defineStore('file-tree', () => {
    * Shows the changes of a file of a tab's tree: with the tabs in groups as a tab of the group
    * (`groupId`; `keep`: one that stays, else one that previews), otherwise beside the tab's terminal.
    */
-  function showDiff(target: TreeTarget, path: string, options: { groupId?: string | null; keep?: boolean } = {}): void {
+  function showDiff(
+    target: TreeTarget,
+    path: string,
+    options: { groupId?: string | null; keep?: boolean; line?: number } = {},
+  ): void {
     const file = { root: target.root, path }
+    lineRequest.value = options.line ? { root: target.root, path, line: options.line } : null
     if (terminals.grouped) {
       if (options.groupId) terminals.openDiff(file, options.groupId, options.keep ?? false)
     } else if (!sameData(splitDiffs.get(target.id), file)) {
       splitDiffs.set(target.id, file)
     }
   }
+
+  /**
+   * A line to show of the file whose changes `showDiff` shows (a hit of the content search): the view
+   * of that file takes it, shows the whole file there and marks the line.
+   */
+  const lineRequest = shallowRef<{ root: string; path: string; line: number } | null>(null)
 
   const splitDiffOf = (id: string | null | undefined) => (id ? (splitDiffs.get(id) ?? null) : null)
 
@@ -398,6 +416,7 @@ export const useFileTreeStore = defineStore('file-tree', () => {
       searchLoading: false,
       searchStale: false,
       query: '',
+      searchContent: false,
       collapsedFiltered: reactive(new Set()),
       selected: null,
       scrollTop: 0,
@@ -557,7 +576,8 @@ export const useFileTreeStore = defineStore('file-tree', () => {
       if (model.listings.has(dir) || model.errors.has(dir)) void loadDir(model, dir)
     }
     if (dirs.length > 0) model.searchStale = true
-    if (dirs.length > 0 || git) scheduleStatus(model)
+    // Main tells whether git may see it: not for what changes in node_modules or dist.
+    if (git) scheduleStatus(model)
   })
 
   // Back in the window: git may have run elsewhere, a folder outside the watched ones changed.
@@ -805,6 +825,7 @@ export const useFileTreeStore = defineStore('file-tree', () => {
     filters,
     filtersOpen,
     diffWrap,
+    diffSplit,
     hiddenStatuses,
     hiddenKinds,
     targetOf,
@@ -818,6 +839,7 @@ export const useFileTreeStore = defineStore('file-tree', () => {
     setWidth,
     setDiffShare,
     showDiff,
+    lineRequest,
     splitDiffOf,
     closeSplitDiff,
     showAllChanges,

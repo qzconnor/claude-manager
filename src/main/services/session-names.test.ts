@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AccountService } from './account-service'
 import type { IndexerClient } from './indexer-client'
+import { SessionMarks } from './session-marks'
 import { SessionNames } from './session-names'
 import { SessionService } from './session-service'
 import type { TerminalService } from './terminal-service'
@@ -99,7 +100,7 @@ describe('SessionService with names', () => {
     const indexer = {
       request: async () => [indexed(ID, claudeTitle), indexed(OTHER, 'Other')],
     } as unknown as IndexerClient
-    const service = new SessionService(accounts, indexer, {} as TerminalService, names)
+    const service = new SessionService(accounts, indexer, {} as TerminalService, names, new SessionMarks(dir))
     const changed = vi.fn()
     service.on('changed', changed)
 

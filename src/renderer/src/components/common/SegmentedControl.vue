@@ -12,6 +12,8 @@ const props = defineProps<{
   options: readonly { value: T; label: string }[]
   /** Stretch the control and its segments to the full width. */
   block?: boolean
+  /** `sm`: as low as the bars of a pane (24px), with smaller text. */
+  size?: 'sm'
   disabled?: boolean
   class?: HTMLAttributes['class']
 }>()
@@ -32,7 +34,8 @@ function onUpdate(value: unknown) {
     :disabled="disabled"
     :class="
       cn(
-        'inline-flex h-8 items-center rounded-lg bg-muted p-0.75 text-muted-foreground',
+        'inline-flex items-center rounded-lg bg-muted text-muted-foreground',
+        size === 'sm' ? 'h-[24px] p-[2px]' : 'h-8 p-0.75',
         block ? 'flex w-full' : 'w-fit',
         disabled && 'opacity-50',
         props.class,
@@ -46,7 +49,8 @@ function onUpdate(value: unknown) {
       :value="option.value"
       :class="
         cn(
-          'inline-flex h-full cursor-pointer items-center justify-center rounded-md border border-transparent px-2.5 text-sm font-medium whitespace-nowrap text-foreground/60 transition-[color,background-color,box-shadow] outline-none',
+          'inline-flex h-full min-w-0 cursor-pointer items-center justify-center rounded-md border border-transparent font-medium whitespace-nowrap text-foreground/60 transition-[color,background-color,box-shadow] outline-none',
+          size === 'sm' ? 'px-2 text-xs' : 'px-2.5 text-sm',
           'hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed dark:text-muted-foreground dark:hover:text-foreground',
           'data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm dark:data-[state=on]:border-input dark:data-[state=on]:bg-input/30 dark:data-[state=on]:text-foreground',
           block && 'flex-1',

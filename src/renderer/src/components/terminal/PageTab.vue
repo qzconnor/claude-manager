@@ -10,6 +10,7 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import { PAGE_INFO } from '@/lib/pages'
+import { openMenuBelow, tabKeyAction } from '@/lib/tab-keys'
 import { cn } from '@/lib/utils'
 import { pageTab, type PageName } from '@/lib/workspace'
 import { useTerminalsStore } from '@/stores/terminals'
@@ -27,6 +28,16 @@ const alone = computed(() => (terminals.groups.find((g) => g.id === props.groupI
 /** An update waiting or unread release notes: a dot on the settings, as on their button. */
 const dot = computed(() => props.page === 'settings' && (updates.hasUpdate || updates.unseen))
 
+/** The keys of the tab with the keyboard (see `tabKeyAction`); a page has no name of its own. */
+function onTabKey(event: KeyboardEvent) {
+  const action = tabKeyAction(event)
+  if (action !== 'select' && action !== 'close' && action !== 'menu') return
+  event.preventDefault()
+  if (action === 'menu') openMenuBelow(event.currentTarget as HTMLElement)
+  else if (action === 'select') emit('select', id.value)
+  else terminals.closePage(props.page)
+}
+
 function onMouseDown(event: MouseEvent) {
   if (event.button !== 1) return
   event.preventDefault()
@@ -39,11 +50,12 @@ function onMouseDown(event: MouseEvent) {
     <ContextMenuTrigger as-child>
       <div
         role="tab"
+        :tabindex="selected ? 0 : -1"
         :data-terminal-id="id"
         :aria-selected="selected"
         :class="
           cn(
-            'app-no-drag group/tab relative flex h-full max-w-56 min-w-28 shrink-0 cursor-pointer items-center gap-2 rounded-t-lg border pr-1 pl-3 text-xs transition-colors data-docking:opacity-50',
+            'app-no-drag group/tab relative flex h-full max-w-56 min-w-28 shrink-0 cursor-pointer items-center gap-2 rounded-t-lg border pr-1 pl-3 text-xs transition-colors data-docking:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset',
             selected
               ? cn('border-border border-b-transparent', focused ? 'text-foreground' : 'text-muted-foreground')
               : 'border-transparent border-b-border text-muted-foreground hover:bg-accent/60 hover:text-foreground data-dragging:bg-surface-strong data-dragging:text-foreground data-dragging:shadow-md',
@@ -52,6 +64,7 @@ function onMouseDown(event: MouseEvent) {
         :style="selected ? joined : undefined"
         @click="emit('select', id)"
         @mousedown="onMouseDown"
+        @keydown="onTabKey"
       >
         <component :is="info.icon" class="size-3.5 shrink-0" />
         <span class="min-w-0 flex-1 truncate">{{ info.label }}</span>

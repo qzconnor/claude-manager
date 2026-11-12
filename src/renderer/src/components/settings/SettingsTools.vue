@@ -23,6 +23,10 @@ const browserToolsAllowed = useSetting(
   (s) => s.claude.browserToolsAllowed,
   (browserToolsAllowed) => ({ claude: { browserToolsAllowed } }),
 )
+const browserSensitiveAllowed = useSetting(
+  (s) => s.claude.browserSensitiveAllowed,
+  (browserSensitiveAllowed) => ({ claude: { browserSensitiveAllowed } }),
+)
 const noClaudeInChrome = useSetting(
   (s) => s.claude.noClaudeInChrome,
   (noClaudeInChrome) => ({ claude: { noClaudeInChrome } }),
@@ -109,6 +113,14 @@ async function clearBrowserData() {
         description="Claude fragt nicht vor jedem Schritt im Browser um Erlaubnis. Aus: Claude Code fragt wie bei anderen Werkzeugen."
       >
         <Switch id="browser-tools-allowed" v-model="browserToolsAllowed" :disabled="!browserTools" />
+      </SettingField>
+      <SettingField
+        anchor="claude.browserSensitiveAllowed"
+        for="browser-sensitive-allowed"
+        label="Auch heikle Werkzeuge ohne Nachfrage"
+        description="Dateien hochladen, Cookies und Speicher der Seite lesen oder ändern, Inhalte von Anfragen lesen, Skripte ausführen und Daten einer Seite löschen. Aus: Claude Code fragt vor jedem dieser Schritte. Das Protokoll neben dem Browser markiert sie."
+      >
+        <Switch id="browser-sensitive-allowed" v-model="browserSensitiveAllowed" :disabled="!browserTools || !browserToolsAllowed" />
       </SettingField>
       <SettingField
         anchor="claude.noClaudeInChrome"

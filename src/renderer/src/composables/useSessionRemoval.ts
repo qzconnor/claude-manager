@@ -1,5 +1,5 @@
 import { toast } from 'vue-sonner'
-import type { SessionSummary } from '@shared/types'
+import type { SessionRef, SessionSummary } from '@shared/types'
 import { toastError } from '@/lib/errors'
 import { formatBytes } from '@/lib/format'
 import { useSessionsStore } from '@/stores/sessions'
@@ -7,19 +7,25 @@ import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import { sessionKey } from './useSessionSearch'
 
+/** How long „Rückgängig“ can bring deleted sessions back before they go to the recycle bin. */
+export const UNDO_MS = 8000
+
 function sessionsLabel(count: number): string {
   return count === 1 ? '1 Session' : `${count} Sessions`
 }
 
-/** Moves sessions to the recycle bin after asking; sessions open in a tab stay. */
+/**
+ * Moves sessions to the recycle bin; sessions open in a tab stay. They leave the lists at once and
+ * go once the toast with „Rückgängig“ is gone; several at once are asked for first.
+ */
 export function useSessionRemoval() {
   const sessions = useSessionsStore()
   const terminals = useTerminalsStore()
   const ui = useUiStore()
 
-  /** Resolves to true once sessions were removed. */
+  /** Resolves to true once sessions are on their way (out of the lists). */
   async function remove(list: SessionSummary[]): Promise<boolean> {
-    if (list.length === 0 || sessions.removing) return false
+    if (list.length === 0) return false
     // A tab may resume its session later, also after it ended.
     const inTabs = new Set(
       terminals.terminals.flatMap((t) =>
@@ -37,50 +43,73 @@ export function useSessionRemoval() {
 
     const bytes = formatBytes(targets.reduce((sum, s) => sum + s.sizeBytes, 0))
     const single = targets.length === 1 ? targets[0] : null
-    const description = [
-      single
-        ? `„${single.title}“ kommt mit Verlauf, Subagents und /rewind-Ständen in den Papierkorb (${bytes}).`
-        : `Die Verläufe kommen mit Subagents und /rewind-Ständen in den Papierkorb (${bytes}).`,
-      'Fortsetzen lässt sich eine Session erst wieder, wenn du sie dort wiederherstellst.',
-      kept > 0 ? `${sessionsLabel(kept)} ${kept === 1 ? 'ist' : 'sind'} in einem Tab offen und ${kept === 1 ? 'bleibt' : 'bleiben'}.` : '',
-    ]
-      .filter(Boolean)
-      .join(' ')
-    const confirmed = await ui.confirm({
-      title: single ? 'Session löschen?' : `${sessionsLabel(targets.length)} löschen?`,
-      description,
-      confirmText: 'In den Papierkorb',
-      destructive: true,
-    })
-    if (!confirmed) return false
+    const stay =
+      kept > 0 ? `${sessionsLabel(kept)} ${kept === 1 ? 'ist' : 'sind'} in einem Tab offen und ${kept === 1 ? 'bleibt' : 'bleiben'}.` : ''
+    // One session goes without asking: „Rückgängig“ brings it back.
+    if (list.length > 1) {
+      const confirmed = await ui.confirm({
+        title: single ? 'Session löschen?' : `${sessionsLabel(targets.length)} löschen?`,
+        description: [
+          single
+            ? `„${single.title}“ kommt mit Verlauf, Subagents und /rewind-Ständen in den Papierkorb (${bytes}).`
+            : `Die Verläufe kommen mit Subagents und /rewind-Ständen in den Papierkorb (${bytes}).`,
+          stay,
+        ]
+          .filter(Boolean)
+          .join(' '),
+        confirmText: 'In den Papierkorb',
+        destructive: true,
+      })
+      if (!confirmed) return false
+    }
 
+    const refs = targets.map((s): SessionRef => ({ accountId: s.accountId, sessionId: s.id }))
+    sessions.hide(refs)
+    let settled = false
+    const undo = () => {
+      if (settled) return
+      settled = true
+      void sessions.bringBack(refs)
+    }
+    const finish = () => {
+      if (settled) return
+      settled = true
+      void moveToBin(refs)
+    }
+    toast(single ? 'Session gelöscht' : `${sessionsLabel(targets.length)} gelöscht`, {
+      description: [single ? `„${single.title}“ kommt in den Papierkorb (${bytes}).` : `${bytes} kommen in den Papierkorb.`, stay]
+        .filter(Boolean)
+        .join(' '),
+      duration: UNDO_MS,
+      action: { label: 'Rückgängig', onClick: undo },
+      onAutoClose: finish,
+      onDismiss: finish,
+    })
+    return true
+  }
+
+  /** Deletes the sessions for good; those that stay (running in Claude Code, locked) come back to the lists. */
+  async function moveToBin(refs: SessionRef[]): Promise<void> {
     try {
-      const result = await sessions.remove(targets.map((s) => ({ accountId: s.accountId, sessionId: s.id })))
+      const result = await sessions.remove(refs)
+      const gone = new Set(result.removed.map((r) => `${r.accountId}:${r.sessionId}`))
+      const stayed = refs.filter((r) => !gone.has(`${r.accountId}:${r.sessionId}`))
+      if (stayed.length > 0) await sessions.bringBack(stayed)
       const busy = result.inUse.length
-      if (result.removed.length > 0) {
-        toast.success(
-          result.removed.length === 1 ? 'Session gelöscht' : `${sessionsLabel(result.removed.length)} gelöscht`,
-          {
-            description: [
-              `${formatBytes(result.removedBytes)} im Papierkorb`,
-              busy > 0 ? `${sessionsLabel(busy)} ${busy === 1 ? 'läuft' : 'laufen'} gerade in Claude Code und ${busy === 1 ? 'bleibt' : 'bleiben'}` : '',
-            ]
-              .filter(Boolean)
-              .join(' · '),
-          },
+      if (busy > 0) {
+        toast.info(
+          busy === 1
+            ? 'Eine Session läuft gerade in Claude Code und bleibt'
+            : `${sessionsLabel(busy)} laufen gerade in Claude Code und bleiben`,
+          { description: 'Beende Claude Code dort, dann lässt sie sich löschen.' },
         )
-      } else if (busy > 0) {
-        toast.info(busy === 1 ? 'Die Session läuft gerade in Claude Code' : 'Die Sessions laufen gerade in Claude Code', {
-          description: 'Beende Claude Code dort, dann lässt sie sich löschen.',
-        })
       }
       if (result.failed.length > 0) {
         toast.error(`${sessionsLabel(result.failed.length)} nicht gelöscht`, { description: result.error ?? undefined })
       }
-      return result.removed.length > 0
     } catch (error) {
+      await sessions.bringBack(refs)
       toastError(error, 'Sessions konnten nicht gelöscht werden')
-      return false
     }
   }
 

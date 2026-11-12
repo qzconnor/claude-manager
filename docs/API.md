@@ -29,11 +29,13 @@ Die API läuft, solange die App läuft. Soll sie immer erreichbar sein, unter *E
 | GET | `/api/v1/info` | App-, Electron- und Claude-Code-Version |
 | GET | `/api/v1/accounts` | alle Accounts |
 | GET | `/api/v1/accounts/{accountId}` | ein Account |
-| GET | `/api/v1/accounts/{accountId}/stats?days=30` | Token-Verbrauch pro Tag und Modell |
+| GET | `/api/v1/accounts/{accountId}/stats?days=30` | Token-Verbrauch und Kosten pro Tag, Modell, Ordner und die teuersten Sessions |
+| GET | `/api/v1/accounts/{accountId}/usage-history` | Verlauf des 5-Stunden- und des Wochenlimits (2 bzw. 15 Tage) |
 | GET | `/api/v1/usage` | 5-Stunden- und Wochen-Limits aller Accounts |
 | POST | `/api/v1/usage/refresh` | Limits jetzt neu abrufen |
+| POST | `/api/v1/accounts/{accountId}/renew-login` | Browser-Login jetzt erneuern (`renewed`, `busy`, `rejected`, `failed`) |
 | GET | `/api/v1/sessions?accountId=` | Sessions, gruppiert nach Account |
-| GET | `/api/v1/sessions/{accountId}/{sessionId}` | Verlauf einer Session |
+| GET | `/api/v1/sessions/{accountId}/{sessionId}?limit=600` | Verlauf einer Session: die neuesten `limit` Nachrichten, `total` zählt alle, `truncated` sagt, ob ältere fehlen |
 | GET | `/api/v1/terminals` | offene Terminals |
 | POST | `/api/v1/terminals` | Terminal öffnen (Session, Login oder Shell) |
 | GET | `/api/v1/terminals/{id}` | ein Terminal |
@@ -71,7 +73,7 @@ Mit `authAccountId` läuft die Session über die Limits eines anderen Accounts: 
 
 `title` ist der Titel der Claude-Code-Session wie in `/resume` (bei `/rename` der neue Name), solange es noch keinen gibt, der Ordner (bei einer Shell `Shell · Ordner`, bei einer Anmeldung `Anmeldung · Account`). Wird ein Tab mit `title` geöffnet oder umbenannt, bleibt der Titel fest (`fixedTitle: true`). Den Titel der Session gibt es dann weiter in `autoTitle`; ohne eigenen Namen ist er gleich `title`.
 
-Jedes Terminal meldet außerdem `sessionId` (die Session, die gerade darin läuft), `authAccountId`, `busy` (Claude Code arbeitet gerade an einer Antwort) und `limit`. `limit` ist gesetzt, solange die Session an einem Nutzungslimit steht, mit `type` (z. B. `five_hour`), `resetsAt` und der Meldung von Claude Code. Über den `terminals`-Stream lässt sich so automatisch auf ein Limit reagieren.
+Jedes Terminal meldet außerdem `sessionId` (die Session, die gerade darin läuft), `authAccountId`, `busy` (Claude Code arbeitet gerade an einer Antwort) und `limit`. `limit` ist gesetzt, solange die Session an einem Nutzungslimit steht, mit `type` (z. B. `five_hour`), `resetsAt` und der Meldung von Claude Code. Über den `terminals`-Stream lässt sich so automatisch auf ein Limit reagieren. Geht die Session von selbst weiter (*Am Reset fortsetzen* im Tab oder der automatische Wechsel wartet), steht das in `resume`: `byUser` sagt, ob es im Tab gewählt wurde, `at`, wann die Session mit ihrem Account weitergeht (eine Minute nach dem Reset, `null`, wenn er unbekannt ist). `resume` bleibt nach dem Reset, bis die Session weitergeht, auch wenn `limit` dann schon `null` ist.
 
 `attention` zeigt, was im Tab passiert ist, seit er zuletzt in der App angezeigt wurde: `done` (Antwort fertig), `input` (Claude wartet auf eine Erlaubnis, eine Antwort oder die Freigabe eines Plans) oder `limit`, sonst `null`. `muted` ist gesetzt, wenn der Tab keine Benachrichtigungen schickt. Beides folgt den Einstellungen unter *Benachrichtigungen*; `muted` lässt sich beim Öffnen und per `PATCH` setzen.
 
@@ -81,6 +83,14 @@ Mit `hooks: true` meldet Claude Code seinen Zustand über Hooks an die App (Eins
 - `compacting`: Claude Code fasst gerade den Verlauf zusammen.
 
 Ohne Hooks liest die App den Zustand aus Fenstertitel und Transcript. `activity` bleibt dann `null`, `subagents` `0` und `compacting` `false`.
+
+`turn` sagt, wie der letzte Turn der Session endete, und bleibt, bis der nächste beginnt (anders als `attention` auch, wenn der Tab angezeigt wird):
+- `kind`: `done`, `input` oder `limit` wie bei `attention`.
+- `tool`: bei `input`, worauf Claude wartet, z. B. `Bash`, `AskUserQuestion` oder `ExitPlanMode`.
+- `detail`: der Anfang der Antwort als Text, der wartende Befehl oder die Frage, oder die Meldung zum Limit.
+- `at`: wann der Turn endete.
+
+`prompt` ist der Anfang des letzten Prompts auf einer Zeile, nur mit Hooks, sonst `null`.
 
 `context` sagt, wie voll der Kontext einer Session ist, ab ihrem Start (bei Shells, Anmeldungen und Browser-Tabs `null`):
 - `tokens`: Tokens im Kontext nach der letzten Antwort, nach einem Compact die Zusammenfassung; `null` vor der ersten Antwort.

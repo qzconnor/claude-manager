@@ -120,6 +120,10 @@ static class Program
             UseShellExecute = false,
             WorkingDirectory = cwd,
         };
+        // Inherited from a process under an Electron app (e.g. Claude Code in VS Code), these would
+        // start the app as plain Node.js.
+        info.EnvironmentVariables.Remove("ELECTRON_RUN_AS_NODE");
+        info.EnvironmentVariables.Remove("ELECTRON_NO_ATTACH_CONSOLE");
         using (Process.Start(info)) { }
         return 0;
     }

@@ -9,6 +9,19 @@ import { shellName } from './app-tools/shells'
 import { terminalText } from './app-tools/terminal-text'
 import { type AppToolsDeps, localTime, relative } from './app-tools/tool'
 
+/** How often the output was read as text: waiting for a text must not do it for every chunk. */
+const textReads = vi.hoisted(() => ({ count: 0 }))
+vi.mock('./app-tools/terminal-text', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./app-tools/terminal-text')>()
+  return {
+    ...actual,
+    terminalText: (raw: string) => {
+      textReads.count++
+      return actual.terminalText(raw)
+    },
+  }
+})
+
 describe('terminalText', () => {
   it('drops colors, titles and modes', () => {
     expect(terminalText('\x1b]0;pwsh\x07\x1b[?25l\x1b[32mgreen\x1b[0m text\x1b[?25h')).toBe('green text')
@@ -133,9 +146,12 @@ describe('formatTranscript', () => {
   const message = (i: number): TranscriptMessage => ({
     uuid: String(i),
     role: i % 2 ? 'assistant' : 'user',
+    kind: i % 2 ? 'answer' : 'prompt',
     timestamp: null,
     text: `message ${i}`,
-    tools: i === 1 ? [{ id: 't', name: 'Bash', summary: 'npm test', status: 'ok' }] : [],
+    output: null,
+    failed: false,
+    tools: i === 1 ? [{ id: 't', name: 'Bash', summary: 'npm test', detail: null, description: null, command: 'npm test', status: 'ok' }] : [],
     model: null,
   })
   const messages = Array.from({ length: 10 }, (_, i) => message(i))
@@ -143,8 +159,17 @@ describe('formatTranscript', () => {
   it('reads a part and says how to go on', () => {
     const text = formatTranscript(messages, 0, 3, false)
     expect(text).toContain('Messages 0–2 of 10')
+    expect(text).toContain('[0] user\nmessage 0')
     expect(text).toContain('  → Bash: npm test (ok)')
     expect(text).toContain('Read on with offset 3.')
+  })
+
+  it('says what commands and background tasks are, with what they printed', () => {
+    const command: TranscriptMessage = { ...message(0), kind: 'command', text: '/model sonnet', output: 'Set model to Sonnet' }
+    const task: TranscriptMessage = { ...message(0), uuid: 't', kind: 'task', text: 'Build failed', output: 'exit code 1', failed: true }
+    const text = formatTranscript([command, task], 0, 10, false)
+    expect(text).toContain('[0] user (command)\n/model sonnet\n  output: Set model to Sonnet')
+    expect(text).toContain('[1] user (task)\nBuild failed\n  failed, output: exit code 1')
   })
 
   it('counts a negative offset from the end', () => {
@@ -210,6 +235,7 @@ function terminal(id: string, patch: Partial<TerminalInfo> = {}): TerminalInfo {
     authAccountId: 'a1',
     sessionId: null,
     limit: null,
+    resume: null,
     context: null,
     busy: false,
     attention: null,
@@ -221,7 +247,9 @@ function terminal(id: string, patch: Partial<TerminalInfo> = {}): TerminalInfo {
     mode: 'session',
     url: null,
     resumeSessionId: null,
+    args: [],
     status: 'running',
+    sleep: null,
     exitCode: null,
     pid: 1,
     createdAt: '2026-11-07T12:00:00.000Z',
@@ -231,6 +259,8 @@ function terminal(id: string, patch: Partial<TerminalInfo> = {}): TerminalInfo {
     activity: null,
     subagents: 0,
     compacting: false,
+    turn: null,
+    prompt: null,
     ...patch,
   }
 }
@@ -290,6 +320,17 @@ describe('AppTools', () => {
     terminals.print('shell-1', 'later line\r\n')
     expect(await text(tools.call('session-1', 'shell_output', { id: 1 }))).toContain('later line')
     await expect(tools.call('session-2', 'shell_input', { id: 1, text: 'x' })).rejects.toThrow('You have no shell tabs open.')
+  })
+
+  it('looks for waitFor only now and then while a chatty shell streams', async () => {
+    await text(tools.call('session-1', 'shell_open', {}))
+    const waiting = tools.call('session-1', 'shell_output', { id: 1, waitFor: 'READY', timeout: 10 })
+    await vi.advanceTimersByTimeAsync(0)
+    textReads.count = 0
+    for (let i = 0; i < 1000; i++) terminals.print('shell-1', `compiled module ${i}\r\n`)
+    terminals.print('shell-1', 'READY in 300 ms\r\n')
+    expect(await text(waiting)).toContain('"READY" appeared.')
+    expect(textReads.count).toBeLessThan(10)
   })
 
   it('opens the next shell below the last one and forgets closed ones', async () => {

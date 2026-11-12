@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { MAX_SPLIT_DEPTH } from '@shared/panes'
 import {
   addTab,
   allTabs,
@@ -107,5 +108,28 @@ describe('workspace', () => {
     expect(groupDropSpot(rects, 200, 330, 36)).toEqual({ groupId: 'g1', side: 'down' })
     expect(groupDropSpot(rects, 200, 186, 36)).toEqual({ groupId: 'g1', side: 'center' })
     expect(groupDropSpot(rects, 500, 186, 36)).toBeNull()
+  })
+})
+
+describe('a window split as often as it can be', () => {
+  /** Groups g0 to g`n`, each split off the last one. */
+  const deep = (splits: number): Workspace => {
+    let ws = createWorkspace('g0', ['t0'])
+    for (let i = 1; i <= splits; i++) ws = splitGroup(ws, `g${i - 1}`, i % 2 ? 'right' : 'down', `g${i}`, [`t${i}`])
+    return ws
+  }
+
+  it('takes the tabs of a new group into the group instead', () => {
+    const ws = deep(MAX_SPLIT_DEPTH)
+    expect(parseWorkspace(ws)).not.toBeNull()
+    const next = splitGroup(ws, `g${MAX_SPLIT_DEPTH}`, 'right', 'new', ['x'])
+    expect(next.layout).toBe(ws.layout)
+    expect(next.groups.find((g) => g.id === `g${MAX_SPLIT_DEPTH}`)).toMatchObject({ tabs: [`t${MAX_SPLIT_DEPTH}`, 'x'], active: 'x' })
+  })
+
+  it('leaves a tab where it was when dropped on the edge of the deepest group', () => {
+    const ws = addTab(deep(MAX_SPLIT_DEPTH), 'g0', 'y')
+    expect(dockTab(ws, 'y', `g${MAX_SPLIT_DEPTH}`, 'right', 'new')).toBe(ws)
+    expect(dockTab(ws, 'y', 'g1', 'right', 'new').groups.some((g) => g.id === 'new')).toBe(true)
   })
 })

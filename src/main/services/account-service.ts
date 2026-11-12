@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { copyFile, lstat, mkdir, readdir, readlink, rm, stat, symlink } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { ACCOUNT_COLORS, SYSTEM_ACCOUNT_ID } from '@shared/defaults'
 import type {
@@ -14,11 +14,12 @@ import type {
 } from '@shared/types'
 import { canLendCredentials, maskSecret } from '@shared/utils'
 import { claudePaths, defaultClaudeConfigDir, type ClaudePaths } from '../lib/claude-paths'
-import { readJson, readJsonSync, writeJsonAtomic } from '../lib/json-file'
+import { readJsonGuarded, readJsonSync, writeJsonAtomic } from '../lib/json-file'
 import { decryptSecret, encryptSecret } from '../lib/secrets'
 import { TypedEmitter } from '../lib/typed-emitter'
 import { AUTH_OVERRIDE_ENV } from './claude-cli'
 import { fingerprintOf, type LoginProfile, type LoginProfiles } from './login-profiles'
+import { canRenew } from './oauth-renewal'
 
 interface StoredAccount {
   id: string
@@ -46,6 +47,7 @@ interface OAuthCredentials {
   accessToken?: string
   refreshToken?: string
   expiresAt?: number
+  refreshTokenExpiresAt?: number
   subscriptionType?: string | null
   rateLimitTier?: string | null
   scopes?: string[]
@@ -67,6 +69,12 @@ export interface GlobalConfig {
 
 /** Items copied from ~/.claude into a new profile when the user asks for it. */
 const SHAREABLE_ITEMS = ['settings.json', 'keybindings.json', 'CLAUDE.md', 'skills', 'commands', 'agents', 'rules']
+/**
+ * Secrets that didn't decrypt are tried again, first after this long, then less often: on Linux the
+ * keyring may only unlock after the app started.
+ */
+const SECRET_RETRY_MIN_MS = 30_000
+const SECRET_RETRY_MAX_MS = 10 * 60_000
 
 type Events = { changed: [accounts: Account[]] }
 
@@ -96,6 +104,9 @@ export class AccountService extends TypedEmitter<Events> {
   private snapshot: Account[] = []
   private fingerprint = ''
   private pollTimer: NodeJS.Timeout | null = null
+  private secretRetryAt = 0
+  private secretRetryDelay = SECRET_RETRY_MIN_MS
+  private secretRetrying = false
 
   constructor(
     userDataDir: string,
@@ -109,7 +120,7 @@ export class AccountService extends TypedEmitter<Events> {
   async init(): Promise<void> {
     await this.profiles.init()
     this.profiles.on('resolved', () => this.rebuild())
-    const data = await readJson<AccountsFile>(this.file)
+    const data = await readJsonGuarded<AccountsFile>(this.file)
     this.stored = Array.isArray(data?.accounts) ? data.accounts.filter(isStoredAccount) : []
     if (!this.stored.some((a) => a.id === SYSTEM_ACCOUNT_ID)) {
       this.stored.unshift({
@@ -125,12 +136,38 @@ export class AccountService extends TypedEmitter<Events> {
         secretHint: null,
         expectedLogin: null,
       })
-      await this.persist()
+      // A file that couldn't be read isn't replaced (see readJsonGuarded): the default account is only
+      // added in memory then.
+      await this.persist().catch((error) => console.warn('[accounts] could not be saved', error))
     }
     await this.loadSecrets()
+    this.secretRetryAt = Date.now() + SECRET_RETRY_MIN_MS
     this.rebuild()
     // Credentials change when Claude Code logs in, logs out or refreshes a token.
-    this.pollTimer = setInterval(() => this.refresh(), 15000)
+    this.pollTimer = setInterval(() => {
+      this.refresh()
+      void this.retrySecrets()
+    }, 15000)
+  }
+
+  /** Decrypts the secrets that didn't decrypt so far, now and then; the accounts change once one does. */
+  async retrySecrets(now = Date.now()): Promise<void> {
+    if (this.secretRetrying || now < this.secretRetryAt) return
+    if (!this.stored.some((a) => a.secret && !this.secrets.has(a.id))) return
+    this.secretRetrying = true
+    try {
+      const before = this.secrets.size
+      await this.loadSecrets()
+      if (this.secrets.size > before) {
+        this.secretRetryDelay = SECRET_RETRY_MIN_MS
+        this.rebuild()
+      } else {
+        this.secretRetryDelay = Math.min(this.secretRetryDelay * 2, SECRET_RETRY_MAX_MS)
+      }
+      this.secretRetryAt = now + this.secretRetryDelay
+    } finally {
+      this.secretRetrying = false
+    }
   }
 
   dispose(): void {
@@ -254,7 +291,8 @@ export class AccountService extends TypedEmitter<Events> {
     // Only ever delete directories the app created itself.
     if (options.deleteConfigDir && !account.configDir) {
       const dir = join(this.profilesDir, id)
-      if (dir.startsWith(this.profilesDir) && existsSync(dir)) await rm(dir, { recursive: true, force: true })
+      // Sessions that were just closed may still hold a file for a moment (Windows).
+      if (dir.startsWith(this.profilesDir) && existsSync(dir)) await rm(dir, { recursive: true, force: true, maxRetries: 5 })
     }
     this.rebuild(true)
   }
@@ -340,11 +378,11 @@ export class AccountService extends TypedEmitter<Events> {
     return account
   }
 
-  /** Decrypts the stored secrets once; values the OS wants re-encrypted are stored anew. */
+  /** Decrypts the stored secrets not decrypted yet; values the OS wants re-encrypted are stored anew. */
   private async loadSecrets(): Promise<void> {
     let changed = false
     for (const account of this.stored) {
-      if (!account.secret) continue
+      if (!account.secret || this.secrets.has(account.id)) continue
       const decrypted = await decryptSecret(account.secret)
       if (!decrypted) {
         console.warn(`[accounts] secret of „${account.name}“ could not be decrypted`)
@@ -356,7 +394,7 @@ export class AccountService extends TypedEmitter<Events> {
         changed = true
       }
     }
-    if (changed) await this.persist()
+    if (changed) await this.persist().catch((error) => console.warn('[accounts] could not be saved', error))
   }
 
   /** All or nothing: when an item fails, the items copied so far are removed again. */
@@ -383,7 +421,7 @@ export class AccountService extends TypedEmitter<Events> {
   }
 
   private async persist(): Promise<void> {
-    await writeJsonAtomic(this.file, { version: 1, accounts: this.stored } satisfies AccountsFile)
+    await writeJsonAtomic(this.file, { version: 1, accounts: this.stored } satisfies AccountsFile, { guarded: true })
   }
 
   private rebuild(forceEmit = false): void {
@@ -402,13 +440,20 @@ export class AccountService extends TypedEmitter<Events> {
     const identity = buildIdentity(this.profileOf(stored, oauth, true), config, oauth)
     let authState: AuthState = 'missing'
     let tokenExpiresAt: string | null = null
+    let loginEndsAt: string | null = null
+    let tokenSavedAt: string | null = null
+    let renewable = false
     if (stored.kind === 'token' || stored.kind === 'apiKey') {
       // A secret that can't be decrypted (e.g. copied from another Windows user) is as good as none.
       authState = this.secrets.has(stored.id) ? 'ok' : 'missing'
     } else if (oauth?.accessToken) {
       const expires = typeof oauth.expiresAt === 'number' ? oauth.expiresAt : null
-      tokenExpiresAt = expires ? new Date(expires).toISOString() : null
-      authState = expires !== null && expires <= Date.now() ? 'expired' : 'ok'
+      const iso = (ms: unknown) => (typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : null)
+      tokenExpiresAt = iso(expires)
+      loginEndsAt = iso(oauth.refreshTokenExpiresAt)
+      tokenSavedAt = iso(modifiedAt(paths.credentialsFile))
+      renewable = canRenew(oauth)
+      authState = expires !== null && expires <= Date.now() ? (renewable ? 'expired' : 'dead') : 'ok'
     }
     return {
       id: stored.id,
@@ -425,6 +470,9 @@ export class AccountService extends TypedEmitter<Events> {
       authState,
       identity,
       tokenExpiresAt,
+      loginEndsAt,
+      tokenSavedAt,
+      renewable,
       expectedLogin: toExpectedLogin(stored.expectedLogin),
     }
   }
@@ -494,6 +542,15 @@ function planMatches(organizationType: string | undefined, subscriptionType: str
 
 function isExpired(oauth: OAuthCredentials): boolean {
   return typeof oauth.expiresAt === 'number' && oauth.expiresAt <= Date.now()
+}
+
+/** When the file was last written; null when it isn't there. */
+function modifiedAt(file: string): number | null {
+  try {
+    return statSync(file).mtimeMs
+  } catch {
+    return null
+  }
 }
 
 function readOAuth(file: string): OAuthCredentials | null {

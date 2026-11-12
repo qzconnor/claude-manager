@@ -4,7 +4,7 @@ import { basename, isAbsolute, join } from 'node:path'
 import { folderKey, inFolder, movedPath, TRAILING_SEPARATORS, windowsPath } from '@shared/folders'
 import type { Workspace, WorkspaceCreateInput } from '@shared/types'
 import { WORKSPACE_PROMPT_FILE, workspaceNameError, workspaceOf, workspacesContaining } from '@shared/workspaces'
-import { readJsonSync, writeJsonAtomic } from '../lib/json-file'
+import { readJsonGuardedSync, writeJsonAtomic } from '../lib/json-file'
 import { TypedEmitter } from '../lib/typed-emitter'
 
 /** The prompt of one workspace a session lies in. */
@@ -54,6 +54,18 @@ const CHANGE_DELAY_MS = 300
  * each with its prompt in `cm_prompts.md` in the folder. Only listed folders count, so a
  * `cm_prompts.md` that comes with a cloned repository never gets into a session's system prompt.
  */
+/**
+ * What tells a folder apart from all others, also after it was moved: its number on the drive with the
+ * time it was made. Linux gives the number of a deleted folder to the next new one at once; only the
+ * time it was made tells them apart. Where the file system doesn't keep that time, no move is taken
+ * (empty): a folder taken for another one would get its sessions and the trust given to it.
+ */
+export function folderIdentity(info: { dev: bigint; ino: bigint; birthtimeNs: bigint }, platform: NodeJS.Platform = process.platform): string {
+  if (info.ino <= 0n) return ''
+  if (info.birthtimeNs <= 0n && platform !== 'win32') return ''
+  return `${info.dev}:${info.ino}:${info.birthtimeNs}`
+}
+
 export class WorkspaceService extends TypedEmitter<Events> {
   private readonly file: string
   private folders: string[] = []
@@ -71,7 +83,7 @@ export class WorkspaceService extends TypedEmitter<Events> {
   }
 
   init(): void {
-    const data = readJsonSync<Partial<WorkspaceFile>>(this.file)
+    const data = readJsonGuardedSync<Partial<WorkspaceFile>>(this.file)
     const folders = Array.isArray(data?.folders) ? data.folders : []
     this.folders = unique(folders.filter((f): f is string => typeof f === 'string' && isAbsolute(f)).map(clean))
     const seen = Array.isArray(data?.seen) ? data.seen : []
@@ -292,7 +304,7 @@ export class WorkspaceService extends TypedEmitter<Events> {
 
   private async write(): Promise<void> {
     const seen = [...this.seen.values()].map((f): [string, string] => [f.path, f.id])
-    await writeJsonAtomic(this.file, { folders: this.folders, seen } satisfies WorkspaceFile)
+    await writeJsonAtomic(this.file, { folders: this.folders, seen } satisfies WorkspaceFile, { guarded: true })
   }
 
   private serially<T>(task: () => Promise<T>): Promise<T> {
@@ -338,7 +350,7 @@ export class WorkspaceService extends TypedEmitter<Events> {
     const add = async (path: string) => {
       const info = await stat(path, { bigint: true }).catch(() => null)
       if (!info?.isDirectory()) return
-      found.set(folderKey(path), { path, id: info.ino > 0n ? `${info.dev}:${info.ino}` : '' })
+      found.set(folderKey(path), { path, id: folderIdentity(info) })
     }
     await Promise.all(
       this.folders.map(async (folder) => {

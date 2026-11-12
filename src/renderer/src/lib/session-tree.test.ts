@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionSummary } from '@shared/types'
-import { allFolders, buildSessionTree, placeFolder, placeSession, type SessionProject, type SessionSort, type TreeRoots } from './session-tree'
+import {
+  allFolders,
+  buildSessionTree,
+  FOLDERS_SECTION_ID,
+  opensByDefault,
+  PINNED_SECTION_ID,
+  PAGE_SIZE,
+  pageOf,
+  placeFolder,
+  placeSession,
+  sessionsInView,
+  type SessionProject,
+  type SessionSort,
+  type TreeRoots,
+} from './session-tree'
 
 const HOME = 'C:\\Users\\me'
 
@@ -13,6 +27,8 @@ function session(id: string, patch: Partial<SessionSummary> = {}): SessionSummar
     worktree: null,
     title: id,
     name: null,
+    pinned: false,
+    tags: [],
     firstPrompt: null,
     lastPrompt: null,
     gitBranch: null,
@@ -251,5 +267,45 @@ describe('buildSessionTree: workspaces and start folders', () => {
     expect(apps?.folders[0]).toMatchObject({ updatedAt: '2026-11-05T08:00:00.000Z', sizeBytes: 200 })
     expect(tree.workspaces[0]?.count).toBe(4)
     expect(allFolders(tree.workspaces[0]?.projects ?? []).map((f) => f.name)).toEqual(['Apps', 'claude-manager', 'src', 'main', 'photocraft'])
+  })
+})
+
+describe('sessionsInView', () => {
+  const root: TreeRoots = { workspaces: [{ path: 'F:\\Projekte', projects: ['Apps'] }], startFolders: [] }
+  // 60 sessions in a project, the newest first, and one in the workspace's own folder below them.
+  const many = Array.from({ length: 60 }, (_, i) =>
+    session(`s${i}`, { cwd: 'F:\\Projekte\\Apps', updatedAt: new Date(Date.UTC(2026, 10, 2) - i * 60_000).toISOString() }),
+  )
+  const tree = buildSessionTree([...many, session('own', { cwd: 'F:\\Projekte' })], root, { sort: 'recent', showEmpty: false })
+  const sections = tree.workspaces.map((w) => ({ id: w.id, projects: w.projects, sessions: w.sessions }))
+  const apps = tree.workspaces[0]?.projects[0]
+  const ids = (list: SessionSummary[]) => list.map((s) => s.id)
+
+  it('takes only the sessions a folder shows, not those behind „Weitere … anzeigen“', () => {
+    const inView = sessionsInView(sections, () => true, new Set([apps?.id ?? '']), new Map())
+    expect(ids(inView)).toEqual([...many.slice(0, PAGE_SIZE).map((s) => s.id), 'own'])
+    // Shown further, they are in view too.
+    const further = sessionsInView(sections, () => true, new Set([apps?.id ?? '']), new Map([[apps?.id ?? '', 100]]))
+    expect(ids(further)).toEqual([...ids(many), 'own'])
+  })
+
+  it('leaves out closed folders and sections', () => {
+    expect(ids(sessionsInView(sections, () => true, new Set(), new Map()))).toEqual(['own'])
+    expect(sessionsInView(sections, () => false, new Set([apps?.id ?? '']), new Map())).toEqual([])
+  })
+
+  it('shows a page of a section’s own sessions too', () => {
+    expect(pageOf(['a', 'b', 'c'], 'x', new Map([['x', 2]]))).toEqual(['a', 'b'])
+    expect(pageOf(ids(many), 'x', new Map())).toHaveLength(PAGE_SIZE)
+  })
+})
+
+describe('opensByDefault', () => {
+  it('opens the pinned sessions, the workspaces and the other folders, not the start folders and folders', () => {
+    expect(opensByDefault(PINNED_SECTION_ID)).toBe(true)
+    expect(opensByDefault(FOLDERS_SECTION_ID)).toBe(true)
+    expect(opensByDefault('workspace\nC:\\dev')).toBe(true)
+    expect(opensByDefault('start\nC:\\dev')).toBe(false)
+    expect(opensByDefault('C--dev')).toBe(false)
   })
 })

@@ -30,7 +30,7 @@ const several = computed(() => accounts.accounts.length > 1)
       <ContextMenuItem v-for="account in accounts.accounts" :key="account.id" @select="launcher.newSession(account.id, path)">
         <AccountDot :color="account.color" />
         <span class="truncate">{{ account.name }}</span>
-        <ContextMenuShortcut v-if="account.id === launcher.defaultAccountId()">Standard</ContextMenuShortcut>
+        <ContextMenuShortcut v-if="account.id === launcher.defaultAccountId()">Vorgabe</ContextMenuShortcut>
       </ContextMenuItem>
     </ContextMenuSubContent>
   </ContextMenuSub>

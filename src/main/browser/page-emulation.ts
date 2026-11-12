@@ -69,11 +69,23 @@ export function effectivePermissions(emulation: BrowserEmulation | null): Permis
   return { ...(emulation.geolocation ? { geolocation: 'granted' as const } : {}), ...emulation.permissions }
 }
 
+/** The part of the emulation that grants: when it changes, the grants go to the site open then. */
+export function permissionsKey(emulation: BrowserEmulation | null): string {
+  return JSON.stringify([effectivePermissions(emulation), emulation?.geolocation ?? null])
+}
+
 /**
  * What the page pretends (null: nothing), in the page and in its frames in processes of their own
- * (`frameSessions`), which feel the network and the CPU apart from the page.
+ * (`frameSessions`), which feel the network and the CPU apart from the page. Permissions are granted
+ * for the site `origin` only.
  */
-export async function applyEmulation(page: PageDriver, emulation: BrowserEmulation | null, mobile: boolean, frameSessions: string[]): Promise<void> {
+export async function applyEmulation(
+  page: PageDriver,
+  emulation: BrowserEmulation | null,
+  mobile: boolean,
+  frameSessions: string[],
+  origin: string | null = null,
+): Promise<void> {
   await page.cdp('Emulation.setEmulatedMedia', { features: mediaFeatures(emulation) })
   await page.cdp('Emulation.setTimezoneOverride', { timezoneId: emulation?.timezone ?? '' }).catch((error: Error) => {
     if (emulation?.timezone) throw new ToolError(`The time zone ${JSON.stringify(emulation.timezone)} is unknown: ${error.message}`)
@@ -89,7 +101,7 @@ export async function applyEmulation(page: PageDriver, emulation: BrowserEmulati
   await page.cdp('Network.emulateNetworkConditions', emulation?.network ? NETWORK_PRESETS[emulation.network] : NO_NETWORK_LIMIT)
   await page.cdp('Emulation.setCPUThrottlingRate', { rate: emulation?.cpuSlowdown ?? 1 })
   await setGeolocation(page, emulation, undefined)
-  browserPermissions.set(page.contents, effectivePermissions(emulation))
+  browserPermissions.set(page.contents, effectivePermissions(emulation), origin)
   for (const session of frameSessions) await applyFrameEmulation(page, session, emulation, mobile)
 }
 

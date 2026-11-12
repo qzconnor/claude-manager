@@ -8,7 +8,12 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { parentPort, workerData } from 'node:worker_threads'
+import { MAX_STATS_DAYS } from '@shared/defaults'
 import { readJson, writeJsonAtomic } from '../lib/json-file'
+import { ThrottledSave } from '../lib/throttled-save'
+import { editedAt } from './edited-files'
+import { changeTexts, readFileHistory, rewindPreview, sessionChanges, VersionReader, type FileHistory } from './file-history'
+import { dropOldUsage, firstStatsDay } from './index-cache'
 import { readAppended } from './read-appended'
 import {
   newTranscriptScan,
@@ -16,18 +21,23 @@ import {
   readToolCall,
   scanResult,
   scanTranscript,
+  type EditedFile,
   type ParsedSummary,
   type TranscriptScan,
   type UsageEntry,
 } from './transcript-parser'
-import type { IndexerRequest, IndexerResponse, IndexedSession, TokenStatsResult, TokenTuple } from './indexer-protocol'
+import type { FileEditHit, IndexerRequest, IndexerResponse, IndexedSession, TokenStatsResult } from './indexer-protocol'
 import { SearchIndex } from './search-index'
+import { aggregateTokenStats, type UsageSource } from './token-stats'
 
 interface CacheEntry {
   size: number
   mtimeMs: number
   summary: ParsedSummary | null
   usage: UsageEntry[]
+  /** The files a session changed (see `ParseResult`); none for a subagent's transcript. */
+  files?: EditedFile[]
+  edits?: EditedFile[]
 }
 
 interface CacheFile {
@@ -38,11 +48,12 @@ interface CacheFile {
 // 3: `<synthetic>` replies no longer count as messages; summaries are parsed again once.
 // 4: summaries know the worktree a session worked in.
 // 5: summaries know the folder `/cd` moved a session to.
-const CACHE_VERSION = 5
+// 6: sessions know the files they changed.
+// 7: usage knows the cache writes for an hour and fast mode, for the costs.
+const CACHE_VERSION = 7
 const { cacheFile, searchCacheFile } = workerData as { cacheFile: string; searchCacheFile: string }
 let cache: Record<string, CacheEntry> = {}
 let cacheLoaded: Promise<void> | null = null
-let saveTimer: NodeJS.Timeout | null = null
 
 function ensureCache(): Promise<void> {
   cacheLoaded ??= readJson<CacheFile>(cacheFile).then((data) => {
@@ -51,13 +62,20 @@ function ensureCache(): Promise<void> {
   return cacheLoaded
 }
 
-function scheduleSave(): void {
-  if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    saveTimer = null
+/**
+ * The whole index is written at once (megabytes for a long history). Sessions at work change it all the
+ * time: it is written 3 seconds after a change, then at most once a minute. What a crash loses meanwhile
+ * is read from the transcripts again.
+ */
+const saver = new ThrottledSave(
+  () => {
+    dropOldUsage(Object.values(cache), firstStatsDay(new Date(), MAX_STATS_DAYS + 1))
     void writeJsonAtomic(cacheFile, { version: CACHE_VERSION, files: cache } satisfies CacheFile).catch(() => undefined)
-  }, 3000)
-}
+  },
+  3000,
+  60_000,
+)
+const scheduleSave = () => saver.schedule()
 
 interface TranscriptFile {
   path: string
@@ -183,99 +201,63 @@ async function indexFileNow(file: TranscriptFile, key: string): Promise<Indexed>
     mtimeMs: st.mtimeMs,
     summary: file.isSession ? parsed.summary : null,
     usage: parsed.usage,
+    ...(parsed.files.length ? { files: parsed.files } : {}),
+    ...(parsed.edits.length ? { edits: parsed.edits } : {}),
   }
   cache[file.path] = entry
   scheduleSave()
   return { entry, size: st.size, mtimeMs: st.mtimeMs }
 }
 
-async function scanSessions(projectsDir: string): Promise<IndexedSession[]> {
+/** The sessions of a projects folder as they are now, each with what its index knows. */
+async function* indexedSessions(projectsDir: string): AsyncGenerator<{ session: IndexedSession; entry: CacheEntry }> {
   await ensureCache()
-  const files = await listTranscripts(projectsDir, false)
-  const sessions: IndexedSession[] = []
-  for (const file of files) {
+  for (const file of await listTranscripts(projectsDir, false)) {
     const result = await indexFile(file)
     const summary = result?.entry.summary
     if (!result || !summary) continue
     // Sessions without a single message (e.g. opened and closed immediately) are noise.
     if (summary.messageCount === 0) continue
-    sessions.push({
+    const session: IndexedSession = {
       ...summary,
       projectKey: file.projectKey,
       filePath: file.path,
       sizeBytes: result.size,
       fileUpdatedAt: new Date(result.mtimeMs).toISOString(),
-    })
+    }
+    yield { session, entry: result.entry }
   }
   pruneCache()
+}
+
+async function scanSessions(projectsDir: string): Promise<IndexedSession[]> {
+  const sessions: IndexedSession[] = []
+  for await (const { session } of indexedSessions(projectsDir)) sessions.push(session)
   return sessions
+}
+
+async function editedBy(projectsDir: string, path: string): Promise<FileEditHit[]> {
+  const hits: FileEditHit[] = []
+  for await (const { session, entry } of indexedSessions(projectsDir)) {
+    const at = editedAt(entry, path)
+    if (at !== null) hits.push({ session, at: at || session.updatedAt || session.fileUpdatedAt })
+  }
+  return hits
 }
 
 async function tokenStats(projectsDir: string, days: number): Promise<TokenStatsResult> {
   await ensureCache()
-  const files = await listTranscripts(projectsDir, true)
-  const since = new Date()
-  since.setHours(0, 0, 0, 0)
-  since.setDate(since.getDate() - (days - 1))
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const sinceDay = `${since.getFullYear()}-${pad(since.getMonth() + 1)}-${pad(since.getDate())}`
-
-  const seen = new Set<string>()
-  const byDay = new Map<string, TokenTuple>()
-  const byModel = new Map<string, TokenTuple>()
-  /** By session (`projectKey` + id), subagents included; the folder is looked up afterwards. */
-  const bySession = new Map<string, { projectKey: string; sessionId: string; tokens: TokenTuple }>()
-
-  for (const file of files) {
+  const sources: UsageSource[] = []
+  for (const file of await listTranscripts(projectsDir, true)) {
     const result = await indexFile(file)
-    if (!result) continue
-    const sessionKey = `${file.projectKey}\n${file.sessionId}`
-    for (const [key, day, model, input, output, cacheCreation, cacheRead] of result.entry.usage) {
-      if (day < sinceDay || seen.has(key)) continue
-      seen.add(key)
-      let session = bySession.get(sessionKey)
-      if (!session) {
-        session = { projectKey: file.projectKey, sessionId: file.sessionId, tokens: [0, 0, 0, 0, 0] }
-        bySession.set(sessionKey, session)
-      }
-      for (const acc of [getOrAdd(byDay, day), getOrAdd(byModel, model), session.tokens]) {
-        acc[0] += input
-        acc[1] += output
-        acc[2] += cacheCreation
-        acc[3] += cacheRead
-        acc[4] += 1
-      }
-    }
+    if (result) sources.push({ projectKey: file.projectKey, sessionId: file.sessionId, usage: result.entry.usage })
   }
-
   // The session's own transcript tells the folder, also for the usage of its subagents.
-  const byFolder = new Map<string, { path: string | null; projectKey: string; tokens: TokenTuple; sessions: number }>()
-  for (const { projectKey, sessionId, tokens } of bySession.values()) {
-    const summary = cache[join(projectsDir, projectKey, `${sessionId}.jsonl`)]?.summary
-    const path = summary?.worktree?.originalCwd ?? summary?.cwd ?? null
-    const key = path ?? `#${projectKey}`
-    const folder = byFolder.get(key) ?? { path, projectKey, tokens: [0, 0, 0, 0, 0], sessions: 0 }
-    for (let i = 0; i < tokens.length; i++) folder.tokens[i]! += tokens[i]!
-    folder.sessions += 1
-    byFolder.set(key, folder)
-  }
-
+  const stats = aggregateTokenStats(sources, firstStatsDay(new Date(), days), (projectKey, sessionId) => {
+    return cache[join(projectsDir, projectKey, `${sessionId}.jsonl`)]?.summary
+  })
   pruneCache()
-  return {
-    days: [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)),
-    models: [...byModel.entries()].sort(([, a], [, b]) => b[1] + b[0] - (a[1] + a[0])),
-    folders: [...byFolder.values()].map((f) => [f.path, f.projectKey, f.tokens, f.sessions]),
-    sessionCount: new Set([...bySession.values()].map((s) => s.sessionId)).size,
-  }
-}
-
-function getOrAdd(map: Map<string, TokenTuple>, key: string): TokenTuple {
-  let acc = map.get(key)
-  if (!acc) {
-    acc = [0, 0, 0, 0, 0]
-    map.set(key, acc)
-  }
-  return acc
+  return stats
 }
 
 /** Drops cache entries of files that no longer exist (checked lazily, at most once a minute). */
@@ -298,6 +280,18 @@ function pruneCache(): void {
   })()
 }
 
+/** The file history of the session last asked for: a click on one of its files needn't read it again. */
+let lastHistory: { filePath: string; size: number; mtimeMs: number; history: FileHistory } | null = null
+
+async function fileHistory(filePath: string): Promise<FileHistory> {
+  const info = await stat(filePath)
+  const known = lastHistory
+  if (known?.filePath === filePath && known.size === info.size && known.mtimeMs === info.mtimeMs) return known.history
+  const history = readFileHistory(await readFile(filePath))
+  lastHistory = { filePath, size: info.size, mtimeMs: info.mtimeMs, history }
+  return history
+}
+
 async function handle(request: IndexerRequest): Promise<unknown> {
   switch (request.method) {
     case 'scanSessions':
@@ -312,6 +306,18 @@ async function handle(request: IndexerRequest): Promise<unknown> {
       return readToolCall(await readFile(request.filePath), request.toolUseId)
     case 'searchTranscripts':
       return searchIndex.search(request.projectsDir, request.query, request.limit)
+    case 'editedBy':
+      return editedBy(request.projectsDir, request.path)
+    case 'sessionChanges':
+      return sessionChanges(await fileHistory(request.filePath), new VersionReader(request.historyDir), request.cwd)
+    case 'rewindPreview':
+      return rewindPreview(await fileHistory(request.filePath), request.turnId, new VersionReader(request.historyDir), request.cwd)
+    case 'changeTexts': {
+      const history = await fileHistory(request.filePath)
+      return changeTexts(history, request.turnId, request.path, request.kind, new VersionReader(request.historyDir), request.cwd)
+    }
+    case 'ping':
+      return true
   }
 }
 

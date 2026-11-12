@@ -1,6 +1,8 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import AccountsView from '@/views/AccountsView.vue'
+import ArtifactsView from '@/views/ArtifactsView.vue'
 import DashboardView from '@/views/DashboardView.vue'
+import OverviewView from '@/views/OverviewView.vue'
 import SessionsView from '@/views/SessionsView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import TerminalsView from '@/views/TerminalsView.vue'
@@ -19,7 +21,9 @@ export const router = createRouter({
   routes: [
     { path: '/', redirect: { name: 'terminals' } },
     { path: '/terminals', name: 'terminals', component: TerminalsView },
+    { path: '/overview', name: 'overview', component: OverviewView },
     { path: '/sessions', name: 'sessions', component: SessionsView },
+    { path: '/artifacts', name: 'artifacts', component: ArtifactsView },
     { path: '/dashboard', name: 'dashboard', component: DashboardView },
     { path: '/accounts', name: 'accounts', component: AccountsView },
     { path: '/settings', name: 'settings', component: SettingsView },

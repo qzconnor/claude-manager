@@ -9,6 +9,7 @@ import { attempt } from '@/lib/errors'
 import { formatBytes } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useBrowsersStore } from '@/stores/browsers'
+import { useUiStore } from '@/stores/ui'
 
 /**
  * The browser's downloads, behind a button in the address bar of each browser: it shows while any
@@ -18,6 +19,7 @@ import { useBrowsersStore } from '@/stores/browsers'
 const props = defineProps<{ contentsId: number | null; claudeActing: boolean }>()
 
 const browsers = useBrowsersStore()
+const ui = useUiStore()
 const open = ref(false)
 /** A download ended since the user last looked at the list. */
 const unseen = ref(false)
@@ -56,13 +58,40 @@ function status(download: BrowserDownload): string {
       const percent = Math.floor((download.receivedBytes / download.totalBytes) * 100)
       return `${received} von ${formatBytes(download.totalBytes)} · ${percent} %`
     }
-    case 'completed':
-      return formatBytes(download.totalBytes || download.receivedBytes)
+    case 'completed': {
+      const size = formatBytes(download.totalBytes || download.receivedBytes)
+      return download.executable ? `${size} · ausführbar` : size
+    }
     case 'cancelled':
-      return 'Abgebrochen'
+      return download.refused ? 'Blockiert: zu viele auf einmal' : 'Abgebrochen'
     case 'interrupted':
       return 'Fehlgeschlagen'
   }
+}
+
+/** Where a download came from, for the question before it runs. */
+function host(download: BrowserDownload): string {
+  try {
+    return new URL(download.url).host || download.url
+  } catch {
+    return download.url
+  }
+}
+
+/** A program, installer or script runs when opened: only after asking. */
+async function openFile(download: BrowserDownload) {
+  if (download.executable) {
+    open.value = false
+    const ok = await ui.confirm({
+      title: `„${download.filename}“ ausführen?`,
+      description: `Die Datei ist ein Programm oder Skript von ${host(download)}: Öffnen startet es. Führe sie nur aus, wenn du der Quelle vertraust.`,
+      confirmText: 'Ausführen',
+      destructive: true,
+      warning: true,
+    })
+    if (!ok) return
+  }
+  act(download, 'open')
 }
 
 function act(download: BrowserDownload, action: BrowserDownloadAction) {
@@ -130,8 +159,8 @@ function act(download: BrowserDownload, action: BrowserDownloadAction) {
             type="button"
             class="flex min-w-0 flex-1 items-center gap-2.5 text-left outline-none disabled:cursor-default"
             :disabled="download.state !== 'completed'"
-            v-tooltip="download.state === 'completed' ? `${download.path} öffnen` : download.path"
-            @click="act(download, 'open')"
+            v-tooltip="download.state === 'completed' ? `${download.path} ${download.executable ? 'ausführen' : 'öffnen'}` : download.path"
+            @click="openFile(download)"
           >
             <FileDownIcon v-if="download.state === 'progressing'" class="size-5 shrink-0 text-primary" />
             <FileIcon v-else-if="download.state === 'completed'" class="size-5 shrink-0 text-muted-foreground" />
@@ -140,7 +169,11 @@ function act(download: BrowserDownload, action: BrowserDownloadAction) {
               <span :class="cn('truncate font-medium', download.state === 'cancelled' || download.state === 'interrupted' ? 'text-muted-foreground line-through' : '')">
                 {{ download.filename }}
               </span>
-              <span :class="cn('truncate text-[11px] text-muted-foreground tabular-nums', download.state === 'interrupted' && 'text-destructive')">
+              <span
+                :class="
+                  cn('truncate text-[11px] text-muted-foreground tabular-nums', (download.state === 'interrupted' || download.refused) && 'text-destructive')
+                "
+              >
                 {{ status(download) }}
               </span>
               <Progress

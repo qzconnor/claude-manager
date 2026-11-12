@@ -7,8 +7,11 @@ import type { PaneNode, PaneSplit, SplitDirection } from './types'
 
 /** The smallest share a part can be resized to. */
 export const MIN_RATIO = 0.05
-/** Deeper trees are refused; nobody splits a tab into that many tiny parts. */
-const MAX_DEPTH = 16
+/**
+ * The most splits on the way from the root to a part. Deeper trees are refused, also from the file of
+ * the last run, so nothing may split further; nobody splits a tab into that many tiny parts.
+ */
+export const MAX_SPLIT_DEPTH = 16
 
 /** Steps from the root to a split: into its `first` or its `second` part. */
 export type SplitPath = readonly ('first' | 'second')[]
@@ -43,6 +46,24 @@ export function paneIds(node: PaneNode): string[] {
 
 export function hasPane(node: PaneNode, id: string): boolean {
   return isSplit(node) ? hasPane(node.first, id) || hasPane(node.second, id) : node === id
+}
+
+/** How many splits lie on the longest way from the root to a part; 0 for a single part. */
+export function splitDepth(node: PaneNode): number {
+  return isSplit(node) ? 1 + Math.max(splitDepth(node.first), splitDepth(node.second)) : 0
+}
+
+/** How many splits lie above the part of `id`; -1 when it isn't in the tree. */
+export function depthOf(node: PaneNode, id: string): number {
+  if (!isSplit(node)) return node === id ? 0 : -1
+  const below = Math.max(depthOf(node.first, id), depthOf(node.second, id))
+  return below === -1 ? -1 : below + 1
+}
+
+/** Whether `added` (a part, or the parts of another tab) fits beside the part of `id` within `MAX_SPLIT_DEPTH`. */
+export function canInsertPane(node: PaneNode, id: string, added: PaneNode = id): boolean {
+  const depth = depthOf(node, id)
+  return depth !== -1 && depth + 1 + splitDepth(added) <= MAX_SPLIT_DEPTH
 }
 
 /** Splits the part of `id` in half: `id` keeps the left (`row`) or upper (`column`) half, `added` gets the other. */
@@ -108,6 +129,22 @@ export function ownerOf(node: PaneNode, id: string, isOwner: (id: string) => boo
   return ownerOf(inner, id, isOwner) ?? paneIds(beside).find(isOwner) ?? null
 }
 
+/** Whether two trees split the same terminals the same way, whatever their shares. */
+export function sameShape(a: PaneNode, b: PaneNode): boolean {
+  if (!isSplit(a) || !isSplit(b)) return a === b
+  return a.direction === b.direction && sameShape(a.first, b.first) && sameShape(a.second, b.second)
+}
+
+/**
+ * `splits` with `held` in place of the split of the same shape: a divider being dragged keeps its share
+ * while a list comes that doesn't know it yet. Null for `held` when no split has its shape any more.
+ */
+export function holdSplit(splits: readonly PaneSplit[], held: PaneSplit): { splits: PaneSplit[]; held: PaneSplit | null } {
+  const index = splits.findIndex((split) => sameShape(split, held))
+  if (index === -1) return { splits: [...splits], held: null }
+  return { splits: splits.map((split, i) => (i === index ? held : split)), held }
+}
+
 /** The split at `path` with another share for its first part. The tree as it is when there is no split there. */
 export function setRatio(node: PaneNode, path: SplitPath, ratio: number): PaneNode {
   if (!isSplit(node)) return node
@@ -128,7 +165,7 @@ export function parsePaneNode(value: unknown): PaneNode | null {
       seen.add(node)
       return node
     }
-    if (!node || typeof node !== 'object' || depth >= MAX_DEPTH) return null
+    if (!node || typeof node !== 'object' || depth >= MAX_SPLIT_DEPTH) return null
     const split = node as Record<string, unknown>
     if (split.direction !== 'row' && split.direction !== 'column') return null
     if (typeof split.ratio !== 'number' || !Number.isFinite(split.ratio)) return null

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { CircleCheckIcon, CircleXIcon, RefreshCwIcon } from '@lucide/vue'
-import { computed, ref } from 'vue'
-import type { CloseOnExit } from '@shared/types'
+import { computed, onMounted, ref } from 'vue'
 import AccountSelect from '@/components/common/AccountSelect.vue'
 import DirectoryInput from '@/components/common/DirectoryInput.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -15,6 +14,7 @@ import { formatArgs, parseArgs } from '@/lib/args'
 import { attempt } from '@/lib/errors'
 import { shortenPath } from '@/lib/format'
 import { isLinux, isWindows } from '@/lib/platform'
+import { CLOSE_ON_EXIT } from '@/lib/setting-choices'
 import { useAppStore } from '@/stores/app'
 import NumberControl from './NumberControl.vue'
 import SettingField from './SettingField.vue'
@@ -22,6 +22,8 @@ import SettingsCommand from './SettingsCommand.vue'
 import SettingsSection from './SettingsSection.vue'
 
 const app = useAppStore()
+// Claude Code may have been installed or updated since the info was read.
+onMounted(() => void app.refreshInfo(true))
 
 const executablePath = useSetting(
   (s) => s.claude.executablePath,
@@ -39,6 +41,10 @@ const defaultArgs = useSetting(
 const continuePrompt = useSetting(
   (s) => s.claude.continuePrompt,
   (continuePrompt) => ({ claude: { continuePrompt } }),
+)
+const hideSecretsFromCommands = useSetting(
+  (s) => s.claude.hideSecretsFromCommands,
+  (hideSecretsFromCommands) => ({ claude: { hideSecretsFromCommands } }),
 )
 const autoSwitch = useSetting(
   (s) => s.claude.autoSwitch,
@@ -65,6 +71,10 @@ const restoreTerminals = useSetting(
   (s) => s.general.restoreTerminals,
   (restoreTerminals) => ({ general: { restoreTerminals } }),
 )
+const restoreAsleep = useSetting(
+  (s) => s.general.restoreAsleep,
+  (restoreAsleep) => ({ general: { restoreAsleep } }),
+)
 const runInTray = useSetting(
   (s) => s.general.runInTray,
   (runInTray) => ({ general: { runInTray } }),
@@ -85,12 +95,6 @@ const launchAtLoginHint = computed(() => {
 /** Linux needs a file that starts the installation: an AppImage or the executable of a package. */
 const canLaunchAtLogin = computed(() => !app.info || (app.info.packaged && (!isLinux || app.info.linuxPackage !== null)))
 
-const CLOSE_ON_EXIT: { value: CloseOnExit; label: string }[] = [
-  { value: 'graceful', label: 'Ohne Fehler' },
-  { value: 'always', label: 'Immer' },
-  { value: 'never', label: 'Nie' },
-]
-
 const checking = ref(false)
 
 /** Text fields are committed on blur / Enter (change event) instead of on every keystroke. */
@@ -108,7 +112,12 @@ async function recheck() {
 
 <template>
   <div class="flex flex-col gap-4">
-    <SettingsSection anchor="claude.program" title="Claude Code" description="Programm und Startoptionen." reset-section="claude">
+    <SettingsSection
+      anchor="claude.program"
+      title="Claude Code"
+      description="Programm und Startoptionen."
+      :reset="{ claude: ['executablePath', 'defaultArgs', 'defaultCwd', 'hideSecretsFromCommands', 'autoSwitch', 'continuePrompt'] }"
+    >
       <SettingField anchor="claude.installation" label="Gefundene Installation">
         <Badge v-if="app.info?.claudeExecutable" variant="outline" class="max-w-80">
           <CircleCheckIcon class="text-success" />
@@ -163,10 +172,18 @@ async function recheck() {
         </div>
       </SettingField>
       <SettingField
+        anchor="claude.hideSecrets"
+        for="hide-secrets"
+        label="Token und API-Key vor Befehlen verbergen"
+        description="Sessions mit einem Token- oder API-Key-Account bekommen ihn über die Umgebung, und so sieht ihn jeder Befehl, den Claude ausführt. Eingeschaltet entfernt Claude Code ihn dort (auch aus Hooks und MCP-Servern). Claude Code startet dann aber immer im normalen Berechtigungsmodus, --permission-mode und --dangerously-skip-permissions wirken nicht."
+      >
+        <Switch id="hide-secrets" v-model="hideSecretsFromCommands" />
+      </SettingField>
+      <SettingField
         anchor="claude.autoSwitch"
         for="auto-switch"
         label="Bei einem Limit automatisch wechseln"
-        description="Stößt eine Session an ein Limit, läuft sie von selbst mit dem nächsten freien Account weiter, wie mit „Mit … fortsetzen“ im Tab. Ohne freien Account bleibt der Hinweis."
+        description="Stößt eine Session an ein Limit, läuft sie von selbst mit dem nächsten freien Account weiter, wie mit „Mit … fortsetzen“ im Tab. Ist keiner frei, wartet sie, bis einer frei wird oder ihr eigenes Limit zurückgesetzt ist."
       >
         <Switch id="auto-switch" v-model="autoSwitch" />
       </SettingField>
@@ -188,8 +205,15 @@ async function recheck() {
 
     <SettingsCommand />
 
-    <SettingsSection anchor="claude.general" title="Allgemein" reset-section="general">
-      <SettingField anchor="claude.defaultAccount" for="default-account" label="Standard-Account" description="Wird für „+“ und Strg+Umschalt+T verwendet.">
+    <SettingsSection
+      anchor="claude.general"
+      title="Allgemein"
+      :reset="{
+        general: ['defaultAccountId', 'restoreTerminals', 'restoreAsleep', 'confirmCloseRunning', 'closeOnExit'],
+        claude: ['usageRefreshMinutes'],
+      }"
+    >
+      <SettingField anchor="claude.defaultAccount" for="default-account" label="Account für neue Sessions" description="Die Vorgabe für „+“, Strg+Umschalt+T und cm.">
         <AccountSelect id="default-account" v-model="defaultAccountId" size="sm" class="w-56" />
       </SettingField>
       <SettingField
@@ -199,6 +223,14 @@ async function recheck() {
         description="Merkt sich Ordner und Session jedes offenen Tabs. Beim nächsten Start wird die Session fortgesetzt, ohne gespeicherte Session startet eine neue im selben Ordner."
       >
         <Switch id="restore-terminals" v-model="restoreTerminals" />
+      </SettingField>
+      <SettingField
+        anchor="claude.restoreAsleep"
+        for="restore-asleep"
+        label="Wiederhergestellte Tabs erst beim Ansehen starten"
+        description="Bis du einen Tab öffnest, wartet er ohne Prozess. Das macht den Start schneller und spart Speicher. Startet er nicht, etwa weil sein Ordner fehlt, steht dort warum, mit „Erneut versuchen“. Aus: Alle starten gleich beim Start der App."
+      >
+        <Switch id="restore-asleep" v-model="restoreAsleep" :disabled="!restoreTerminals" />
       </SettingField>
       <SettingField anchor="claude.confirmClose" for="confirm-close" label="Schließen laufender Terminals bestätigen">
         <Switch id="confirm-close" v-model="confirmCloseRunning" />

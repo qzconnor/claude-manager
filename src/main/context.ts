@@ -1,6 +1,7 @@
 import type { BrowserControl } from './browser/browser-control'
 import type { CommandIntegration } from './cli/command-integration'
 import type { AccountService } from './services/account-service'
+import type { ArtifactService } from './services/artifact-service'
 import type { AutoSwitch } from './services/auto-switch'
 import type { ClaudeCli } from './services/claude-cli'
 import type { CswapImport } from './services/cswap-import'
@@ -11,6 +12,8 @@ import type { NotificationService } from './services/notification-service'
 import type { SessionHandoff } from './services/session-handoff'
 import type { SessionService } from './services/session-service'
 import type { SettingsService } from './services/settings-service'
+import type { TabSetService } from './services/tab-set-service'
+import type { TerminalRestore } from './services/terminal-restore'
 import type { TerminalService } from './services/terminal-service'
 import type { ThemeService } from './services/theme-service'
 import type { UpdateService } from './services/update-service'
@@ -34,9 +37,12 @@ export interface AppContext {
   sessions: SessionService
   /** Continuing sessions with another account's limits. */
   handoff: SessionHandoff
+  restore: TerminalRestore
   /** Continues sessions at a limit with another account by themselves (setting `claude.autoSwitch`). */
   autoSwitch: AutoSwitch
   usage: UsageService
+  /** The pages and documents Claude published on claude.ai, of the accounts' logins. */
+  artifacts: ArtifactService
   /** Notifications, the flashing taskbar and the unread dot of tabs. */
   notifications: NotificationService
   /** Branch of the repository a terminal works in, for the title bar. */
@@ -48,6 +54,7 @@ export interface AppContext {
   updates: UpdateService
   /** Folders whose projects share a system prompt (`cm_prompts.md`). */
   workspaces: WorkspaceService
+  tabSets: TabSetService
   /** The user's own themes, files in the folder `themes` of the app's data. */
   themes: ThemeService
   /** Claude Code's trust in folders, asked in the app before a session starts. */

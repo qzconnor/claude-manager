@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { CursorStyle, DiffColors, LogoColor, PanelBackground, TerminalPadding, TerminalRenderer, TerminalSettings, UnicodeMode } from '@shared/types'
+import type { TerminalPadding, TerminalSettings } from '@shared/types'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useSetting } from '@/composables/useSetting'
-import { isWindows, supportsMaterial } from '@/lib/platform'
+import { emojiFont, isWindows, supportsMaterial } from '@/lib/platform'
+import { CURSORS, DIFF_COLORS, LOGO_COLORS, PANEL_BACKGROUNDS, RENDERERS, SCREEN_READER, UNICODE_VERSIONS } from '@/lib/setting-choices'
 import { THEMES } from '@shared/themes/builtin'
 import { customThemeStem } from '@shared/themes/file'
 import { useThemesStore } from '@/stores/themes'
@@ -49,6 +50,8 @@ const renderer = t('renderer')
 const unicode = t('unicode')
 const copyOnSelect = t('copyOnSelect')
 const rightClickPaste = t('rightClickPaste')
+const multiLinePasteWarning = t('multiLinePasteWarning')
+const screenReader = t('screenReader')
 const minimumContrastRatio = t('minimumContrastRatio', 150)
 const colorSchemeId = t('colorSchemeId')
 const panelBackground = t('panelBackground')
@@ -57,32 +60,6 @@ const logoColor = t('logoColor')
 const modernConpty = t('modernConpty')
 
 const WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900]
-const CURSORS: { value: CursorStyle; label: string }[] = [
-  { value: 'bar', label: 'Balken' },
-  { value: 'block', label: 'Block' },
-  { value: 'underline', label: 'Unterstrich' },
-]
-const RENDERERS: { value: TerminalRenderer; label: string }[] = [
-  { value: 'webgl', label: 'WebGL' },
-  { value: 'dom', label: 'DOM' },
-]
-const UNICODE_VERSIONS: { value: UnicodeMode; label: string }[] = [
-  { value: 'graphemes', label: 'Unicode 15' },
-  { value: 'unicode11', label: 'Unicode 11' },
-]
-const PANEL_BACKGROUNDS: { value: PanelBackground; label: string }[] = [
-  { value: 'theme', label: 'Theme' },
-  { value: 'terminal', label: 'Terminal' },
-  { value: 'original', label: 'Original' },
-]
-const DIFF_COLORS: { value: DiffColors; label: string }[] = [
-  { value: 'theme', label: 'Theme' },
-  { value: 'original', label: 'Original' },
-]
-const LOGO_COLORS: { value: LogoColor; label: string }[] = [
-  { value: 'theme', label: 'Akzentfarbe' },
-  { value: 'original', label: 'Original' },
-]
 const FOLLOW_APP = '__app__'
 
 const themes = useThemesStore()
@@ -101,6 +78,10 @@ function onRenderer(value: unknown) {
 }
 function onUnicode(value: unknown) {
   if (value === 'graphemes' || value === 'unicode11') unicode.value = value
+}
+function onScreenReader(value: unknown) {
+  const match = SCREEN_READER.find((option) => option.value === value)
+  if (match) screenReader.value = match.value
 }
 // Template refs are auto-unwrapped, so each select gets its own handler.
 function parseWeight(value: unknown): number | null {
@@ -126,8 +107,12 @@ function onScheme(value: unknown) {
       <TerminalPreview />
     </SettingsSection>
 
-    <SettingsSection anchor="terminal.font" title="Schrift" reset-section="terminal">
-      <SettingField anchor="terminal.fontFamily" for="terminal-font" label="Schriftart" description="Emoji und Symbole werden automatisch über Segoe UI Emoji ergänzt.">
+    <SettingsSection
+      anchor="terminal.font"
+      title="Schrift"
+      :reset="{ terminal: ['fontFamily', 'fontSize', 'lineHeight', 'letterSpacing', 'ligatures', 'fontWeight', 'fontWeightBold'] }"
+    >
+      <SettingField anchor="terminal.fontFamily" for="terminal-font" label="Schriftart" :description="`Emoji und Symbole werden automatisch über ${emojiFont} ergänzt.`">
         <FontPicker id="terminal-font" v-model="fontFamily" />
       </SettingField>
       <SettingField anchor="terminal.fontSize" for="terminal-font-size" label="Schriftgröße" description="Auch mit Strg + / Strg − / Strg 0.">
@@ -277,6 +262,21 @@ function onScheme(value: unknown) {
         description="Wie in Windows Terminal: mit Auswahl kopieren, sonst einfügen."
       >
         <Switch id="terminal-right-click" v-model="rightClickPaste" />
+      </SettingField>
+      <SettingField
+        anchor="terminal.multiLinePasteWarning"
+        for="terminal-multi-line-paste"
+        label="Vor mehrzeiligem Einfügen warnen"
+        description="Wie in Windows Terminal: fragt nach, bevor Text mit Zeilenumbrüchen in eine Shell geht, die jede Zeile sofort ausführen würde."
+      >
+        <Switch id="terminal-multi-line-paste" v-model="multiLinePasteWarning" />
+      </SettingField>
+      <SettingField
+        anchor="terminal.screenReader"
+        label="Screenreader"
+        description="Gibt die Ausgabe als Text an Screenreader wie NVDA, JAWS, die Sprachausgabe oder Orca. Automatisch: sobald das System einen Screenreader meldet."
+      >
+        <SegmentedControl :model-value="screenReader" :options="SCREEN_READER" aria-label="Screenreader" @update:model-value="onScreenReader" />
       </SettingField>
       <SettingField anchor="terminal.scrollback" for="terminal-scrollback" label="Scrollback" description="Anzahl Zeilen, die pro Terminal gehalten werden.">
         <NumberControl id="terminal-scrollback" v-model="scrollback" :min="500" :max="200000" :step="1000" />

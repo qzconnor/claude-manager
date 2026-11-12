@@ -1,14 +1,24 @@
 <script setup lang="ts">
 import {
+  ArrowRightLeftIcon,
   BellIcon,
   BellOffIcon,
+  BellRingIcon,
+  CircleStopIcon,
   Columns2Icon,
+  CopyIcon,
   FilesIcon,
   FolderGit2Icon,
   FolderIcon,
   FolderOpenIcon,
   GlobeIcon,
+  HistoryIcon,
+  LayersIcon,
+  Maximize2Icon,
+  Minimize2Icon,
   PanelRightIcon,
+  PanelTopIcon,
+  PencilIcon,
   PlusIcon,
   RefreshCwIcon,
   RotateCwIcon,
@@ -30,6 +40,7 @@ import {
 } from '@/components/ui/command'
 import { SETTINGS_TAB_ICONS } from '@/components/settings/settings-tabs'
 import BrowserFavicon from '@/components/terminal/BrowserFavicon.vue'
+import { useAccountSwitch } from '@/composables/useAccountSwitch'
 import { useFileTreeToggle } from '@/composables/useFileTreeToggle'
 import { useLauncher } from '@/composables/useLauncher'
 import { useRecentFolders } from '@/composables/useRecentFolders'
@@ -37,6 +48,7 @@ import { SETTINGS } from '@/composables/useSettingsSearch'
 import { useTerminalActions } from '@/composables/useTerminalActions'
 import { attempt } from '@/lib/errors'
 import { formatRelative, shortenPath } from '@/lib/format'
+import { nextWaiting } from '@/lib/overview'
 import { PAGE_INFO } from '@/lib/pages'
 import type { SettingsEntry } from '@/lib/settings-index'
 import { BROWSER_TAB, PAGES } from '@/lib/workspace'
@@ -45,7 +57,9 @@ import { useAccountsStore } from '@/stores/accounts'
 import { useAppStore } from '@/stores/app'
 import { useSessionsStore } from '@/stores/sessions'
 import { useSettingsStore } from '@/stores/settings'
+import { useTabSetsStore } from '@/stores/tab-sets'
 import { useTerminalsStore } from '@/stores/terminals'
+import { useUiStore } from '@/stores/ui'
 import { useUsageStore } from '@/stores/usage'
 import AccountDot from './AccountDot.vue'
 import PaletteInput from './PaletteInput.vue'
@@ -63,7 +77,10 @@ const sessions = useSessionsStore()
 const usage = useUsageStore()
 const settings = useSettingsStore()
 const launcher = useLauncher()
-const { closeGroup } = useTerminalActions()
+const ui = useUiStore()
+const tabSets = useTabSetsStore()
+const { closeGroup, closeTerminal, copyLastAnswer, restartTerminal, stopTerminal } = useTerminalActions()
+const accountSwitch = useAccountSwitch()
 const recent = useRecentFolders(8)
 const fileTree = useFileTreeToggle()
 /** The tree the command opens or closes, if the tab has one. */
@@ -100,6 +117,15 @@ function reloadWindow() {
   location.reload()
 }
 
+/** The palette closes and the tab in front gets the keyboard, to go on with the arrows (see CommandPalette). */
+function focusTabs() {
+  ui.focusTabsRequest = true
+  emit('done', false)
+}
+
+/** The tab Ctrl+Shift+J goes to: the next one in which Claude waits for the user. */
+const waitingNext = computed(() => nextWaiting(terminals.terminals, terminals.keyboardTerminal))
+
 /** Shows a terminal's tab; in groups the route follows it by itself. */
 function switchTo(id: string) {
   terminals.activate(id)
@@ -109,6 +135,35 @@ function switchTo(id: string) {
 /** The settings page scrolls there and gives a row's control the keyboard. */
 function openSetting(entry: SettingsEntry) {
   run(() => router.push({ name: 'settings', query: { tab: entry.tab, setting: entry.id } }), entry.kind === 'field')
+}
+
+/**
+ * The terminal or browser whose tab has the keyboard, for the commands of that tab. With the tabs in
+ * groups only while its tab is the one in front (not a page or the browser tab).
+ */
+const tab = computed(() => {
+  const terminal = terminals.active
+  if (!terminal || (terminals.grouped && terminals.focusedTab !== terminal.id)) return null
+  return terminal
+})
+/** Accounts the session of the tab could go on with, as in the tab's menu. */
+const switchChoices = computed(() =>
+  tab.value?.mode === 'session' && tab.value.sessionId ? accountSwitch.choices(tab.value.accountId, tab.value.authAccountId) : [],
+)
+
+/** Opens the tab's name for editing, in its tab: the keyboard goes there, not back to the terminal. */
+function renameTab(id: string) {
+  if (!terminals.grouped && router.currentRoute.value.name !== 'terminals') void router.push({ name: 'terminals' })
+  ui.tabRenameRequest = id
+}
+
+function toggleTabMuted(id: string, muted: boolean) {
+  return attempt(() => terminals.setMuted(id, !muted), 'Benachrichtigungen des Tabs konnten nicht geändert werden')
+}
+
+function openTabFolder(terminal: { cwd: string; worktree: { path: string } | null }) {
+  // A session in a worktree works in the worktree's folder.
+  return attempt(() => window.api.app.openPath(terminal.worktree?.path ?? terminal.cwd), 'Ordner konnte nicht geöffnet werden')
 }
 
 /** The group with the keyboard, with the tabs in groups. */
@@ -131,6 +186,35 @@ const closesBrowser = computed(
           <PlusIcon />
           Neue Session
           <CommandShortcut>Strg+Umschalt+T</CommandShortcut>
+        </CommandItem>
+        <CommandItem
+          v-if="waitingNext"
+          value="next-waiting"
+          filter-text="Zum Tab, der auf dich wartet springen Erlaubnis Frage Plan Limit"
+          @select="run(() => switchTo(waitingNext!))"
+        >
+          <BellRingIcon />
+          Zum Tab, der auf dich wartet
+          <CommandShortcut>Strg+Umschalt+J</CommandShortcut>
+        </CommandItem>
+        <CommandItem
+          v-if="terminals.recentlyClosed.length"
+          value="reopen-closed"
+          filter-text="Geschlossenen Tab wieder öffnen rückgängig zuletzt geschlossen"
+          @select="run(() => launcher.reopen())"
+        >
+          <HistoryIcon />
+          Geschlossenen Tab wieder öffnen
+          <CommandShortcut class="max-w-[40%] truncate tracking-normal">{{ terminals.recentlyClosed[0].title }}</CommandShortcut>
+        </CommandItem>
+        <CommandItem
+          v-if="terminals.terminals.some((t) => t.mode !== 'login')"
+          value="save-tab-set"
+          filter-text="Offene Tabs als Tab-Set speichern Arbeitsbereich Layout merken"
+          @select="run(() => (ui.tabSetRequest = { mode: 'create' }))"
+        >
+          <LayersIcon />
+          Offene Tabs als Tab-Set speichern…
         </CommandItem>
         <CommandItem value="new-session-folder" @select="run(() => launcher.newSessionInFolder())">
           <FolderOpenIcon />
@@ -223,6 +307,15 @@ const closesBrowser = computed(
           {{ notificationsOn ? 'Benachrichtigungen ausschalten' : 'Benachrichtigungen einschalten' }}
         </CommandItem>
         <CommandItem
+          v-if="terminals.tabs.length > 0"
+          value="focus-tabs"
+          filter-text="Tabs fokussieren Tab-Leiste Tastatur Fokus Pfeiltasten wechseln Barrierefreiheit"
+          @select="focusTabs"
+        >
+          <PanelTopIcon />
+          Tabs fokussieren
+        </CommandItem>
+        <CommandItem
           value="reload-window"
           filter-text="Fenster neu laden Reload Window neu rendern neu zeichnen Entwickler Developer"
           @select="run(reloadWindow)"
@@ -231,6 +324,80 @@ const closesBrowser = computed(
           Fenster neu laden
         </CommandItem>
       </CommandGroup>
+
+      <template v-if="tab">
+        <CommandSeparator />
+        <CommandGroup :heading="`Tab „${tab.title}“`">
+          <CommandItem value="tab-rename" filter-text="Tab umbenennen Name Titel" @select="run(() => renameTab(tab!.id), true)">
+            <PencilIcon />
+            Tab umbenennen
+          </CommandItem>
+          <CommandItem
+            v-if="!terminals.grouped && (terminals.activeTab?.panes.length ?? 0) > 1"
+            value="tab-zoom"
+            filter-text="Teil maximieren Vollbild Zoom alle Teile zeigen geteilt"
+            @select="run(() => terminals.toggleZoom(tab!.id))"
+          >
+            <Minimize2Icon v-if="terminals.zoomed === tab.id" />
+            <Maximize2Icon v-else />
+            {{ terminals.zoomed === tab.id ? 'Alle Teile zeigen' : 'Teil maximieren' }}
+          </CommandItem>
+          <template v-if="tab.mode !== 'browser'">
+            <CommandItem value="tab-restart" filter-text="Tab neu starten Session Neustart" @select="run(() => restartTerminal(tab!.id))">
+              <RotateCwIcon />
+              {{ tab.mode === 'session' ? 'Session neu starten' : 'Terminal neu starten' }}
+            </CommandItem>
+            <CommandItem
+              v-if="tab.status === 'running'"
+              value="tab-stop"
+              filter-text="Tab Prozess beenden stoppen abbrechen"
+              @select="run(() => stopTerminal(tab!.id))"
+            >
+              <CircleStopIcon />
+              Prozess beenden
+            </CommandItem>
+            <CommandItem
+              value="tab-mute"
+              filter-text="Tab Benachrichtigungen stummschalten einschalten"
+              @select="run(() => toggleTabMuted(tab!.id, tab!.muted))"
+            >
+              <BellIcon v-if="tab.muted" />
+              <BellOffIcon v-else />
+              {{ tab.muted ? 'Benachrichtigungen des Tabs einschalten' : 'Tab stummschalten' }}
+            </CommandItem>
+            <CommandItem value="tab-folder" filter-text="Tab Ordner öffnen Explorer" @select="run(() => openTabFolder(tab!))">
+              <FolderOpenIcon />
+              Ordner des Tabs öffnen
+            </CommandItem>
+          </template>
+          <CommandItem
+            v-if="tab.mode === 'session'"
+            value="tab-copy-answer"
+            filter-text="Letzte Antwort kopieren Claude Antwort Markdown Zwischenablage"
+            @select="run(() => copyLastAnswer(tab!.id))"
+          >
+            <CopyIcon />
+            Letzte Antwort kopieren
+          </CommandItem>
+          <CommandItem
+            v-for="choice in switchChoices"
+            :key="choice.account.id"
+            :value="`tab-switch-${choice.account.id}`"
+            :filter-text="`Account wechseln Weiter mit ${choice.account.name}`"
+            :disabled="choice.disabled"
+            @select="run(() => accountSwitch.continueTerminal(tab!, choice.account.id))"
+          >
+            <ArrowRightLeftIcon />
+            <span class="min-w-0 truncate">Weiter mit „{{ choice.account.name }}“</span>
+            <CommandShortcut v-if="choice.hint" class="tracking-normal">{{ choice.hint }}</CommandShortcut>
+          </CommandItem>
+          <CommandItem value="tab-close" filter-text="Tab schließen" @select="run(() => closeTerminal(tab!.id))">
+            <XIcon />
+            {{ tab.mode === 'browser' ? 'Browser schließen' : 'Tab schließen' }}
+            <CommandShortcut>Strg+Umschalt+W</CommandShortcut>
+          </CommandItem>
+        </CommandGroup>
+      </template>
 
       <CommandSeparator />
       <!-- In groups the pages open as tabs; in one tab bar the terminals are a page of their own. -->
@@ -290,6 +457,23 @@ const closesBrowser = computed(
         </CommandGroup>
       </template>
 
+      <template v-if="tabSets.sets.length">
+        <CommandSeparator />
+        <CommandGroup heading="Tab-Sets">
+          <CommandItem
+            v-for="set in tabSets.sets"
+            :key="set.id"
+            :value="`tab-set-${set.id}`"
+            :filter-text="`Tab-Set öffnen ${set.name}`"
+            @select="run(() => tabSets.open(set.id))"
+          >
+            <LayersIcon />
+            <span class="min-w-0 truncate">Tab-Set „{{ set.name }}“ öffnen</span>
+            <CommandShortcut class="tracking-normal">{{ set.tabs.length === 1 ? '1 Tab' : `${set.tabs.length} Tabs` }}</CommandShortcut>
+          </CommandItem>
+        </CommandGroup>
+      </template>
+
       <template v-if="recent.folders.value.length">
         <CommandSeparator />
         <CommandGroup heading="Zuletzt genutzte Ordner">
@@ -320,6 +504,24 @@ const closesBrowser = computed(
             <BrowserFavicon v-if="terminal.mode === 'browser'" :terminal-id="terminal.id" class="size-4" />
             <AccountDot v-else :color="accounts.get(terminal.authAccountId)?.color" />
             <span class="truncate">{{ terminal.title }}</span>
+          </CommandItem>
+        </CommandGroup>
+      </template>
+
+      <template v-if="terminals.recentlyClosed.length">
+        <CommandSeparator />
+        <CommandGroup heading="Zuletzt geschlossen" search-only>
+          <CommandItem
+            v-for="entry in terminals.recentlyClosed"
+            :key="entry.id"
+            :value="`closed-${entry.id}`"
+            :filter-text="`Wieder öffnen geschlossen ${entry.title}`"
+            @select="run(() => launcher.reopen(entry))"
+          >
+            <SquareTerminalIcon v-if="entry.mode === 'shell'" />
+            <AccountDot v-else :color="accounts.get(entry.authAccountId)?.color ?? accounts.get(entry.accountId)?.color" />
+            <span class="truncate">{{ entry.title }}</span>
+            <CommandShortcut>{{ formatRelative(new Date(entry.closedAt).toISOString()) }}</CommandShortcut>
           </CommandItem>
         </CommandGroup>
       </template>

@@ -2,9 +2,12 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   applyHookCall,
+  commitsInShell,
   fileActivity,
   HOOK_EVENTS,
   hookSettings,
+  idleHookState,
+  interruptedHookState,
   mergeHookSettings,
   newHookState,
   parseHookCall,
@@ -108,14 +111,20 @@ describe('parseHookCall', () => {
     expect(call('UserPromptSubmit', { session_id: 'not-a-session' })?.sessionId).toBeNull()
   })
 
+  it('keeps the beginning of a prompt on one line', () => {
+    expect(event('UserPromptSubmit', { prompt: '  Teste\n\nalles ' })).toEqual({ kind: 'prompt', prompt: 'Teste alles' })
+    expect(event('UserPromptSubmit', { prompt: 'x'.repeat(1000) })).toEqual({ kind: 'prompt', prompt: `${'x'.repeat(299)}…` })
+    expect(event('UserPromptSubmit', { prompt: 42 })).toEqual({ kind: 'prompt' })
+  })
+
   it('reads the tool that starts, with what it runs on', () => {
     expect(event('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'npm test' } })).toEqual({
       kind: 'tool',
       tool: 'Bash',
       detail: 'npm test',
-      subagent: false,
+      agent: null,
     })
-    expect(event('PreToolUse', { tool_name: 'Read', tool_input: { file_path: 'a.ts' }, agent_id: 'x' })).toMatchObject({ subagent: true })
+    expect(event('PreToolUse', { tool_name: 'Read', tool_input: { file_path: 'a.ts' }, agent_id: 'x' })).toMatchObject({ agent: 'x' })
   })
 
   it('takes a question or a plan as a wait for the user', () => {
@@ -185,7 +194,7 @@ describe('applyHookCall', () => {
     }
     return { state, ends }
   }
-  const bash: HookEvent = { kind: 'tool', tool: 'Bash', detail: 'npm test', subagent: false }
+  const bash: HookEvent = { kind: 'tool', tool: 'Bash', detail: 'npm test', agent: null }
   const stop = (message: string | null, background = false): HookEvent => ({ kind: 'stop', message, background })
 
   it('takes the session from the first call', () => {
@@ -195,16 +204,16 @@ describe('applyHookCall', () => {
 
   it('shows the tool of the session’s own turn while it runs', () => {
     expect(run([bash]).state.activity).toEqual({ tool: 'Bash', detail: 'npm test', since: NOW })
-    expect(run([bash, { kind: 'toolDone', subagent: false }]).state.activity).toBeNull()
+    expect(run([bash, { kind: 'toolDone', agent: null }]).state.activity).toBeNull()
   })
 
   it('leaves the tools of subagents out', () => {
-    const { state } = run([bash, { kind: 'tool', tool: 'Read', detail: 'a.ts', subagent: true }, { kind: 'toolDone', subagent: true }])
+    const { state } = run([bash, { kind: 'tool', tool: 'Read', detail: 'a.ts', agent: 'x' }, { kind: 'toolDone', agent: 'x' }])
     expect(state.activity?.tool).toBe('Bash')
   })
 
   it('tells the end of a turn with the answer once', () => {
-    const { state, ends } = run([{ kind: 'prompt' }, bash, { kind: 'toolDone', subagent: false }, stop('Fertig.')])
+    const { state, ends } = run([{ kind: 'prompt' }, bash, { kind: 'toolDone', agent: null }, stop('Fertig.')])
     expect(ends).toEqual([{ kind: 'done', tool: null, detail: 'Fertig.' }])
     expect(state.ended).toBe(true)
   })
@@ -222,18 +231,18 @@ describe('applyHookCall', () => {
     const { state, ends } = run([bash, { kind: 'input', tool: 'Bash', detail: 'npm test' }])
     expect(ends).toEqual([{ kind: 'input', tool: 'Bash', detail: 'npm test' }])
     expect(state.ended).toBe(true)
-    expect(run([{ kind: 'toolDone', subagent: false }], state).state.ended).toBe(false)
+    expect(run([{ kind: 'toolDone', agent: null }], state).state.ended).toBe(false)
   })
 
   it('tells the same wait once, also when Claude Code asks for it twice', () => {
     const question: HookEvent = { kind: 'input', tool: 'AskUserQuestion', detail: 'Welche Variante?' }
     expect(run([question, question]).ends).toHaveLength(1)
-    expect(run([question, { kind: 'toolDone', subagent: false }, { kind: 'prompt' }, question]).ends).toHaveLength(2)
+    expect(run([question, { kind: 'toolDone', agent: null }, { kind: 'prompt' }, question]).ends).toHaveLength(2)
   })
 
   it('tells a subagent’s next permission after the first was answered', () => {
     const ask: HookEvent = { kind: 'input', tool: 'Bash', detail: 'npm test' }
-    expect(run([ask, { kind: 'toolDone', subagent: true }, ask]).ends).toHaveLength(2)
+    expect(run([ask, { kind: 'toolDone', agent: 'x' }, ask]).ends).toHaveLength(2)
   })
 
   it('tells a rate limit as a limit, other errors as the end of the turn', () => {
@@ -247,6 +256,32 @@ describe('applyHookCall', () => {
     const start = (id: string): HookEvent => ({ kind: 'subagent', id, running: true })
     expect(run([start('a'), start('b'), start('a')]).state.subagents).toEqual(['b', 'a'])
     expect(run([start('a'), start('b'), { kind: 'subagent', id: 'a', running: false }]).state.subagents).toEqual(['b'])
+  })
+
+  it('ends what runs with the turn, also what ended without telling', () => {
+    const busy = run([bash, { kind: 'subagent', id: 'a', running: true }, { kind: 'compact', running: true }]).state
+    expect(run([stop('fertig')], busy).state).toMatchObject({ activity: null, subagents: [], compacting: false })
+    // Subagents in the background run on.
+    expect(run([stop(null, true)], busy).state).toMatchObject({ subagents: ['a'], compacting: false })
+  })
+
+  it('counts a subagent again that works after it was lost track of', () => {
+    const tool: HookEvent = { kind: 'tool', tool: 'Read', detail: 'a.ts', agent: 'b' }
+    expect(run([tool]).state.subagents).toEqual(['b'])
+    expect(run([{ kind: 'subagent', id: 'b', running: true }, tool]).state.subagents).toEqual(['b'])
+  })
+
+  it('stops a compaction and a running tool once Claude Code stays idle (Esc)', () => {
+    const busy = run([bash, { kind: 'compact', running: true }]).state
+    expect(idleHookState(busy)).toMatchObject({ activity: null, compacting: false })
+    // Waits for a permission: the tool is still to come.
+    const waiting = run([bash, { kind: 'input', tool: 'Bash', detail: 'rm -rf build' }]).state
+    expect(idleHookState(waiting).activity).toEqual(waiting.activity)
+  })
+
+  it('stops the subagents of a turn ended with Esc', () => {
+    const busy = run([bash, { kind: 'subagent', id: 'a', running: true }]).state
+    expect(interruptedHookState(busy)).toMatchObject({ activity: null, subagents: [], compacting: false })
   })
 
   it('starts afresh with another session in the process (/clear)', () => {
@@ -313,8 +348,44 @@ describe('fileActivity', () => {
     expect(fileActivity(body('PostToolUse', 'Bash', { command: 'git log --oneline' }))?.commit).toBeUndefined()
   })
 
+  it('tells a commit from PowerShell as from bash', () => {
+    expect(fileActivity(body('PostToolUse', 'PowerShell', { command: 'git add -A; git commit -m "fix"' }))?.commit).toBe(resolve('/work'))
+    expect(fileActivity(body('PreToolUse', 'PowerShell', { command: 'git commit -m x' }))?.commit).toBeUndefined()
+  })
+
   it('comes with the call', () => {
     const call = parseHookCall({ ...body('PreToolUse', 'Write', { file_path: resolve('/work/c.ts') }), session_id: SESSION })
     expect(call?.files?.touches).toEqual([{ path: resolve('/work/c.ts'), kind: 'write' }])
+  })
+})
+
+describe('commitsInShell', () => {
+  it('finds git commit, also with options between', () => {
+    expect(commitsInShell('git commit -m "fix"')).toBe(true)
+    expect(commitsInShell('git -C ../repo commit --amend')).toBe(true)
+    expect(commitsInShell('npm test && git commit -am x')).toBe(true)
+    expect(commitsInShell('/usr/bin/git commit')).toBe(true)
+  })
+
+  it('finds it in PowerShell too, and over continued lines', () => {
+    expect(commitsInShell('git.exe commit -m x')).toBe(true)
+    expect(commitsInShell("& 'C:\\Program Files\\Git\\cmd\\git.exe' commit -F msg.txt")).toBe(true)
+    expect(commitsInShell('GIT commit -m x')).toBe(true)
+    expect(commitsInShell('git `\n  commit -m x')).toBe(true)
+    expect(commitsInShell('git -C repo \\\n  commit -m x')).toBe(true)
+    expect(commitsInShell('git Commit -m x')).toBe(false)
+  })
+
+  it('finds no commit in other commands or across separators', () => {
+    expect(commitsInShell('git status')).toBe(false)
+    expect(commitsInShell('git log; echo commit')).toBe(false)
+    expect(commitsInShell('echo git | grep commit')).toBe(false)
+    expect(commitsInShell('gitk commit')).toBe(false)
+  })
+
+  it('takes no time for a long command full of git', () => {
+    const started = Date.now()
+    expect(commitsInShell('git '.repeat(100_000))).toBe(false)
+    expect(Date.now() - started).toBeLessThan(500)
   })
 })

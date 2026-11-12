@@ -6,7 +6,9 @@ import ChangesView from '@/components/files/ChangesView.vue'
 import DiffView from '@/components/files/DiffView.vue'
 import FileTreePanel from '@/components/files/FileTreePanel.vue'
 import { PAGE_INFO } from '@/lib/pages'
+import { separatorValue } from '@/lib/separator-keys'
 import { dockRect } from '@/lib/tab-drag'
+import { inOpeningOrder } from '@/lib/tabs'
 import { cn } from '@/lib/utils'
 import { baseName } from '@/lib/file-tree'
 import { BROWSER_BAR_HEIGHT, BROWSER_TAB, diffOfTab, PAGES, pageTab, TAB_BAR_HEIGHT, type DiffFile, type PageName } from '@/lib/workspace'
@@ -16,13 +18,16 @@ import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import AccountsView from '@/views/AccountsView.vue'
+import ArtifactsView from '@/views/ArtifactsView.vue'
 import DashboardView from '@/views/DashboardView.vue'
+import OverviewView from '@/views/OverviewView.vue'
 import SessionsView from '@/views/SessionsView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import BrowserBar from './BrowserBar.vue'
 import BrowserEmpty from './BrowserEmpty.vue'
 import BrowserPane from './BrowserPane.vue'
 import GroupTabBar from './GroupTabBar.vue'
+import SleepingPane from './SleepingPane.vue'
 import TerminalEmptyState from './TerminalEmptyState.vue'
 import TerminalPane from './TerminalPane.vue'
 
@@ -44,11 +49,13 @@ const fileTree = useFileTreeStore()
 const settings = useSettingsStore()
 const ui = useUiStore()
 const root = ref<HTMLElement | null>(null)
-const { width: rootWidth } = useElementSize(root)
+const { width: rootWidth, height: rootHeight } = useElementSize(root)
 const treeSide = computed(() => settings.settings.appearance.fileTreeSide)
 
 const PAGE_VIEWS: Record<PageName, Component> = {
+  overview: OverviewView,
   sessions: SessionsView,
+  artifacts: ArtifactsView,
   dashboard: DashboardView,
   accounts: AccountsView,
   settings: SettingsView,
@@ -164,7 +171,8 @@ const driven = (id: string) => browsers.controls.get(id)?.active === true
 const inBackground = (id: string) => !onScreen(id) && driven(id)
 
 /** Browsers of the last run load once they are shown or Claude drives them (see `terminals.sleeping`). */
-const mounted = computed(() => terminals.terminals.filter((t) => !terminals.sleeping.has(t.id)))
+// Not in the order of the tabs: reordering them would move the elements, and a browser would load again.
+const mounted = computed(() => inOpeningOrder(terminals.terminals.filter((t) => !terminals.sleeping.has(t.id))))
 const waking = computed(() => [...terminals.sleeping].filter((id) => onScreen(id) || browsers.controls.get(id)?.busy === true || driven(id)))
 watch(waking, (ids) => ids.forEach((id) => terminals.wake(id)), { immediate: true })
 
@@ -216,6 +224,21 @@ function onDividerDown(event: PointerEvent, divider: PaneDivider) {
   handle.addEventListener('pointercancel', end)
 }
 
+/** The least share a divider leaves either of its groups, so none gets smaller than `MIN_GROUP_PX`. */
+function minRatio(divider: PaneDivider): number {
+  const size = (divider.direction === 'row' ? rootWidth.value * divider.area.width : rootHeight.value * divider.area.height) || 1
+  return Math.min(0.5, MIN_GROUP_PX / size)
+}
+
+/** A divider moved with the keyboard, 2 % of its groups a step; Enter shares them in half again. */
+function onDividerKey(event: KeyboardEvent, divider: PaneDivider) {
+  const min = minRatio(divider) * 100
+  const percent = separatorValue(event, divider.direction === 'row', { value: divider.ratio * 100, min, max: 100 - min, step: 2, initial: 50 })
+  if (percent === null) return
+  event.preventDefault()
+  terminals.resizeGroups(divider.path, percent / 100)
+}
+
 /** A tab dragged over the window: the group it joins, or the half of it a new group takes. */
 const dockPreview = computed(() => {
   const dock = ui.groupDock
@@ -262,7 +285,7 @@ const dockPreview = computed(() => {
 
     <!-- A browser shows its page instead of a terminal; a session's page lies in the browser tab. -->
     <component
-      :is="terminal.mode === 'browser' ? BrowserPane : TerminalPane"
+      :is="terminal.mode === 'browser' ? BrowserPane : terminal.status === 'asleep' ? SleepingPane : TerminalPane"
       v-for="terminal in mounted"
       v-show="onScreen(terminal.id) || inBackground(terminal.id)"
       :key="terminal.id"
@@ -356,21 +379,25 @@ const dockPreview = computed(() => {
         role="separator"
         :aria-orientation="divider.direction === 'row' ? 'vertical' : 'horizontal'"
         :aria-valuenow="Math.round(divider.ratio * 100)"
+        :aria-valuemin="Math.round(minRatio(divider) * 100)"
+        :aria-valuemax="Math.round((1 - minRatio(divider)) * 100)"
         aria-label="Größe der Gruppen ändern"
+        tabindex="0"
         :class="
           cn(
-            'group/divider absolute z-30 flex items-center justify-center',
+            'group/divider absolute z-30 flex items-center justify-center outline-none',
             divider.direction === 'row' ? 'w-2 -translate-x-1/2 cursor-col-resize' : 'h-2 -translate-y-1/2 cursor-row-resize',
           )
         "
         :style="dividerStyle(divider)"
         @pointerdown="onDividerDown($event, divider)"
         @dblclick="terminals.resizeGroups(divider.path, 0.5)"
+        @keydown="onDividerKey($event, divider)"
       >
         <div
           :class="
             cn(
-              'bg-border transition-colors group-hover/divider:bg-primary/60',
+              'bg-border transition-colors group-hover/divider:bg-primary/60 group-focus-visible/divider:bg-primary',
               divider.direction === 'row' ? 'h-full w-px' : 'h-px w-full',
               dragging?.path.join() === divider.path.join() && 'bg-primary/60',
             )

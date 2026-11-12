@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button'
 import { useLauncher } from '@/composables/useLauncher'
 import { useTerminalAppearance } from '@/composables/useTerminalAppearance'
 import { attempt } from '@/lib/errors'
+import { terminalBus } from '@/lib/terminal-bus'
 import { cn } from '@/lib/utils'
 import { useBrowsersStore, type BrowserViewState, type ShownHighlight } from '@/stores/browsers'
 import { useTerminalsStore } from '@/stores/terminals'
@@ -633,6 +634,13 @@ function takeOver() {
   if (next) view.value?.focus()
 }
 
+// Its tab clicked while it is the active one already: the keyboard comes back to the page.
+onBeforeUnmount(
+  terminalBus.onFocus(props.terminal.id, () => {
+    if (props.active) focusContent()
+  }),
+)
+
 watch(
   () => props.active,
   (active) => {
@@ -970,14 +978,18 @@ watch(
                 </span>
               </Transition>
               <span class="max-w-full truncate text-[11px] text-muted-foreground">
-                {{ control.takenOver ? 'Claude wartet' : 'Claude' }} · {{ control.sessionTitle }}
+                {{ control.takenOver ? 'Privat · Claude wartet' : 'Claude' }} · {{ control.sessionTitle }}
               </span>
             </button>
             <Button
               :variant="control.takenOver ? 'default' : 'secondary'"
               size="xs"
               class="shrink-0 rounded-full"
-              v-tooltip="control.takenOver ? 'Claude darf den Browser wieder bedienen' : 'Selbst bedienen, Claude wartet so lange'"
+              v-tooltip="
+                control.takenOver
+                  ? 'Claude darf den Browser wieder bedienen'
+                  : 'Selbst bedienen, privat: Claude wartet so lange und bekommt nicht mit, was du tippst und die Seite sendet'
+              "
               @click="takeOver"
             >
               <PlayIcon v-if="control.takenOver" data-icon="inline-start" />

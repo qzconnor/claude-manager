@@ -46,6 +46,9 @@ const TOOLS: ToolDefinition<never>[] = [
   ...testingTools,
 ]
 
+/** The tools that reach beyond what the page shows (see `sensitive` of ToolDefinition). */
+export const SENSITIVE_BROWSER_TOOLS: ReadonlySet<string> = new Set(TOOLS.filter((t) => t.sensitive).map((t) => t.name))
+
 /** The tools for the MCP server, and their calls for one session. */
 export class BrowserTools {
   constructor(readonly control: BrowserControl) {}
@@ -66,7 +69,12 @@ export class BrowserTools {
     const params = definition.parse(args)
     if (definition.session) return definition.session(this, sessionId, params)
     const run = definition.run!
-    const step: ActionStep = { kind: definition.kind, label: definition.label(params), whileDialog: definition.whileDialog }
+    const step: ActionStep = {
+      kind: definition.kind,
+      label: definition.label(params),
+      whileDialog: definition.whileDialog,
+      sensitive: definition.sensitive === true,
+    }
     const reply = await this.control.perform(sessionId, step, async (ctx) => {
       const since = new Date().toISOString()
       const reply = await run(ctx, params)

@@ -5,12 +5,18 @@ name: CI
 on:
   pull_request:
 
+# The install scripts of the dependencies run here: the token may only read.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Windows-Build
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -26,6 +32,8 @@ jobs:
     container: node:24-bookworm
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 24

@@ -20,9 +20,14 @@ export function weightedTokens(tokens: Tokens): number {
   )
 }
 
+/** Most expensive first, at the same cost (e.g. models without a price) the one with more tokens. */
+export function byCost(a: TokenCounts, b: TokenCounts): number {
+  return b.cost - a.cost || weightedTokens(b) - weightedTokens(a)
+}
+
 /**
  * Adds up folders that are one by `folderKey` (`F:\Code` and `f:\code\`), those without a path by
- * Claude's project key. The spelling with the most usage names the folder. Largest first.
+ * Claude's project key. The spelling with the most usage names the folder. Most expensive first.
  */
 export function mergeFolderStats(folders: FolderTokenStats[]): FolderTokenStats[] {
   const merged = new Map<string, { stats: FolderTokenStats; lead: number }>()
@@ -45,7 +50,8 @@ export function mergeFolderStats(folders: FolderTokenStats[]): FolderTokenStats[
     stats.cacheCreation += folder.cacheCreation
     stats.cacheRead += folder.cacheRead
     stats.messages += folder.messages
+    stats.cost += folder.cost
     stats.sessionCount += folder.sessionCount
   }
-  return [...merged.values()].map((e) => e.stats).sort((a, b) => weightedTokens(b) - weightedTokens(a))
+  return [...merged.values()].map((e) => e.stats).sort(byCost)
 }

@@ -12,6 +12,9 @@ import { launcherScript, launcherTarget } from './linux-launcher'
 
 const run = promisify(execFile)
 
+/** Where Windows looks up `cm` typed into the Explorer's address bar (src/launcher/cm.cs). */
+const APP_PATH_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\cm.exe'
+
 /**
  * The `cm` command. On Windows cm.exe ships in `<install dir>\bin`; the installer registers it,
  * the settings page can do the same. The launcher itself edits the registry (src/launcher/cm.cs).
@@ -60,7 +63,13 @@ export class CommandIntegration {
       () => true,
       () => false,
     )
-    return { available: true, registered, launcherPath: this.windowsLauncher, hint: null }
+    // cm.exe never takes over the `cm` of another program, and says so only in a console.
+    const owner = registered ? null : await windowsAppPath()
+    const hint =
+      owner && !sameWindowsPath(owner, this.windowsLauncher) && existsSync(owner)
+        ? `„cm“ ist schon für ${owner} registriert. Die App übernimmt keinen fremden Befehl: Entferne erst das andere Programm oder dessen Befehl.`
+        : null
+    return { available: true, registered, launcherPath: this.windowsLauncher, hint }
   }
 
   async setRegistered(registered: boolean): Promise<CommandStatus> {
@@ -108,4 +117,27 @@ export class CommandIntegration {
     const binDir = dirname(this.linuxLauncher)
     return (process.env.PATH ?? '').split(delimiter).some((entry) => entry && resolve(entry) === binDir)
   }
+}
+
+/** The program the App Path of `cm` names; null without one. */
+async function windowsAppPath(): Promise<string | null> {
+  const reg = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'reg.exe')
+  try {
+    const { stdout } = await run(reg, ['query', APP_PATH_KEY, '/ve'], { windowsHide: true, timeout: 5000 })
+    return parseDefaultValue(stdout)
+  } catch {
+    return null
+  }
+}
+
+/** The default value in the output of `reg query … /ve`; its name, (Standard) or (Default), depends on the language. */
+export function parseDefaultValue(output: string): string | null {
+  const match = /^[ \t]+\S.*?[ \t]{2,}REG_(?:EXPAND_)?SZ[ \t]+(\S.*?)[ \t\r]*$/m.exec(output)
+  if (!match) return null
+  const value = match[1].replace(/^"(.*)"$/, '$1')
+  return value.replace(/%([^%]+)%/g, (whole, name: string) => process.env[name] ?? whole)
+}
+
+function sameWindowsPath(a: string, b: string): boolean {
+  return resolve(a).toLowerCase() === resolve(b).toLowerCase()
 }

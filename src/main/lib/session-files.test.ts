@@ -17,6 +17,7 @@ import {
   readRelocatedCwd,
   readSessionLimit,
   readSessionTitles,
+  readStartedAt,
   readTurnOutcome,
   scannedTitle,
   sessionFiles,
@@ -131,6 +132,19 @@ describe('findTranscript', () => {
     expect(await findTranscript(dir, SESSION, cwd)).toBe(file)
     expect(await findTranscript(dir, SESSION)).toBe(file)
     expect(await findTranscript(dir, SESSION, null)).toBe(file)
+  })
+
+  it('looks only where the name begins like the folder when not to search everywhere', async () => {
+    // No project folder yet: `claude --worktree` wrote only the worktree's.
+    const worktree = await transcript(projectKey(`${cwd}/.claude/worktrees/login-fix`))
+    expect(await findTranscript(dir, SESSION, cwd, false)).toBe(worktree)
+    await rm(worktree)
+    await transcript('-very-long-path-shortened-1a2b3c')
+    expect(await findTranscript(dir, SESSION, cwd, false)).toBeNull()
+    // A name Claude Code shortened keeps its start.
+    const long = `/home/dev/${'a'.repeat(120)}`
+    const shortened = await transcript(`${projectKey(long).slice(0, 110)}-1a2b3c`)
+    expect(await findTranscript(dir, SESSION, long, false)).toBe(shortened)
   })
 
   it('is null when nothing has been written yet', async () => {
@@ -450,6 +464,21 @@ describe('readTurnOutcome', () => {
     const file = join(dir, `${SESSION}.jsonl`)
     await writeFile(file, jsonl(user('Fix it', 0), assistant([toolUse('toolu_01', 'Bash', { command: 'ls' })], 1)))
     expect((await readTurnOutcome(file, T0)).waiting).toEqual({ tool: 'Bash', detail: 'ls' })
+  })
+})
+
+describe('readStartedAt', () => {
+  it('reads when the session started from its first entry with a time', async () => {
+    const file = join(dir, `${SESSION}.jsonl`)
+    await writeFile(file, jsonl({ type: 'summary', summary: 'Alt' }, user('Fix it', -60), user('Again', 0)))
+    expect(await readStartedAt(file)).toBe(T0 - 60_000)
+  })
+
+  it('takes when the file was made without a time in it', async () => {
+    const file = join(dir, `${SESSION}.jsonl`)
+    await writeFile(file, '{"type":"summary"}\n')
+    const { birthtimeMs, mtimeMs } = await stat(file)
+    expect(await readStartedAt(file)).toBe(birthtimeMs > 0 ? birthtimeMs : mtimeMs)
   })
 })
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { FolderOpenIcon, SparklesIcon } from '@lucide/vue'
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import AppLogo from '@/components/common/AppLogo.vue'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,8 @@ import { UPDATES_ROUTE } from '@/router'
 import { useAppStore } from '@/stores/app'
 
 const app = useAppStore()
+// Claude Code may have been installed or updated since the info was read.
+onMounted(() => void app.refreshInfo(true))
 const router = useRouter()
 
 const rows = computed(() => {

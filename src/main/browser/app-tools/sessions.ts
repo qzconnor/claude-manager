@@ -8,6 +8,8 @@ const MAX_SEARCH_RESULTS = 50
 const DEFAULT_SEARCH_RESULTS = 10
 const MAX_TRANSCRIPT_CHARS = 30_000
 const MAX_MESSAGE_CHARS = 4000
+/** What a command printed or a background task returned, per message. */
+const MAX_OUTPUT_CHARS = 1000
 const DEFAULT_READ_MESSAGES = 40
 const MAX_READ_MESSAGES = 200
 
@@ -127,8 +129,11 @@ export function formatTranscript(messages: TranscriptMessage[], offset: number, 
   let end = from
   for (let i = from; i < to; i++) {
     const m = messages[i]
-    const lines = [`[${i}] ${m.role}${m.timestamp ? ` · ${localTime(m.timestamp)}` : ''}`]
+    // Prompts and answers are the rule; commands, background tasks and summaries say what they are.
+    const kind = m.kind === 'prompt' || m.kind === 'answer' ? '' : ` (${m.kind})`
+    const lines = [`[${i}] ${m.role}${kind}${m.timestamp ? ` · ${localTime(m.timestamp)}` : ''}`]
     if (m.text.trim()) lines.push(cut(m.text.trim(), MAX_MESSAGE_CHARS))
+    if (m.output?.trim()) lines.push(`  ${m.failed ? 'failed, output' : 'output'}: ${cut(m.output.trim(), MAX_OUTPUT_CHARS)}`)
     for (const t of m.tools) lines.push(`  → ${t.name}: ${cut(t.summary.replace(/\s+/g, ' '), 200)}${t.status ? ` (${t.status})` : ''}`)
     const block = lines.join('\n')
     if (size + block.length > MAX_TRANSCRIPT_CHARS && blocks.length > 0) break

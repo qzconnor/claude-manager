@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { Account, AccountCreateInput, AccountUpdateInput } from '@shared/types'
+import type { Account, AccountCreateInput, AccountUpdateInput, LoginRenewResult } from '@shared/types'
 import { standardTwin as findStandardTwin } from '@shared/utils'
 
 export const useAccountsStore = defineStore('accounts', () => {
@@ -42,9 +42,14 @@ export const useAccountsStore = defineStore('accounts', () => {
     accounts.value = await window.api.accounts.refresh()
   }
 
+  /** "Jetzt erneuern": a new access token for the browser login; the list follows with the change event. */
+  function renewLogin(id: string): Promise<LoginRenewResult> {
+    return window.api.accounts.renewLogin(id)
+  }
+
   window.api.accounts.onChanged((next) => {
     accounts.value = next
   })
 
-  return { accounts, loaded, byId, standardTwin, get, load, create, update, remove, refresh }
+  return { accounts, loaded, byId, standardTwin, get, load, create, update, remove, refresh, renewLogin }
 })

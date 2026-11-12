@@ -2,9 +2,15 @@ import { appendFile, mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeF
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { readJson } from '../lib/json-file'
+import { readJson, writeJsonAtomic } from '../lib/json-file'
 import { SearchIndex, type SearchFile } from './search-index'
 import { SEARCH_USER } from './transcript-parser'
+
+// Writes for real, and counts how often.
+vi.mock('../lib/json-file', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../lib/json-file')>()
+  return { ...original, writeJsonAtomic: vi.fn(original.writeJsonAtomic) }
+})
 
 const PROJECT = '-home-dev-app'
 const A = '11111111-1111-4111-8111-111111111111'
@@ -190,6 +196,9 @@ describe('SearchIndex', () => {
   it('saves the index a few seconds after a change, with the entries of other folders', async () => {
     const elsewhere = join(dir, 'other-config', 'projects', PROJECT, `${A}.jsonl`)
     const kept = { size: 10, mtimeMs: 1, offset: 10, text: `${SEARCH_USER}elsewhere` }
+    // Another account's transcript, not searched here but still there.
+    await mkdir(join(dir, 'other-config', 'projects', PROJECT), { recursive: true })
+    await writeFile(elsewhere, '')
     await mkdir(join(dir, 'cache'))
     await writeFile(cacheFile, JSON.stringify({ version: 1, files: { [elsewhere]: kept } }))
     const index = new SearchIndex(cacheFile, listFiles)
@@ -211,5 +220,41 @@ describe('SearchIndex', () => {
       offset: (await stat(file(A))).size,
       text: `${SEARCH_USER}How do I size the database pool?\u0002Set the pool size in config.ts.`,
     })
+  })
+
+  it('drops the text of transcripts that are gone, also from folders it does not search', async () => {
+    // E.g. of an account removed together with its folder.
+    const gone = join(dir, 'removed-config', 'projects', PROJECT, `${A}.jsonl`)
+    await mkdir(join(dir, 'cache'))
+    await writeFile(cacheFile, JSON.stringify({ version: 1, files: { [gone]: { size: 10, mtimeMs: 1, offset: 10, text: `${SEARCH_USER}gone` } } }))
+    const index = new SearchIndex(cacheFile, listFiles)
+    await index.search(projects, 'pool', 10)
+
+    const saved = await vi.waitFor(async () => {
+      vi.advanceTimersByTime(5000)
+      const data = await readJson<{ files: Record<string, unknown> }>(cacheFile)
+      expect(data?.files[file(A)]).toBeDefined()
+      return data!
+    })
+    expect(Object.keys(saved.files).sort()).toEqual([file(A), file(B), file(C)].sort())
+  })
+
+  it('saves a folder that keeps changing once a minute', async () => {
+    const index = new SearchIndex(cacheFile, listFiles)
+    await index.search(projects, 'pool', 10)
+    vi.mocked(writeJsonAtomic).mockClear()
+    vi.advanceTimersByTime(5000)
+    expect(writeJsonAtomic).toHaveBeenCalledTimes(1)
+
+    // A session at work: its transcript grows, and it is searched again 20 s later.
+    await appendFile(file(A), jsonl(user('More about the pool')))
+    vi.advanceTimersByTime(20_000)
+    await index.search(projects, 'pool', 10)
+    vi.advanceTimersByTime(5000)
+    expect(writeJsonAtomic).toHaveBeenCalledTimes(1)
+    // A minute after the first save.
+    vi.advanceTimersByTime(35_000)
+    expect(writeJsonAtomic).toHaveBeenCalledTimes(2)
+    await vi.waitFor(async () => expect((await readJson<{ files: Record<string, { text: string }> }>(cacheFile))?.files[file(A)]?.text).toContain('More about'))
   })
 })

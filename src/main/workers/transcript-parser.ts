@@ -2,7 +2,9 @@
  * Parsing of Claude Code transcript files (`<configDir>/projects/<project>/<session>.jsonl`).
  * Pure functions — used by the indexer worker thread (`toolSummary` also by the main process).
  */
+import { posix, win32 } from 'node:path'
 import { folderKey, inFolder } from '@shared/folders'
+import { unwrapPasted } from '@shared/pasted'
 import type { SessionWorktree, TranscriptMessage, TranscriptToolCall, TranscriptToolDetail } from '@shared/types'
 
 export interface ParsedSummary {
@@ -21,12 +23,33 @@ export interface ParsedSummary {
   continuedIn: string | null
 }
 
-/** [key, localDay, model, input, output, cacheCreation, cacheRead] */
-export type UsageEntry = [string, string, string, number, number, number, number]
+/** The tokens of one request; `cacheCreation` counts all cache writes, `cacheCreation1h` those for an hour. */
+export type UsageEntry = [
+  key: string,
+  localDay: string,
+  model: string,
+  input: number,
+  output: number,
+  cacheCreation: number,
+  cacheRead: number,
+  cacheCreation1h: number,
+  /** 1 when Claude answered in fast mode. */
+  fast: 0 | 1,
+]
+
+/** A file the session changed with Claude's Edit or Write: its path and when it changed last. */
+export type EditedFile = [path: string, at: string]
 
 export interface ParseResult {
   summary: ParsedSummary
   usage: UsageEntry[]
+  /**
+   * The files of the file history, at the time Claude Code backed them up last: before a change, and
+   * again at the start of a later turn once someone else changed them.
+   */
+  files: EditedFile[]
+  /** The files of Claude's Edit, Write and NotebookEdit calls, at the time of the call. */
+  edits: EditedFile[]
 }
 
 const NEWLINE = 0x0a
@@ -41,6 +64,11 @@ const SKIP_PREFIXES = [
   '{"type":"queue-operation"',
   '{"type":"cost-state"',
 ].map((p) => Buffer.from(p, 'latin1'))
+/**
+ * What the summary skips: the same but the file history, where Claude Code notes the files a session
+ * changes (to rewind them). Its lines are few, each turn that changes files writes some.
+ */
+const SCAN_SKIP_PREFIXES = SKIP_PREFIXES.filter((p) => !p.equals(Buffer.from('{"type":"file-history', 'latin1')))
 
 function hasPrefix(buf: Buffer, start: number, end: number, prefix: Buffer): boolean {
   if (end - start < prefix.length) return false
@@ -48,7 +76,11 @@ function hasPrefix(buf: Buffer, start: number, end: number, prefix: Buffer): boo
 }
 
 /** Calls `onEntry` for every JSON line that isn't on the skip list. */
-export function forEachEntry(buf: Buffer, onEntry: (entry: Record<string, unknown>) => void): void {
+export function forEachEntry(
+  buf: Buffer,
+  onEntry: (entry: Record<string, unknown>) => void,
+  skip: readonly Buffer[] = SKIP_PREFIXES,
+): void {
   let start = 0
   const length = buf.length
   while (start < length) {
@@ -56,7 +88,7 @@ export function forEachEntry(buf: Buffer, onEntry: (entry: Record<string, unknow
     if (end === -1) end = length
     let lineEnd = end
     if (lineEnd > start && buf[lineEnd - 1] === 0x0d) lineEnd--
-    if (lineEnd - start > 1 && !SKIP_PREFIXES.some((p) => hasPrefix(buf, start, lineEnd, p))) {
+    if (lineEnd - start > 1 && !skip.some((p) => hasPrefix(buf, start, lineEnd, p))) {
       try {
         const entry = JSON.parse(buf.toString('utf8', start, lineEnd)) as unknown
         if (entry && typeof entry === 'object') onEntry(entry as Record<string, unknown>)
@@ -78,23 +110,36 @@ const NOISE_TAGS = [
   'bash-stdout',
   'bash-stderr',
   'user-memory-input',
+  // A background task reporting back: Claude Code sends it as a message of the user's.
+  'task-notification',
 ]
 const NOISE_RE = new RegExp(`<(${NOISE_TAGS.join('|')})>[\\s\\S]*?</\\1>`, 'g')
 
-/** Turns a raw user message into what the user actually typed (or the slash command). */
-export function cleanPrompt(raw: string): string {
-  const command = /<command-name>([\s\S]*?)<\/command-name>/.exec(raw)
-  if (command) {
-    const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(raw)
-    const name = command[1].trim()
-    return `${name.startsWith('/') ? name : `/${name}`}${args?.[1].trim() ? ` ${args[1].trim()}` : ''}`
-  }
-  const bash = /<bash-input>([\s\S]*?)<\/bash-input>/.exec(raw)
-  if (bash) return `! ${bash[1].trim()}`
-  return raw.replace(NOISE_RE, '').trim()
+/** The text between `<tag>` and `</tag>`; null without. */
+function tagText(raw: string, tag: string): string | null {
+  const match = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(raw)
+  return match ? match[1] : null
 }
 
-function textOf(content: unknown): string {
+/** A slash command as typed (`/review 123`); null when the message is none. */
+function commandOf(raw: string): string | null {
+  const name = tagText(raw, 'command-name')?.trim()
+  if (name === undefined) return null
+  const args = tagText(raw, 'command-args')?.trim()
+  return `${name.startsWith('/') ? name : `/${name}`}${args ? ` ${args}` : ''}`
+}
+
+/** Turns a raw user message into what the user actually typed (or the slash command). */
+export function cleanPrompt(raw: string): string {
+  const command = commandOf(raw)
+  if (command !== null) return command
+  const bash = tagText(raw, 'bash-input')
+  if (bash !== null) return `! ${bash.trim()}`
+  return unwrapPasted(raw.replace(NOISE_RE, '')).trim()
+}
+
+/** The text of a message: its text blocks, without images and tool results. */
+export function textOf(content: unknown): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
   const parts: string[] = []
@@ -169,6 +214,10 @@ export interface TranscriptScan {
   assistantIds: Set<string>
   usageKeys: Set<string>
   usage: UsageEntry[]
+  /** The files of the file history (`ParseResult.files`), by path. */
+  files: Map<string, string>
+  /** The files of Claude's calls that change files (`ParseResult.edits`), by path. */
+  edits: Map<string, string>
 }
 
 export function newTranscriptScan(withSummary: boolean): TranscriptScan {
@@ -193,12 +242,92 @@ export function newTranscriptScan(withSummary: boolean): TranscriptScan {
     assistantIds: new Set(),
     usageKeys: new Set(),
     usage: [],
+    files: new Map(),
+    edits: new Map(),
   }
+}
+
+/** At most this many files of a session are kept (a session that formats a whole repository). */
+const MAX_EDITED_FILES = 5000
+
+/**
+ * Where a file of the file history is: Claude Code notes the real folder it is in, and the path as it
+ * was given (relative to the session's folder, or absolute). An absolute one counts too, the folder may
+ * have been reached over a link; a relative one only without the real folder (older versions). Windows
+ * paths are joined as such also elsewhere (the tests).
+ */
+function trackedPaths(tracked: string, realParentDir: string | null, cwd: string | null): string[] {
+  const p = pathsOf(realParentDir ?? cwd ?? tracked)
+  const paths: string[] = []
+  if (realParentDir) paths.push(p.join(realParentDir, p.basename(tracked)))
+  if (p.isAbsolute(tracked)) paths.push(p.normalize(tracked))
+  else if (!realParentDir && cwd) paths.push(p.join(cwd, tracked))
+  return paths
+}
+
+/** Windows paths are joined as such also elsewhere (the tests). */
+function pathsOf(sample: string): typeof win32 {
+  return /^[a-zA-Z]:[\\/]|^\\\\|\\/.test(sample) ? win32 : posix
+}
+
+/** Notes that the session changed `path` at `at`, the latest time of each file, as many as `MAX_EDITED_FILES`. */
+function note(files: Map<string, string>, path: string, at: string): void {
+  const before = files.get(path)
+  if (before === undefined && files.size >= MAX_EDITED_FILES) return
+  if (before === undefined || at > before) files.set(path, at)
+}
+
+/** A file the session changed, from its backup in the file history (`backupTime`). */
+function noteFile(scan: TranscriptScan, tracked: string | null, backup: unknown): void {
+  if (!tracked || !backup || typeof backup !== 'object') return
+  const b = backup as Record<string, unknown>
+  const at = str(b.backupTime) ?? ''
+  for (const path of trackedPaths(tracked, str(b.realParentDir), scan.relocatedCwd ?? scan.cwd)) note(scan.files, path, at)
+}
+
+/** Claude's calls that change a file, with the input naming it. */
+const EDIT_TOOLS = new Map([
+  ['Edit', 'file_path'],
+  ['MultiEdit', 'file_path'],
+  ['Write', 'file_path'],
+  ['NotebookEdit', 'notebook_path'],
+])
+
+/** The files an answer of Claude changes; a relative path (Claude Code asks for absolute ones) from the folder it worked in. */
+function scanEdits(scan: TranscriptScan, e: Record<string, unknown>, content: unknown, at: string | null): void {
+  if (!at || !Array.isArray(content)) return
+  for (const block of content as unknown[]) {
+    if (!block || typeof block !== 'object') continue
+    const { type, name, input } = block as { type?: unknown; name?: unknown; input?: unknown }
+    const key = type === 'tool_use' && typeof name === 'string' ? EDIT_TOOLS.get(name) : undefined
+    const target = key && input && typeof input === 'object' ? str((input as Record<string, unknown>)[key]) : null
+    if (!target) continue
+    const cwd = str(e.cwd) ?? scan.relocatedCwd ?? scan.cwd
+    const p = pathsOf(cwd ?? target)
+    if (p.isAbsolute(target)) note(scan.edits, p.normalize(target), at)
+    else if (cwd) note(scan.edits, p.join(cwd, target), at)
+  }
+}
+
+/**
+ * The file history: a snapshot with the files backed up so far (not always all of them, it starts anew
+ * now and then), and since newer versions a line for each file backed up.
+ */
+function scanFileHistory(scan: TranscriptScan, e: Record<string, unknown>): void {
+  if (e.type === 'file-history-delta') return noteFile(scan, str(e.trackingPath), e.backup)
+  const backups = (e.snapshot as { trackedFileBackups?: unknown } | undefined)?.trackedFileBackups
+  if (!backups || typeof backups !== 'object') return
+  for (const [tracked, backup] of Object.entries(backups as Record<string, unknown>)) noteFile(scan, tracked, backup)
 }
 
 function scanEntry(scan: TranscriptScan, e: Record<string, unknown>): void {
   const { withSummary } = scan
   const type = e.type
+  // Its times are those of backups, not of the conversation.
+  if (type === 'file-history-snapshot' || type === 'file-history-delta') {
+    if (withSummary) scanFileHistory(scan, e)
+    return
+  }
   const timestamp = str(e.timestamp)
   if (timestamp) {
     if (!scan.createdAt) scan.createdAt = timestamp
@@ -245,10 +374,11 @@ function scanEntry(scan: TranscriptScan, e: Record<string, unknown>): void {
     }
     case 'assistant': {
       const message = e.message as
-        | { id?: unknown; model?: unknown; usage?: Record<string, unknown> }
+        | { id?: unknown; model?: unknown; content?: unknown; usage?: Record<string, unknown> }
         | undefined
       const messageId = str(message?.id)
       const messageModel = str(message?.model)
+      if (withSummary) scanEdits(scan, e, message?.content, timestamp)
       // `<synthetic>` replies come from Claude Code itself (API errors, "No response requested."); the
       // conversation view and the search leave them out, so the message count does too.
       if (withSummary && !e.isSidechain && messageId && messageModel !== '<synthetic>' && !scan.assistantIds.has(messageId)) {
@@ -270,6 +400,8 @@ function scanEntry(scan: TranscriptScan, e: Record<string, unknown>): void {
           num(u.output_tokens),
           num(u.cache_creation_input_tokens),
           num(u.cache_read_input_tokens),
+          num((u.cache_creation as Record<string, unknown> | undefined)?.ephemeral_1h_input_tokens),
+          u.speed === 'fast' ? 1 : 0,
         ])
       }
       break
@@ -283,7 +415,7 @@ function scanEntry(scan: TranscriptScan, e: Record<string, unknown>): void {
  */
 export function scanTranscript(scan: TranscriptScan, buf: Buffer): number {
   const end = buf.lastIndexOf(NEWLINE) + 1
-  forEachEntry(buf.subarray(0, end), (e) => scanEntry(scan, e))
+  forEachEntry(buf.subarray(0, end), (e) => scanEntry(scan, e), SCAN_SKIP_PREFIXES)
   return end
 }
 
@@ -318,13 +450,15 @@ export function scanResult(scan: TranscriptScan, sessionId: string): ParseResult
       continuedIn: scan.continuedIn,
     },
     usage: [...scan.usage],
+    files: [...scan.files],
+    edits: [...scan.edits],
   }
 }
 
 /** The whole transcript at once, a last line without its newline included. */
 export function parseTranscript(buf: Buffer, sessionId: string, withSummary: boolean): ParseResult {
   const scan = newTranscriptScan(withSummary)
-  forEachEntry(buf, (e) => scanEntry(scan, e))
+  forEachEntry(buf, (e) => scanEntry(scan, e), SCAN_SKIP_PREFIXES)
   return scanResult(scan, sessionId)
 }
 
@@ -393,13 +527,120 @@ export function toolSummary(name: string, input: unknown): string {
   }
 }
 
-/** Builds a readable conversation (user prompts, assistant text, tool calls). */
-export function readConversation(buf: Buffer, maxMessages: number): { messages: TranscriptMessage[]; truncated: boolean } {
+/** Tools that run a command in a shell: the window shows it as code. */
+const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
+/** Longest command sent along with the call; longer ones are complete in `readToolCall`. */
+const MAX_COMMAND_CHARS = 4000
+
+/** A little more about a tool call than its summary, in a few words: lines, where it searched, how many. */
+export function toolDetail(name: string, input: unknown): string | null {
+  if (!input || typeof input !== 'object') return null
+  const i = input as Record<string, unknown>
+  const count = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : null)
+  switch (name) {
+    case 'Read': {
+      const pages = str(i.pages)
+      if (pages) return `Seiten ${pages}`
+      const offset = count(i.offset)
+      const limit = count(i.limit)
+      if (offset && limit) return `Zeilen ${offset}–${offset + limit - 1}`
+      if (offset) return `ab Zeile ${offset}`
+      return limit ? `Zeilen 1–${limit}` : null
+    }
+    case 'Grep':
+    case 'Glob': {
+      const where = [str(i.path), str(i.glob) ?? str(i.type)].filter(Boolean)
+      return where.length ? `in ${where.join(' · ')}` : null
+    }
+    case 'Edit':
+      return i.replace_all === true ? 'alle Stellen' : null
+    case 'MultiEdit':
+      return Array.isArray(i.edits) ? `${i.edits.length} ${i.edits.length === 1 ? 'Änderung' : 'Änderungen'}` : null
+    case 'Agent':
+    case 'Task':
+      return str(i.subagent_type)
+    case 'TodoWrite':
+      return Array.isArray(i.todos) ? `${i.todos.length} ${i.todos.length === 1 ? 'Aufgabe' : 'Aufgaben'}` : null
+    default:
+      return null
+  }
+}
+
+/** A tool call of the history from its `tool_use` block, without its outcome yet. */
+export function toolCallOf(id: string | null, name: string, input: unknown): TranscriptToolCall {
+  const i = input && typeof input === 'object' ? (input as Record<string, unknown>) : {}
+  const command = SHELL_TOOLS.has(name) ? str(i.command) : null
+  return {
+    id,
+    name,
+    summary: toolSummary(name, input),
+    detail: toolDetail(name, input),
+    description: str(i.description) ? shorten(i.description as string, 300) : null,
+    command: command && command.length > MAX_COMMAND_CHARS ? `${command.slice(0, MAX_COMMAND_CHARS)}…` : command,
+    status: null,
+  }
+}
+
+/** Colours and other escape sequences of the terminal, which commands like `/context` print. */
+// eslint-disable-next-line no-control-regex -- the escape character is what is searched for
+const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]/g
+
+/** What a command printed, from the tags of its output; null when it printed nothing. */
+function commandOutput(raw: string, out: string, err: string): { output: string | null; failed: boolean } | null {
+  const stdout = tagText(raw, out)
+  const stderr = tagText(raw, err)
+  if (stdout === null && stderr === null) return null
+  const clean = (text: string | null) => {
+    const plain = (text ?? '').replace(ANSI_RE, '').replace(/\s+$/, '')
+    return plain.trim() === '(no content)' ? '' : plain
+  }
+  const parts = [clean(stdout), clean(stderr)].filter(Boolean)
+  return { output: parts.length ? parts.join('\n') : null, failed: clean(stderr).trim() !== '' }
+}
+
+/** A background task reporting back: its summary, result and whether it went wrong. */
+function taskNotice(raw: string): { text: string; output: string | null; failed: boolean } | null {
+  const notice = tagText(raw, 'task-notification')
+  if (notice === null) return null
+  const status = tagText(notice, 'status')?.trim() ?? ''
+  const result = tagText(notice, 'result')?.trim()
+  return {
+    text: tagText(notice, 'summary')?.trim() || 'Eine Hintergrundaufgabe hat sich gemeldet.',
+    output: result || null,
+    failed: status === 'failed' || status === 'killed',
+  }
+}
+
+/**
+ * Builds a readable conversation: the user's prompts, commands and what they printed, background tasks
+ * reporting back, Claude's answers with their tool calls, and where it was compacted.
+ */
+export function readConversation(buf: Buffer, maxMessages: number): { messages: TranscriptMessage[]; truncated: boolean; total: number } {
   const messages: TranscriptMessage[] = []
   const byMessageId = new Map<string, TranscriptMessage>()
   const calls: TranscriptToolCall[] = []
   /** tool_use id → the result was an error */
   const results = new Map<string, boolean>()
+  /** The last entry if it is a command whose output may follow (as an entry of its own). */
+  let awaiting: TranscriptMessage | null = null
+
+  const push = (message: Omit<TranscriptMessage, 'output' | 'failed' | 'tools' | 'model'> & Partial<TranscriptMessage>) => {
+    const full: TranscriptMessage = { output: null, failed: false, tools: [], model: null, ...message }
+    messages.push(full)
+    awaiting = full.kind === 'command' || full.kind === 'shell' ? full : null
+    return full
+  }
+  /** Output of the command before, from an entry of its own; false when there is no such output. */
+  const outputOf = (raw: string): boolean => {
+    const printed = commandOutput(raw, 'local-command-stdout', 'local-command-stderr') ?? commandOutput(raw, 'bash-stdout', 'bash-stderr')
+    if (!printed) return false
+    const command = awaiting
+    if (command && command.output === null) {
+      command.output = printed.output
+      command.failed = printed.failed
+    }
+    return true
+  }
 
   forEachEntry(buf, (e) => {
     if (e.isSidechain || e.isMeta) return
@@ -412,9 +653,31 @@ export function readConversation(buf: Buffer, maxMessages: number): { messages: 
         const b = block as { type?: unknown; tool_use_id?: unknown; is_error?: unknown } | null
         if (b?.type === 'tool_result' && typeof b.tool_use_id === 'string') results.set(b.tool_use_id, b.is_error === true)
       }
-      const text = cleanPrompt(textOf(message?.content))
-      if (!text) return
-      messages.push({ uuid, role: 'user', timestamp, text, tools: [], model: null })
+      const raw = textOf(message?.content)
+      if (e.isCompactSummary) {
+        const text = raw.replace(NOISE_RE, '').trim()
+        if (text) push({ uuid, role: 'user', kind: 'summary', timestamp, text })
+        return
+      }
+      const command = commandOf(raw)
+      if (command !== null) {
+        push({ uuid, role: 'user', kind: 'command', timestamp, text: command })
+        return
+      }
+      const bash = tagText(raw, 'bash-input')
+      if (bash !== null) {
+        push({ uuid, role: 'user', kind: 'shell', timestamp, text: bash.trim() })
+        return
+      }
+      if (outputOf(raw)) return
+      const task = taskNotice(raw)
+      if (task) {
+        push({ uuid, role: 'user', kind: 'task', timestamp, ...task })
+        return
+      }
+      // Pasted text keeps its tags: the window shows it as a block of its own.
+      const text = raw.replace(NOISE_RE, '').trim()
+      if (text) push({ uuid, role: 'user', kind: 'prompt', timestamp, text })
       return
     }
     if (e.type === 'assistant') {
@@ -424,9 +687,8 @@ export function readConversation(buf: Buffer, maxMessages: number): { messages: 
       if (model === '<synthetic>') return
       let target = byMessageId.get(messageId)
       if (!target) {
-        target = { uuid, role: 'assistant', timestamp, text: '', tools: [], model }
+        target = push({ uuid, role: 'assistant', kind: 'answer', timestamp, text: '', model })
         byMessageId.set(messageId, target)
-        messages.push(target)
       }
       const blocks = Array.isArray(message?.content) ? message.content : []
       for (const block of blocks) {
@@ -435,16 +697,22 @@ export function readConversation(buf: Buffer, maxMessages: number): { messages: 
         if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
           target.text = target.text ? `${target.text}\n\n${b.text}` : b.text
         } else if (b.type === 'tool_use') {
-          const name = str(b.name) ?? 'Tool'
-          const call: TranscriptToolCall = { id: str(b.id), name, summary: toolSummary(name, b.input), status: null }
+          const call = toolCallOf(str(b.id), str(b.name) ?? 'Tool', b.input)
           target.tools.push(call)
           calls.push(call)
         }
       }
       return
     }
-    if (e.type === 'system' && typeof e.content === 'string' && e.subtype === 'compact_boundary') {
-      messages.push({ uuid, role: 'system', timestamp, text: 'Konversation wurde komprimiert (/compact).', tools: [], model: null })
+    if (e.type === 'system' && typeof e.content === 'string') {
+      if (e.subtype === 'compact_boundary') {
+        push({ uuid, role: 'system', kind: 'compact', timestamp, text: 'Konversation wurde komprimiert (/compact).' })
+      } else if (e.subtype === 'local_command') {
+        // Newer versions of Claude Code write commands and what they printed as entries of this kind.
+        const command = commandOf(e.content)
+        if (command !== null) push({ uuid, role: 'user', kind: 'command', timestamp, text: command })
+        else outputOf(e.content)
+      }
     }
   })
 
@@ -455,7 +723,7 @@ export function readConversation(buf: Buffer, maxMessages: number): { messages: 
 
   const visible = messages.filter((m) => m.text || m.tools.length)
   const truncated = visible.length > maxMessages
-  return { messages: truncated ? visible.slice(-maxMessages) : visible, truncated }
+  return { messages: truncated ? visible.slice(-maxMessages) : visible, truncated, total: visible.length }
 }
 
 /** Longest text per value that is sent to the window (a Read result can be a whole file). */

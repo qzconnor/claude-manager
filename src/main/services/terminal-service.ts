@@ -7,34 +7,48 @@ import type * as Pty from 'node-pty'
 import { BLANK_PAGE, fallbackTitle, isBrowsableUrl } from '@shared/browser'
 import { folderKey, inFolder } from '@shared/folders'
 import { applyOrder } from '@shared/order'
-import { dropPanes, hasPane, isSplit, ownerOf, paneIds, removePanes, replacePane, splitPane } from '@shared/panes'
+import { canInsertPane, dropPanes, hasPane, isSplit, ownerOf, paneIds, removePanes, replacePane, splitPane } from '@shared/panes'
 import type {
   AttentionKind,
   BrowserOpenOptions,
   BrowserPage,
   CloseOnExit,
+  LimitResume,
   PaneNode,
   PaneSplit,
   PastedImage,
   SessionLimit,
   SessionWorktree,
   SplitDirection,
+  TerminalAttach,
   TerminalCreateOptions,
   TerminalInfo,
+  TerminalSleep,
 } from '@shared/types'
 import { withdrawBootEntries, withdrawBootEntriesSync, type EndedLaunch } from '../lib/boot-canary'
 import { colorFgBg, colorSchemeReport, ColorSchemeUpdates } from '../lib/color-scheme'
-import { applyHookCall, newHookState, type HookCall, type HookState, type HookTurnEnd } from '../lib/hook-events'
+import {
+  applyHookCall,
+  idleHookState,
+  interruptedHookState,
+  newHookState,
+  type HookCall,
+  type HookState,
+  type HookTurnEnd,
+} from '../lib/hook-events'
+import { KeptImages, type KeptImage } from '../lib/kept-images'
 import { choosePastedImage, newPastedImageScan, readPastedImage, scanPastedImages, type PastedImageScan } from '../lib/pasted-images'
 import { fallbackSessionFolder } from '../lib/session-folder'
 import { readCompactLimit } from '../lib/auto-compact'
 import {
   findTranscript,
   isWorktreeOf,
+  liveSessionIds,
   newTitleScan,
   readContextUsage,
   readLiveSession,
   readSessionLimit,
+  readStartedAt,
   readSessionTitles,
   readTurnOutcome,
   scannedTitle,
@@ -43,10 +57,13 @@ import {
   type TitleScan,
   worktreeAt,
 } from '../lib/session-files'
+import { oneLine, plainText } from '../lib/plain-text'
+import { awaitEnd, forceKill } from '../lib/process-end'
+import { TrimmedModes } from '../lib/terminal-modes'
 import { claudeActivity, TitleReader } from '../lib/terminal-title'
 import { TypedEmitter } from '../lib/typed-emitter'
 import type { AccountService } from './account-service'
-import { displayCommand, type ClaudeCli } from './claude-cli'
+import { displayCommand, type ClaudeCli, type ResolvedCommand } from './claude-cli'
 import type { SessionNames } from './session-names'
 import type { SettingsService } from './settings-service'
 import type { WorkspaceTrust } from './workspace-trust'
@@ -57,6 +74,8 @@ const MAX_BUFFER_CHARS = 2_000_000
 const FLUSH_INTERVAL_MS = 6
 /** How often running sessions are checked for their current session id and a usage limit. */
 const TRACK_INTERVAL_MS = 2000
+/** A tab whose transcript isn't where its folders say looks for it in all projects at most this often. */
+const SEARCH_EVERYWHERE_MS = 30_000
 /**
  * After Claude Code's title says the turn ended, the transcript tells why. Claude Code buffers its
  * own entries (answer, tool calls) for about 3 s, so it is read again until the end is clear.
@@ -76,8 +95,8 @@ const TURN_END_TIMEOUT_MS = 8000
 const HOOK_END_GRACE_MS = 1500
 /** Changes the hooks report while Claude works (one tool after the other) go out together. */
 const HOOK_CHANGES_MS = 100
-/** The most pasted images a tab keeps before they are sent. */
-const MAX_KEPT_IMAGES = 20
+/** How much of the end of a turn a tab keeps (`TerminalInfo.turn`). */
+const MAX_TURN_DETAIL_CHARS = 400
 /** Arguments with which Claude Code picks the session itself. */
 const SESSION_CHOICE_ARG_RE = /^(-c|--continue|-r|--resume|--session-id|--from-pr|--teleport)(=|$)/
 
@@ -133,6 +152,10 @@ interface TerminalRecord {
   transcript: TrackedTranscript | null
   chunks: string[]
   size: number
+  /** The terminal modes in output dropped from `chunks`. */
+  trimmed: TrimmedModes
+  /** The pseudo terminal's size: the output was last written for it. */
+  ptySize: { cols: number; rows: number }
   /** Total number of characters emitted so far (never decreases, also counts trimmed output). */
   emitted: number
   pending: string
@@ -154,14 +177,18 @@ interface TerminalRecord {
   hooks: HookState | null
   /** The sessions the process had, oldest first: `/clear` starts another one in it. */
   sessionIds: string[]
+  /** Since when (ms) the tab knows its current session: one `/clear` starts is written after that. */
+  sessionSince: number
   /** The folder Claude Code last named for the session in `sessions/<pid>.json`; null until it did. */
   liveCwd: string | null
   /** The folders the tab's session worked in, the current one first: `/cd` moves it to another one. */
   folders: string[]
   /** The transcripts of these sessions with their pasted images read so far, by session. */
   pastedImages: Map<string, PastedImageTranscript>
-  /** Images the user pasted that weren't sent yet, by number: copies of the clipboard (data URLs). */
-  keptImages: Map<number, string>
+  /** When (ms) a transcript of the tab was last looked for in all projects (see `findTabTranscript`). */
+  searchedEverywhereAt: number
+  /** Claude's answer at the end of the last turn that was done, with the session it belongs to. */
+  answer: { sessionId: string | null; text: string } | null
 }
 
 interface PastedImageTranscript {
@@ -191,8 +218,31 @@ type Events = {
   turnEnded: [id: string, turn: TurnEnd]
 }
 
+/** Whether the environment for a session holds a token or API key of the app. */
+/** A tab of the last run that waits to be shown before it starts (see `TerminalService.sleep`). */
+export interface SleepingTerminal {
+  accountId: string
+  authAccountId: string
+  cwd: string
+  mode: 'session' | 'shell'
+  /** The session it goes on with once it starts, if Claude Code wrote it. */
+  sessionId: string | null
+  /** With `fixedTitle` the tab's name, otherwise the title it showed (its session's); null for the default. */
+  title: string | null
+  fixedTitle: boolean
+  muted: boolean
+  args: string[]
+  restoredFrom: string | null
+}
+
+export function hasSecret(set: Record<string, string>): boolean {
+  return 'CLAUDE_CODE_OAUTH_TOKEN' in set || 'ANTHROPIC_API_KEY' in set
+}
+
 export class TerminalService extends TypedEmitter<Events> {
   private readonly terminals = new Map<string, TerminalRecord>()
+  /** Pasted images of all tabs, until they are sent. */
+  private readonly keptImages = new KeptImages()
   /** Tabs with more than one terminal; every other terminal has a tab of its own. */
   private splits: PaneSplit[] = []
   private readonly trackTimer: NodeJS.Timeout
@@ -248,11 +298,50 @@ export class TerminalService extends TypedEmitter<Events> {
   /**
    * Like `create`, but Claude Code only starts in a folder it trusts: the app asks first, instead of
    * Claude Code in the terminal. Null when the user said no.
+   *
+   * Two processes must never write to the same transcript: a session that runs in a tab already is
+   * that tab (returned as it is), one a Claude Code elsewhere has open goes on only after asking.
    */
   async open(options: TerminalCreateOptions): Promise<TerminalInfo | null> {
     if ((options.mode ?? 'session') !== 'session') return this.create(options)
+    const resumed = options.forkSession ? null : options.resumeSessionId
+    if (resumed) {
+      const running = this.runningSession(options.accountId, resumed)
+      if (running) return running
+      if (!(await this.mayResumeElsewhereOpen(options.accountId, resumed))) return null
+    }
     const cwd = await this.trustedCwd(options.accountId, options.cwd)
     return cwd === null ? null : this.create({ ...options, cwd })
+  }
+
+  /**
+   * The tab in which the session of the account runs right now, else one that waits to go on with it
+   * (`sleep`): opening the session again would have two processes write to it.
+   */
+  runningSession(accountId: string, sessionId: string): TerminalInfo | null {
+    let asleep: TerminalInfo | null = null
+    for (const { info } of this.terminals.values()) {
+      if (info.mode !== 'session' || info.accountId !== accountId || info.sessionId !== sessionId) continue
+      if (info.status === 'running') return { ...info }
+      if (info.status === 'asleep') asleep ??= { ...info }
+    }
+    return asleep
+  }
+
+  /** True when no Claude Code has the session open, or the user wants to go on anyway. */
+  private async mayResumeElsewhereOpen(accountId: string, sessionId: string): Promise<boolean> {
+    const live = await liveSessionIds(this.accounts.paths(accountId).sessionsDir)
+    if (!live.has(sessionId)) return true
+    const answer = await this.trust.ask({
+      title: 'Diese Session ist schon offen',
+      description:
+        'Ein Claude Code außerhalb dieser Tabs arbeitet gerade in ihr. Laufen beide weiter, schreiben sie durcheinander in denselben Verlauf. ' +
+        'Beende sie dort zuerst, oder öffne einen Fork. Fortsetzen nur, wenn sie dort sicher nicht mehr läuft.',
+      confirmText: 'Trotzdem fortsetzen',
+      cancelText: 'Abbrechen',
+      warning: true,
+    })
+    return answer === true
   }
 
   /** The folder a session of the account starts in, once it is trusted (see `open`). */
@@ -264,6 +353,82 @@ export class TerminalService extends TypedEmitter<Events> {
 
   /** Starts right away; a folder Claude Code doesn't trust yet gets its question in the terminal. */
   create(options: TerminalCreateOptions): TerminalInfo {
+    return this.start(options, randomUUID())
+  }
+
+  /**
+   * A tab of the last run that waits without a process until it is shown (see `wake`). Until then it
+   * keeps its place, title and session like any other tab, and the next start opens it again as it is.
+   */
+  sleep(options: SleepingTerminal): TerminalInfo {
+    const account = this.accounts.get(options.accountId)
+    const auth = this.accounts.get(options.authAccountId)
+    const defaultTitle = defaultTerminalTitle(options.mode, auth.name, options.cwd)
+    const title = options.title?.replace(/\s+/g, ' ').trim().slice(0, 120) || null
+    const fixedTitle = options.fixedTitle && title !== null
+    const autoTitle = (!options.fixedTitle && title) || defaultTitle
+    const info: TerminalInfo = {
+      id: randomUUID(),
+      accountId: account.id,
+      authAccountId: auth.id,
+      sessionId: options.sessionId,
+      limit: null,
+      resume: null,
+      context: null,
+      busy: false,
+      attention: null,
+      muted: options.muted,
+      title: fixedTitle ? title! : autoTitle,
+      fixedTitle,
+      autoTitle,
+      cwd: options.cwd,
+      mode: options.mode,
+      url: null,
+      resumeSessionId: options.sessionId,
+      args: [...options.args],
+      restoredFrom: options.restoredFrom,
+      status: 'asleep',
+      sleep: { waking: false, error: null },
+      exitCode: null,
+      pid: 0,
+      createdAt: new Date().toISOString(),
+      commandLine: '',
+      worktree: null,
+      hooks: false,
+      activity: null,
+      subagents: 0,
+      compacting: false,
+      turn: null,
+      prompt: null,
+    }
+    const record = newRecord(info, defaultTitle, null, Promise.resolve())
+    this.shareName(record)
+    this.add(record, {})
+    this.emitChanged()
+    return { ...info }
+  }
+
+  /**
+   * Starts a tab that waits (see `sleep`) in its place: it keeps its id, and so its place in the tab
+   * order, its group and its split. Throws when it doesn't start; it then goes on waiting.
+   */
+  wake(id: string, options: TerminalCreateOptions): TerminalInfo {
+    const { info } = this.require(id)
+    if (info.status !== 'asleep') throw new Error('Der Tab läuft schon.')
+    // Its session's title until the transcript tells it again.
+    return this.start({ ...options, split: null, replaces: null }, id, info.fixedTitle ? null : info.autoTitle)
+  }
+
+  /** Whether a tab that waits (see `sleep`) is starting, and why it didn't the last time. */
+  setSleep(id: string, sleep: TerminalSleep): void {
+    const record = this.terminals.get(id)
+    if (record?.info.status !== 'asleep' || sameSleep(record.info.sleep, sleep)) return
+    record.info.sleep = { ...sleep }
+    this.emitChanged()
+  }
+
+  /** `autoTitle`: the title it shows until its session's is known; the default otherwise. */
+  private start(options: TerminalCreateOptions, id: string, autoTitle: string | null = null): TerminalInfo {
     const account = this.accounts.get(options.accountId)
     const auth = options.authAccountId ? this.accounts.get(options.authAccountId) : account
     const settings = this.settings.get()
@@ -271,61 +436,65 @@ export class TerminalService extends TypedEmitter<Events> {
 
     const cwd = this.resolveCwd(options.cwd ?? account.defaultCwd ?? settings.claude.defaultCwd)
 
-    const id = randomUUID()
     const args: string[] = []
     let providers: SessionArgsProvider[] = []
     let sessionId: string | null = null
-    if (mode === 'login') {
-      args.push('auth', 'login')
-      // Imported accounts know who should log in: the login page starts with that email.
-      const email = account.expectedLogin?.email
-      if (email && this.cli.loginTakesEmail()) args.push('--email', email)
-    } else {
-      const extra = [...settings.claude.defaultArgs, ...auth.extraArgs, ...(options.args ?? [])]
-      if (options.resumeSessionId) {
-        if (!SESSION_ID_RE.test(options.resumeSessionId)) throw new Error('Ungültige Session-ID.')
-        args.push('--resume', options.resumeSessionId)
-        if (options.forkSession) args.push('--fork-session')
-        else sessionId = options.resumeSessionId
-      } else if (mode === 'session' && !extra.some((arg) => SESSION_CHOICE_ARG_RE.test(arg))) {
-        // Name the session up front so the tab knows it before Claude Code reports it.
-        sessionId = randomUUID()
-        args.push('--session-id', sessionId)
-      }
-      if (mode === 'session') {
-        providers = [...this.sessionArgs]
-        for (const provider of providers) args.push(...provider.args(id, extra, cwd))
-      }
-      // Before the extra args: an option there that takes several values would swallow it.
-      const prompt = options.prompt?.trim()
-      if (prompt && mode === 'session') args.push(prompt)
-      const last = providers.flatMap((provider) => provider.lastArgs?.(id, extra, cwd) ?? [])
-      const end = extra.indexOf('--')
-      args.push(...(end === -1 ? [...extra, ...last] : [...extra.slice(0, end), ...last, ...extra.slice(end)]))
-    }
-
-    const env = this.cli.baseEnv()
-    const accountEnv = this.accounts.launchEnv(account.id, auth.id)
-    for (const key of accountEnv.unset) deleteEnv(env, key)
-    for (const [key, value] of Object.entries(accountEnv.set)) {
-      deleteEnv(env, key)
-      env[key] = value
-    }
-    // The theme the program starts with, for programs that can't ask the terminal (see setColorScheme).
-    if (this.dark !== null) {
-      deleteEnv(env, 'COLORFGBG')
-      env.COLORFGBG = colorFgBg(this.dark)
-    }
-
-    const command = mode === 'shell' ? shellCommand() : this.cli.command(args)
-    const cols = clampSize(options.cols, 120)
-    const rows = clampSize(options.rows, 32)
+    let command: ResolvedCommand
     let proc: Pty.IPty
+    // What the providers set up for the session (its token, its config files) goes again when it doesn't start.
     try {
+      if (mode === 'login') {
+        args.push('auth', 'login')
+        // Imported accounts know who should log in: the login page starts with that email.
+        const email = account.expectedLogin?.email
+        if (email && this.cli.loginTakesEmail()) args.push('--email', email)
+      } else {
+        const extra = [...settings.claude.defaultArgs, ...auth.extraArgs, ...(options.args ?? [])]
+        if (options.resumeSessionId) {
+          if (!SESSION_ID_RE.test(options.resumeSessionId)) throw new Error('Ungültige Session-ID.')
+          args.push('--resume', options.resumeSessionId)
+          if (options.forkSession) args.push('--fork-session')
+          else sessionId = options.resumeSessionId
+        } else if (mode === 'session' && !extra.some((arg) => SESSION_CHOICE_ARG_RE.test(arg))) {
+          // Name the session up front so the tab knows it before Claude Code reports it.
+          sessionId = randomUUID()
+          args.push('--session-id', sessionId)
+        }
+        if (mode === 'session') {
+          providers = [...this.sessionArgs]
+          for (const provider of providers) args.push(...provider.args(id, extra, cwd))
+        }
+        // Before the extra args: an option there that takes several values would swallow it.
+        const prompt = options.prompt?.trim()
+        if (prompt && mode === 'session') args.push(prompt)
+        const last = providers.flatMap((provider) => provider.lastArgs?.(id, extra, cwd) ?? [])
+        const end = extra.indexOf('--')
+        args.push(...(end === -1 ? [...extra, ...last] : [...extra.slice(0, end), ...last, ...extra.slice(end)]))
+      }
+
+      const env = this.cli.baseEnv()
+      const accountEnv = this.accounts.launchEnv(account.id, auth.id)
+      for (const key of accountEnv.unset) deleteEnv(env, key)
+      for (const [key, value] of Object.entries(accountEnv.set)) {
+        deleteEnv(env, key)
+        env[key] = value
+      }
+      // A token or API key in the environment reaches every command Claude runs; Claude Code can keep it out.
+      if (settings.claude.hideSecretsFromCommands && hasSecret(accountEnv.set)) {
+        deleteEnv(env, 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB')
+        env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = '1'
+      }
+      // The theme the program starts with, for programs that can't ask the terminal (see setColorScheme).
+      if (this.dark !== null) {
+        deleteEnv(env, 'COLORFGBG')
+        env.COLORFGBG = colorFgBg(this.dark)
+      }
+
+      command = mode === 'shell' ? shellCommand() : this.cli.command(args)
       proc = loadPty().spawn(command.file, command.args, {
         name: 'xterm-256color',
-        cols,
-        rows,
+        cols: clampSize(options.cols, 120),
+        rows: clampSize(options.rows, 32),
         cwd,
         env,
         useConpty: true,
@@ -340,24 +509,29 @@ export class TerminalService extends TypedEmitter<Events> {
 
     const defaultTitle = defaultTerminalTitle(mode, auth.name, cwd)
     const fixedTitle = options.title?.trim().slice(0, 120) || null
+    const shown = autoTitle ?? defaultTitle
     const info: TerminalInfo = {
       id,
       accountId: account.id,
       authAccountId: auth.id,
       sessionId,
       limit: null,
+      resume: null,
       context: null,
       busy: false,
       attention: null,
       muted: options.muted === true,
-      title: fixedTitle ?? defaultTitle,
+      title: fixedTitle ?? shown,
       fixedTitle: fixedTitle !== null,
-      autoTitle: defaultTitle,
+      autoTitle: shown,
       cwd,
       mode,
       url: null,
       resumeSessionId: options.resumeSessionId ?? null,
+      args: mode === 'shell' ? [] : [...(options.args ?? [])],
+      restoredFrom: options.restoredFrom ?? null,
       status: 'running',
+      sleep: null,
       exitCode: null,
       pid: proc.pid,
       createdAt: new Date().toISOString(),
@@ -367,6 +541,8 @@ export class TerminalService extends TypedEmitter<Events> {
       activity: null,
       subagents: 0,
       compacting: false,
+      turn: null,
+      prompt: null,
     }
     let markExited!: () => void
     const record = newRecord(info, defaultTitle, proc, new Promise((resolve) => (markExited = resolve)))
@@ -412,6 +588,7 @@ export class TerminalService extends TypedEmitter<Events> {
       authAccountId: '',
       sessionId: null,
       limit: null,
+      resume: null,
       context: null,
       busy: false,
       attention: null,
@@ -423,7 +600,10 @@ export class TerminalService extends TypedEmitter<Events> {
       mode: 'browser',
       url,
       resumeSessionId: null,
+      args: [],
+      restoredFrom: options.restoredFrom ?? null,
       status: 'running',
+      sleep: null,
       exitCode: null,
       pid: 0,
       createdAt: new Date().toISOString(),
@@ -433,6 +613,8 @@ export class TerminalService extends TypedEmitter<Events> {
       activity: null,
       subagents: 0,
       compacting: false,
+      turn: null,
+      prompt: null,
     }
     this.add(newRecord(info, defaultTitle, null, Promise.resolve()), options)
     this.emitChanged()
@@ -460,9 +642,11 @@ export class TerminalService extends TypedEmitter<Events> {
     if (!record?.process) return
     const c = clampSize(cols, 0)
     const r = clampSize(rows, 0)
-    if (c < 2 || r < 1) return
+    // A view replaying the output at the terminal's size reports that size back.
+    if (c < 2 || r < 1 || (c === record.ptySize.cols && r === record.ptySize.rows)) return
     try {
       record.process.resize(c, r)
+      record.ptySize = { cols: c, rows: r }
     } catch {
       // The process may have exited between the check and the call.
     }
@@ -479,14 +663,16 @@ export class TerminalService extends TypedEmitter<Events> {
     }
   }
 
-  /** Ends the process and waits until it is gone (at most `timeoutMs`). */
+  /**
+   * Ends the process and waits until it is gone. One that is still there after `timeoutMs` is killed
+   * hard, with what it started; throws when even that doesn't end it (see `awaitEnd`).
+   */
   async stop(id: string, timeoutMs = 5000): Promise<void> {
     const record = this.require(id)
     if (!record.process) return
+    const pid = record.process.pid
     this.kill(id)
-    let timer: NodeJS.Timeout | undefined
-    await Promise.race([record.exited, new Promise<void>((resolve) => (timer = setTimeout(resolve, timeoutMs)))])
-    clearTimeout(timer)
+    await awaitEnd(record.exited, () => forceKill(pid), timeoutMs)
   }
 
   /** Closes a terminal; the browsers that belong to a session (see `browsersOf`) go with it. */
@@ -499,6 +685,7 @@ export class TerminalService extends TypedEmitter<Events> {
       if (closing.flushTimer) clearTimeout(closing.flushTimer)
       this.kill(each)
       this.terminals.delete(each)
+      this.keptImages.forget(each)
     }
     this.splits = dropPanes(this.splits, new Set(ids))
     this.emitChanged()
@@ -591,16 +778,51 @@ export class TerminalService extends TypedEmitter<Events> {
    * reloaded) already answered the queries in it, such as device attributes or the background color.
    * The program got its replies or gave up waiting long ago; replies now would reach it as input.
    */
-  attach(id: string): { data: string; end: number; answered: boolean } {
+  attach(id: string): TerminalAttach {
     const record = this.require(id)
     const answered = record.viewed
     record.viewed = true
-    return { ...this.buffer(id), answered }
+    const { data, end } = this.buffer(id)
+    // The modes set in output that is no longer kept, such as bracketed paste or the mouse.
+    return { data: record.trimmed.prefix() + data, end, answered, ...record.ptySize }
+  }
+
+  /**
+   * Claude's last answer in the tab's session, as Markdown: the one the end of its last turn told, else
+   * (the session was resumed, the app started anew) the latest one of its transcript, once Claude is
+   * done. Null before the first answer, and while Claude works on a turn without one before it.
+   */
+  async lastAnswer(id: string): Promise<string | null> {
+    const record = this.terminals.get(id)
+    if (!record) return null
+    const { info } = record
+    if (record.answer && record.answer.sessionId === info.sessionId) return record.answer.text
+    // While Claude works the transcript ends in the turn that isn't done.
+    if (info.busy || !info.sessionId) return null
+    try {
+      const file =
+        record.transcript?.sessionId === info.sessionId
+          ? record.transcript.file
+          : await this.findTabTranscript(this.accounts.paths(info.accountId).projectsDir, record, info.sessionId)
+      return file ? (await readTurnOutcome(file, 0)).answer : null
+    } catch {
+      // The account is gone, the transcript is being rewritten.
+      return null
+    }
+  }
+
+  /** How the tab at a limit goes on by itself, as AutoSwitch decided (see `TerminalInfo.resume`). */
+  setResume(id: string, resume: LimitResume | null): void {
+    const record = this.terminals.get(id)
+    if (!record || JSON.stringify(record.info.resume) === JSON.stringify(resume)) return
+    record.info.resume = resume
+    // Told with the next changes: AutoSwitch decides while it hears of changes.
+    this.emitChangedSoon()
   }
 
   /** The numbers of the images pasted into the tab's sessions (`[Image #N]`): sent ones and those kept when pasted. */
   async pastedImageIds(id: string): Promise<number[]> {
-    const ids = new Set<number>(this.terminals.get(id)?.keptImages.keys())
+    const ids = new Set<number>(this.keptImages.ids(id))
     for (const { scan } of await this.pastedImageTranscripts(id)) for (const n of scan.images.keys()) ids.add(n)
     return [...ids].sort((a, b) => a - b)
   }
@@ -620,27 +842,21 @@ export class TerminalService extends TypedEmitter<Events> {
       const src = await read()
       if (src) {
         // Sent: the copy isn't needed any more.
-        record.keptImages.delete(n)
+        this.keptImages.delete(id, n)
         return { src, sent: true }
       }
     }
-    const kept = record.keptImages.get(n)
+    const kept = this.keptImages.get(id, n)
     if (kept) return { src: kept, sent: false }
     const src = found && found.at.time < since ? await read() : null
     return src ? { src, sent: true } : null
   }
 
-  /** Keeps image `n` the user just pasted into the tab's session (a data URL), until it is sent. */
-  keepPastedImage(id: string, n: number, src: string): boolean {
+  /** Keeps image `n` the user just pasted into the tab's session, until it is sent. */
+  keepPastedImage(id: string, n: number, image: KeptImage): boolean {
     const record = this.terminals.get(id)
     if (!record || record.info.mode !== 'session') return false
-    record.keptImages.delete(n)
-    record.keptImages.set(n, src)
-    // Pasted and never sent: the oldest go.
-    for (const old of record.keptImages.keys()) {
-      if (record.keptImages.size <= MAX_KEPT_IMAGES) break
-      record.keptImages.delete(old)
-    }
+    this.keptImages.keep(id, n, image)
     return true
   }
 
@@ -832,23 +1048,76 @@ export class TerminalService extends TypedEmitter<Events> {
   /**
    * The transcript of a session of the tab's process. It lies in the project folder of the folder
    * Claude Code works in (a worktree, or where `/cd` moved it); a session from before a `/clear` may
-   * still lie in a folder the tab worked in before.
+   * still lie in a folder the tab worked in before. Until the first prompt there is none: it is looked
+   * for every round, in all projects only every `SEARCH_EVERYWHERE_MS`.
    */
   private async findTabTranscript(projectsDir: string, record: TerminalRecord, sessionId: string): Promise<string | null> {
     const seen = new Set<string>()
     for (const folder of [record.liveCwd, ...record.folders]) {
       if (!folder || seen.has(folderKey(folder))) continue
       seen.add(folderKey(folder))
-      const file = await findTranscript(projectsDir, sessionId, folder)
+      const file = await findTranscript(projectsDir, sessionId, folder, false)
       if (file) return file
     }
-    return null
+    const now = Date.now()
+    if (now - record.searchedEverywhereAt < SEARCH_EVERYWHERE_MS) return null
+    record.searchedEverywhereAt = now
+    return findTranscript(projectsDir, sessionId)
   }
 
-  /** The tab's process works in another session now (`/clear`, `/resume`): with its name, if it has one. */
+  /**
+   * The tab's process works in another session now (`/clear`, `/resume`): with its name, if it has
+   * one. The tab's own name goes to a session `/clear` started, not to one `/resume` opened.
+   */
   private switchSession(record: TerminalRecord, sessionId: string): void {
+    const first = record.info.sessionId === null
+    const known = record.sessionIds.includes(sessionId)
+    const since = record.sessionSince
     followSession(record, sessionId)
-    this.shareName(record)
+    record.sessionSince = Date.now()
+    if (first) {
+      this.shareName(record)
+      return
+    }
+    const { info } = record
+    // Another conversation: the last one's prompt and end are not this one's.
+    info.prompt = null
+    info.turn = null
+    const name = this.names?.get(sessionId)
+    if (name === undefined) return
+    if (name !== null) {
+      info.fixedTitle = true
+      info.title = name
+      return
+    }
+    if (!info.fixedTitle) return
+    // It was in the tab before without a name: the name was removed, or it is one `/resume` opened.
+    if (known) followSessionTitle(info)
+    else void this.nameIfNew(record, sessionId, since)
+  }
+
+  /**
+   * Gives the tab's name to the session it switched to if `/clear` started it: its transcript isn't
+   * written yet, or began after the tab knew its previous session (`since`). A session `/resume`
+   * opened keeps its own (missing) name: the tab follows its title instead.
+   */
+  private async nameIfNew(record: TerminalRecord, sessionId: string, since: number): Promise<void> {
+    let startedAt: number | null
+    try {
+      const { projectsDir } = this.accounts.paths(record.info.accountId)
+      const file = (await this.findTabTranscript(projectsDir, record, sessionId)) ?? (await findTranscript(projectsDir, sessionId))
+      startedAt = file ? await readStartedAt(file) : null
+    } catch {
+      return
+    }
+    const { info } = record
+    if (!this.names || info.sessionId !== sessionId || !info.fixedTitle || this.names.get(sessionId) !== null) return
+    if (startedAt === null || startedAt >= since) {
+      this.names.set(sessionId, info.title)
+      return
+    }
+    followSessionTitle(info)
+    this.emitChanged()
   }
 
   /**
@@ -960,9 +1229,11 @@ export class TerminalService extends TypedEmitter<Events> {
       else record.busySince = Date.now()
       // A permission or question was answered (also through the API): it no longer waits.
       if (info.attention === 'input') info.attention = null
+      info.turn = null
     } else if (record.hooks?.ended) {
       // The hooks told already how the turn ended, or that it waits for the user.
       record.turnEnding = false
+      void this.settleIdle(record, run)
     } else {
       record.turnEnding = true
       void (record.hooks ? this.awaitHookEnd(record, run) : this.reportTurnEnd(record, run))
@@ -979,8 +1250,8 @@ export class TerminalService extends TypedEmitter<Events> {
     const record = this.terminals.get(id)
     if (!record || record.info.mode !== 'session' || record.info.status !== 'running') return
     const { info } = record
+    const wasEnded = record.hooks?.ended === true
     const { state, end } = applyHookCall(record.hooks ?? newHookState(), call, new Date().toISOString())
-    record.hooks = state
     // The turn starts with the prompt; a short one may end before the title ever shows it.
     if (call.event.kind === 'prompt' && !info.busy) record.busySince = Date.now()
     let changed = !info.hooks
@@ -991,19 +1262,36 @@ export class TerminalService extends TypedEmitter<Events> {
       // A new session (`/clear`): its title, worktree and limit.
       this.trackSoon()
     }
-    let soon = false
+    if (call.event.kind === 'prompt') {
+      info.prompt = call.event.prompt ?? null
+      changed = true
+    }
+    // The session goes on (a prompt, an answered permission): how the last turn ended is past.
+    if (info.turn && (call.event.kind === 'prompt' || (wasEnded && !state.ended))) {
+      info.turn = null
+      changed = true
+    }
+    const soon = this.showHookState(record, state)
+    if (end) this.endTurnByHook(record, end)
+    if (changed) this.emitChanged()
+    else if (soon) this.emitChangedSoon()
+  }
+
+  /** Takes the hooks' state in: what runs shows in the tab. True when the tab shows something else now. */
+  private showHookState(record: TerminalRecord, state: HookState): boolean {
+    record.hooks = state
+    const { info } = record
+    let changed = false
     if (JSON.stringify(state.activity) !== JSON.stringify(info.activity)) {
       info.activity = state.activity
-      soon = true
+      changed = true
     }
     if (state.subagents.length !== info.subagents || state.compacting !== info.compacting) {
       info.subagents = state.subagents.length
       info.compacting = state.compacting
-      soon = true
+      changed = true
     }
-    if (end) this.endTurnByHook(record, end)
-    if (changed) this.emitChanged()
-    else if (soon) this.emitChangedSoon()
+    return changed
   }
 
   /** Tells the end of the turn (or the wait for the user) a hook reported; a lookup still running stops. */
@@ -1013,7 +1301,7 @@ export class TerminalService extends TypedEmitter<Events> {
     const since = record.busySince
     const busyMs = since ? Date.now() - since : 0
     if (end.kind !== 'limit') {
-      this.emit('turnEnded', record.info.id, { ...end, busyMs })
+      this.finishTurn(record, { ...end, busyMs })
       return
     }
     // When the limit resets is only in the transcript, which Claude Code writes a little later.
@@ -1033,7 +1321,20 @@ export class TerminalService extends TypedEmitter<Events> {
       }
     }
     if (!current()) return
-    this.emit('turnEnded', record.info.id, { kind: 'limit', tool: null, detail: record.info.limit?.message ?? message, busyMs })
+    this.finishTurn(record, { kind: 'limit', tool: null, detail: record.info.limit?.message ?? message, busyMs })
+  }
+
+  /** Keeps how the turn ended in the tab (`TerminalInfo.turn`) and tells it: notifications, the unread dot. */
+  private finishTurn(record: TerminalRecord, end: TurnEnd): void {
+    if (end.kind === 'done' && end.detail) record.answer = { sessionId: record.info.sessionId, text: end.detail }
+    record.info.turn = {
+      kind: end.kind,
+      tool: end.tool,
+      detail: oneLine(end.kind === 'done' ? plainText(end.detail) : end.detail, MAX_TURN_DETAIL_CHARS),
+      at: new Date().toISOString(),
+    }
+    this.emitChanged()
+    this.emit('turnEnded', record.info.id, end)
   }
 
   /**
@@ -1042,15 +1343,19 @@ export class TerminalService extends TypedEmitter<Events> {
    */
   private async awaitHookEnd(record: TerminalRecord, run: number): Promise<void> {
     const idleAt = Date.now()
-    await delay(HOOK_END_GRACE_MS)
-    if (run !== record.turnEndRun) return
-    // Esc stops a running tool without telling (no PostToolUseFailure): nothing runs any more.
-    if (record.hooks?.activity) {
-      record.hooks = { ...record.hooks, activity: null }
-      record.info.activity = null
-      this.emitChanged()
-    }
+    if (!(await this.settleIdle(record, run))) return
     await this.reportTurnEnd(record, run, idleAt)
+  }
+
+  /**
+   * Once Claude Code stays idle, nothing runs that the hooks didn't end: Esc stops a tool or a
+   * compaction without telling (see `idleHookState`). False when it got busy again meanwhile.
+   */
+  private async settleIdle(record: TerminalRecord, run: number): Promise<boolean> {
+    await delay(HOOK_END_GRACE_MS)
+    if (run !== record.turnEndRun) return false
+    if (record.hooks && this.showHookState(record, idleHookState(record.hooks))) this.emitChanged()
+    return true
   }
 
   /** Tells once whether Claude Code is done, waits for the user or stopped at a limit. */
@@ -1071,8 +1376,9 @@ export class TerminalService extends TypedEmitter<Events> {
       if (turn === null && elapsed >= TURN_END_TIMEOUT_MS) turn = { kind: 'done', tool: null, detail: null }
       if (turn === null || !current()) continue
       record.turnEnding = false
-      // Stopped by the user (Esc, or a permission declined): they are at the tab already.
-      if (turn !== 'interrupted') this.emit('turnEnded', record.info.id, { ...turn, busyMs: since ? idleAt - since : 0 })
+      // Stopped by the user (Esc, or a permission declined): they are at the tab already. Its subagents stopped too.
+      if (turn !== 'interrupted') this.finishTurn(record, { ...turn, busyMs: since ? idleAt - since : 0 })
+      else if (record.hooks && this.showHookState(record, interruptedHookState(record.hooks))) this.emitChanged()
       return
     }
   }
@@ -1113,7 +1419,9 @@ export class TerminalService extends TypedEmitter<Events> {
     record.chunks.push(data)
     record.size += data.length
     while (record.size > MAX_BUFFER_CHARS && record.chunks.length > 1) {
-      record.size -= record.chunks.shift()!.length
+      const dropped = record.chunks.shift()!
+      record.size -= dropped.length
+      record.trimmed.trim(dropped)
     }
     this.emit('data', record.info.id, data, offset)
   }
@@ -1147,7 +1455,10 @@ export class TerminalService extends TypedEmitter<Events> {
     return true
   }
 
-  /** Takes a new terminal in: in the place of `replaces`, next to the one it splits, or as a tab at the end. */
+  /**
+   * Takes a new terminal in: in the place of `replaces`, next to the one it splits, or as a tab at the
+   * end. One with the id of a tab that waited takes its place (see `wake`).
+   */
   private add(record: TerminalRecord, options: Pick<TerminalCreateOptions, 'replaces' | 'split'>): void {
     const { id } = record.info
     this.terminals.set(id, record)
@@ -1165,12 +1476,16 @@ export class TerminalService extends TypedEmitter<Events> {
     this.splits = this.splits.map((split) => replacePane(split, oldId, id) as PaneSplit)
   }
 
-  /** The new terminal `id` takes half the part of `of`, in its tab, and follows it in the order. */
+  /**
+   * The new terminal `id` takes half the part of `of`, in its tab, and follows it in the order. A part
+   * split as often as a tab can be gets a tab of its own beside it instead.
+   */
   private addPane(of: string, id: string, direction: SplitDirection): void {
     const ids = [...this.terminals.keys()].filter((key) => key !== id)
     ids.splice(ids.indexOf(of) + 1, 0, id)
     this.applyOrder(ids)
     const index = this.splits.findIndex((split) => paneIds(split).includes(of))
+    if (index !== -1 && !canInsertPane(this.splits[index], of)) return
     if (index === -1) this.splits = [...this.splits, splitPane(of, of, id, direction) as PaneSplit]
     else this.splits = this.splits.map((split, i) => (i === index ? (splitPane(split, of, id, direction) as PaneSplit) : split))
   }
@@ -1249,6 +1564,8 @@ function newRecord(info: TerminalInfo, defaultTitle: string, process: Pty.IPty |
     transcript: null,
     chunks: [],
     size: 0,
+    trimmed: new TrimmedModes(),
+    ptySize: { cols: process?.cols ?? 80, rows: process?.rows ?? 24 },
     emitted: 0,
     pending: '',
     flushTimer: null,
@@ -1261,11 +1578,21 @@ function newRecord(info: TerminalInfo, defaultTitle: string, process: Pty.IPty |
     viewed: false,
     hooks: null,
     sessionIds: info.sessionId ? [info.sessionId] : [],
+    sessionSince: Date.now(),
     liveCwd: null,
     folders: info.cwd ? [info.cwd] : [],
     pastedImages: new Map(),
-    keptImages: new Map(),
+    searchedEverywhereAt: 0,
+    answer: null,
   }
+}
+
+const sameSleep = (a: TerminalSleep | null, b: TerminalSleep) => a?.waking === b.waking && a.error === b.error
+
+/** The tab drops its name and shows its session's title (it comes with the next round). */
+function followSessionTitle(info: TerminalInfo): void {
+  info.fixedTitle = false
+  info.title = info.autoTitle
 }
 
 /** The tab's session is now `sessionId`; the sessions the process had before stay known. */
