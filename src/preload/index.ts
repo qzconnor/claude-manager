@@ -79,6 +79,7 @@ const api: ManagerApi = {
     moveSession: (id, to) => invoke(IpcInvoke.terminalsMoveSession, id, to),
     setMuted: (id, muted) => invoke(IpcInvoke.terminalsSetMuted, id, muted),
     pastedImageIds: (id) => invoke(IpcInvoke.terminalsPastedImageIds, id),
+    lastAnswer: (id) => invoke(IpcInvoke.terminalsLastAnswer, id),
     pastedImage: (id, n) => invoke(IpcInvoke.terminalsPastedImage, id, n),
     keepPastedImage: (id, n) => invoke(IpcInvoke.terminalsKeepPastedImage, id, n),
     viewing: (ids) => ipcRenderer.send(IpcSend.terminalViewing, ids),

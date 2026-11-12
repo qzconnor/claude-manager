@@ -110,6 +110,7 @@ export const IpcInvoke = {
   terminalsArrange: 'terminals:arrange',
   terminalsOpenBrowser: 'terminals:open-browser',
   terminalsPastedImageIds: 'terminals:pasted-image-ids',
+  terminalsLastAnswer: 'terminals:last-answer',
   terminalsPastedImage: 'terminals:pasted-image',
   terminalsKeepPastedImage: 'terminals:keep-pasted-image',
   browserFavicon: 'browser:favicon',
@@ -399,6 +400,8 @@ export interface ManagerApi {
      * to the transcript with a prompt, and those the app kept when they were pasted.
      */
     pastedImageIds(id: string): Promise<number[]>
+    /** Claude's last answer in the tab's session, as Markdown; null before the first one. */
+    lastAnswer(id: string): Promise<string | null>
     /** Image `n` pasted into the tab's session; null when there is none. */
     pastedImage(id: string, n: number): Promise<PastedImage | null>
     /**

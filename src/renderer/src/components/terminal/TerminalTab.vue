@@ -5,6 +5,7 @@ import {
   BellOffIcon,
   CircleStopIcon,
   Columns2Icon,
+  CopyIcon,
   ExternalLinkIcon,
   FolderOpenIcon,
   GlobeIcon,
@@ -67,7 +68,7 @@ const emit = defineEmits<{ select: [id: string] }>()
 const accounts = useAccountsStore()
 const terminals = useTerminalsStore()
 const launcher = useLauncher()
-const { closeTerminal, closeTab, closeOtherTabs, stopTerminal, restartTerminal } = useTerminalActions()
+const { closeTerminal, closeTab, closeOtherTabs, stopTerminal, restartTerminal, copyLastAnswer } = useTerminalActions()
 const accountSwitch = useAccountSwitch()
 
 const browsers = useBrowsersStore()
@@ -441,6 +442,10 @@ function openFolder() {
         </ContextMenuGroup>
         <template v-if="terminal.mode === 'session'">
           <ContextMenuSeparator />
+          <ContextMenuItem @select="copyLastAnswer(terminal.id)">
+            <CopyIcon />
+            Letzte Antwort kopieren
+          </ContextMenuItem>
           <ContextMenuSub>
             <ContextMenuSubTrigger :disabled="!canSwitch">
               <ArrowRightLeftIcon />

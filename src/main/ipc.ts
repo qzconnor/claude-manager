@@ -323,6 +323,7 @@ export function registerIpc(ctx: AppContext): void {
     ctx.terminals.setMuted(requireString(id, 'id'), muted)
   })
   handle(IpcInvoke.terminalsPastedImageIds, (_e, id: unknown) => ctx.terminals.pastedImageIds(requireString(id, 'id')))
+  handle(IpcInvoke.terminalsLastAnswer, (_e, id: unknown) => ctx.terminals.lastAnswer(requireString(id, 'id')))
   handle(IpcInvoke.terminalsPastedImage, (_e, id: unknown, n: unknown) =>
     ctx.terminals.pastedImage(requireString(id, 'id'), requireImageNumber(n)),
   )

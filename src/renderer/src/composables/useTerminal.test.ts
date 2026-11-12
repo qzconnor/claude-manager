@@ -31,6 +31,7 @@ describe('toXtermTheme', () => {
     expect(theme.foreground).toBe(palette.foreground)
     expect(theme.red).toBe(palette.red)
     expect(theme.selectionBackground).toBe(palette.selectionBackground)
+    expect(theme.overviewRulerBorder).toBe('#00000000')
   })
 
   it('holds the opaque slot colors, mixed over the real background', () => {

@@ -6,6 +6,7 @@ import {
   BellRingIcon,
   CircleStopIcon,
   Columns2Icon,
+  CopyIcon,
   FilesIcon,
   FolderGit2Icon,
   FolderIcon,
@@ -75,7 +76,7 @@ const usage = useUsageStore()
 const settings = useSettingsStore()
 const launcher = useLauncher()
 const ui = useUiStore()
-const { closeGroup, closeTerminal, restartTerminal, stopTerminal } = useTerminalActions()
+const { closeGroup, closeTerminal, copyLastAnswer, restartTerminal, stopTerminal } = useTerminalActions()
 const accountSwitch = useAccountSwitch()
 const recent = useRecentFolders(8)
 const fileTree = useFileTreeToggle()
@@ -357,6 +358,15 @@ const closesBrowser = computed(
               Ordner des Tabs öffnen
             </CommandItem>
           </template>
+          <CommandItem
+            v-if="tab.mode === 'session'"
+            value="tab-copy-answer"
+            filter-text="Letzte Antwort kopieren Claude Antwort Markdown Zwischenablage"
+            @select="run(() => copyLastAnswer(tab!.id))"
+          >
+            <CopyIcon />
+            Letzte Antwort kopieren
+          </CommandItem>
           <CommandItem
             v-for="choice in switchChoices"
             :key="choice.account.id"

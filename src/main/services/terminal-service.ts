@@ -185,6 +185,8 @@ interface TerminalRecord {
   pastedImages: Map<string, PastedImageTranscript>
   /** When (ms) a transcript of the tab was last looked for in all projects (see `findTabTranscript`). */
   searchedEverywhereAt: number
+  /** Claude's answer at the end of the last turn that was done, with the session it belongs to. */
+  answer: { sessionId: string | null; text: string } | null
 }
 
 interface PastedImageTranscript {
@@ -681,6 +683,30 @@ export class TerminalService extends TypedEmitter<Events> {
     const { data, end } = this.buffer(id)
     // The modes set in output that is no longer kept, such as bracketed paste or the mouse.
     return { data: record.trimmed.prefix() + data, end, answered, ...record.ptySize }
+  }
+
+  /**
+   * Claude's last answer in the tab's session, as Markdown: the one the end of its last turn told, else
+   * (the session was resumed, the app started anew) the latest one of its transcript, once Claude is
+   * done. Null before the first answer, and while Claude works on a turn without one before it.
+   */
+  async lastAnswer(id: string): Promise<string | null> {
+    const record = this.terminals.get(id)
+    if (!record) return null
+    const { info } = record
+    if (record.answer && record.answer.sessionId === info.sessionId) return record.answer.text
+    // While Claude works the transcript ends in the turn that isn't done.
+    if (info.busy || !info.sessionId) return null
+    try {
+      const file =
+        record.transcript?.sessionId === info.sessionId
+          ? record.transcript.file
+          : await this.findTabTranscript(this.accounts.paths(info.accountId).projectsDir, record, info.sessionId)
+      return file ? (await readTurnOutcome(file, 0)).answer : null
+    } catch {
+      // The account is gone, the transcript is being rewritten.
+      return null
+    }
   }
 
   /** The numbers of the images pasted into the tab's sessions (`[Image #N]`): sent ones and those kept when pasted. */
@@ -1189,6 +1215,7 @@ export class TerminalService extends TypedEmitter<Events> {
 
   /** Keeps how the turn ended in the tab (`TerminalInfo.turn`) and tells it: notifications, the unread dot. */
   private finishTurn(record: TerminalRecord, end: TurnEnd): void {
+    if (end.kind === 'done' && end.detail) record.answer = { sessionId: record.info.sessionId, text: end.detail }
     record.info.turn = {
       kind: end.kind,
       tool: end.tool,
@@ -1442,6 +1469,7 @@ function newRecord(info: TerminalInfo, defaultTitle: string, process: Pty.IPty |
     folders: info.cwd ? [info.cwd] : [],
     pastedImages: new Map(),
     searchedEverywhereAt: 0,
+    answer: null,
   }
 }
 

@@ -702,6 +702,26 @@ describe('the end of a turn, told by hooks', () => {
     own.applyHook(id, { sessionId: '99999999-2222-4333-8444-555555555555', event: { kind: 'compact', running: false } })
     expect(own.get(id)).toMatchObject({ prompt: null, turn: null })
   })
+
+  it('keeps the answer of the last turn that was done, for „Letzte Antwort kopieren“', async () => {
+    const first = '11111111-2222-4333-8444-555555555555'
+    const answer = '## Fertig\n\nAlle **Tests** laufen.'
+    expect(await own.lastAnswer(id)).toBeNull()
+    own.applyHook(id, { sessionId: first, event: { kind: 'prompt' } })
+    own.applyHook(id, { sessionId: first, event: { kind: 'stop', message: answer, background: false } })
+    expect(await own.lastAnswer(id)).toBe(answer)
+    // The next turn waits for a permission, then works on: the answer before stays.
+    hook({ kind: 'prompt' })
+    hook({ kind: 'input', tool: 'Bash', detail: 'npm test' })
+    pty.output(BUSY)
+    expect(await own.lastAnswer(id)).toBe(answer)
+    stop('Zweite Antwort')
+    expect(await own.lastAnswer(id)).toBe('Zweite Antwort')
+    // After /clear it belongs to the conversation before.
+    own.applyHook(id, { sessionId: '99999999-2222-4333-8444-555555555555', event: { kind: 'prompt' } })
+    expect(await own.lastAnswer(id)).toBeNull()
+    expect(await own.lastAnswer('unbekannt')).toBeNull()
+  })
 })
 
 // Without hooks (or when they tell nothing) the transcript tells why the title turned idle.
@@ -771,6 +791,32 @@ describe('the end of a turn, read in the transcript', () => {
     await turnEnded()
     expect(ended).toHaveBeenCalledOnce()
     expect(ended).toHaveBeenCalledWith(id, { kind: 'done', tool: null, detail: 'Alle Tests laufen.', busyMs: 3000 })
+  })
+
+  it('reads the last answer of a resumed session in the transcript, once Claude is done', async () => {
+    await write(
+      prompt(0, 'Lass die Tests laufen'),
+      answer(1000, [
+        { type: 'text', text: 'Ich starte sie.' },
+        { type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'npm test' } },
+      ]),
+      {
+        type: 'user',
+        timestamp: at(1500),
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' }] },
+      },
+      answer(2000, [{ type: 'text', text: '## Ergebnis\n\nAlle Tests laufen.' }]),
+      { type: 'system', subtype: 'turn_duration', timestamp: at(2500) },
+    )
+    expect(await own.lastAnswer(id)).toBe('## Ergebnis\n\nAlle Tests laufen.')
+    // A new turn: until it is done its answer isn't the last one.
+    pty.output(BUSY)
+    const next = [prompt(3000, 'Und jetzt?'), answer(3500, [{ type: 'text', text: 'Ich schaue nach.' }])]
+    await writeFile(transcript, next.map((entry) => JSON.stringify(entry) + '\n').join(''), { flag: 'a' })
+    expect(await own.lastAnswer(id)).toBeNull()
+    await rm(transcript)
+    pty.output(IDLE)
+    expect(await own.lastAnswer(id)).toBeNull()
   })
 
   it('tells that Claude waits for the user once a tool call stayed without result for a while', async () => {

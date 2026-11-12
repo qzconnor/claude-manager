@@ -1,4 +1,5 @@
 import type { TerminalInfo } from '@shared/types'
+import { toast } from 'vue-sonner'
 import { attempt } from '@/lib/errors'
 import { BROWSER_TAB, diffOfTab, pageOfTab } from '@/lib/workspace'
 import { useSettingsStore } from '@/stores/settings'
@@ -109,5 +110,20 @@ export function useTerminalActions() {
     await attempt(() => terminals.restartSession(id), 'Neustart fehlgeschlagen')
   }
 
-  return { closeTerminal, closeTab, closeOtherTabs, closeTabs, closeGroup, stopTerminal, restartTerminal }
+  /** Puts Claude's last answer in the session, as Markdown, on the clipboard. */
+  async function copyLastAnswer(id: string): Promise<void> {
+    const answer = await attempt(() => window.api.terminals.lastAnswer(id), 'Antwort konnte nicht gelesen werden')
+    if (answer === undefined) return
+    if (answer === null) {
+      toast.info('Noch keine Antwort', { description: 'Sobald Claude eine Antwort fertig hat, lässt sie sich kopieren.' })
+      return
+    }
+    const copied = await attempt(async () => {
+      await navigator.clipboard.writeText(answer)
+      return true
+    }, 'Konnte nicht kopiert werden')
+    if (copied) toast.success('Antwort kopiert')
+  }
+
+  return { closeTerminal, closeTab, closeOtherTabs, closeTabs, closeGroup, stopTerminal, restartTerminal, copyLastAnswer }
 }

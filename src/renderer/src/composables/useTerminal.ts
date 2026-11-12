@@ -17,6 +17,7 @@ import { isWindows } from '@/lib/platform'
 import { addedImageRef, countImageRefs, pastedImageLinks } from '@/lib/pasted-image-links'
 import { terminalBus } from '@/lib/terminal-bus'
 import { makeSlotsTranslucent, setSlotTints } from '@/lib/translucent-slots'
+import { RULER_WIDTH, turnMarks, type TurnMarks } from '@/lib/turn-marks'
 import { urlLinks } from '@/lib/url-links'
 import { useAppStore } from '@/stores/app'
 import { useFileTreeStore } from '@/stores/file-tree'
@@ -137,6 +138,8 @@ export function toXtermTheme(p: TerminalPalette, tints: SlotTints): ITheme {
     scrollbarSliderBackground: 'rgba(128, 128, 128, 0.25)',
     scrollbarSliderHoverBackground: 'rgba(128, 128, 128, 0.4)',
     scrollbarSliderActiveBackground: 'rgba(128, 128, 128, 0.55)',
+    // The marks of the prompts lie under the scrollbar, without a line beside them.
+    overviewRulerBorder: '#00000000',
   }
 }
 
@@ -197,6 +200,13 @@ function emptyRowsAtBottom(term: Terminal): number {
   return empty
 }
 
+/** Claude Code's input box with the cursor in it (see claudeInputAt); null while it shows something else. */
+function claudeInput(term: Terminal) {
+  const buffer = term.buffer.active
+  const lines = Array.from({ length: term.rows }, (_, y) => buffer.getLine(buffer.baseY + y)?.translateToString(true) ?? '')
+  return claudeInputAt(lines, buffer.cursorY)
+}
+
 interface Linkifier {
   _activeLine: number
   _lastBufferCell: unknown
@@ -224,7 +234,7 @@ export function useTerminal(options: UseTerminalOptions) {
   const terminalsStore = useTerminalsStore()
   const ui = useUiStore()
   const fileTree = useFileTreeStore()
-  const { palette, dark, slotTints, backgrounds, logo } = useTerminalAppearance()
+  const { palette, dark, slotTints, backgrounds, logo, accent } = useTerminalAppearance()
   /** All output passes through here on its way to xterm. */
   const filterOutput = createBackgroundFilter(
     () => backgrounds.value,
@@ -250,6 +260,8 @@ export function useTerminal(options: UseTerminalOptions) {
   let shiftY = 0
   let disposed = false
   let ligatures: Ligatures | null = null
+  /** The prompts sent to Claude Code, marked beside the scrollbar. */
+  let marks: TurnMarks | null = null
   const cleanups: (() => void)[] = []
 
   const imagePreview = ref<ImagePreview | null>(null)
@@ -451,6 +463,8 @@ export function useTerminal(options: UseTerminalOptions) {
       shown = true
       clearTimeout(hiddenTimer)
       if (settingsStore.settings.terminal.renderer === 'webgl') enableWebgl()
+      // Hidden, the prompts weren't looked for.
+      marks?.refresh()
       return
     }
     if (!shown) return
@@ -539,9 +553,7 @@ export function useTerminal(options: UseTerminalOptions) {
    */
   function showChanges(): boolean {
     if (!claudeSession || !term || !settingsStore.settings.claude.diffCommand) return false
-    const buffer = term.buffer.active
-    const lines = Array.from({ length: term.rows }, (_, y) => buffer.getLine(buffer.baseY + y)?.translateToString(true) ?? '')
-    const input = claudeInputAt(lines, buffer.cursorY)
+    const input = claudeInput(term)
     if (input?.command !== '/diff') return false
     write('\x05' + '\x7f'.repeat([...input.text].length))
     fileTree.showAllChanges(terminalId)
@@ -580,6 +592,14 @@ export function useTerminal(options: UseTerminalOptions) {
       e.preventDefault()
       return false
     }
+    // Ctrl+↑/↓ go from prompt to prompt while Claude Code's input box has the cursor. Elsewhere (its list
+    // of agents, the files of its own /diff) the keys are Claude Code's, as in a shell.
+    if (ctrl && !e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && term && claudeInput(term)) {
+      if (marks?.jump(e.key === 'ArrowUp' ? -1 : 1)) {
+        e.preventDefault()
+        return false
+      }
+    }
     return true
   }
 
@@ -606,6 +626,8 @@ export function useTerminal(options: UseTerminalOptions) {
       macOptionIsMeta: true,
       rightClickSelectsWord: false,
       smoothScrollDuration: 0,
+      // The prompts sent to Claude Code beside the scrollbar (see turnMarks).
+      overviewRuler: { width: RULER_WIDTH },
       ...(build ? { windowsPty: { backend: 'conpty' as const, buildNumber: build } } : {}),
       // Links a program writes (OSC 8) show where they lead under the mouse. One whose text is something
       // other than its URL may name another site than it opens: it opens only with Ctrl+click.
@@ -646,6 +668,9 @@ export function useTerminal(options: UseTerminalOptions) {
       () => webgl !== null,
     ))
     cleanups.push(() => lig.dispose())
+    // Also in shell tabs: Claude Code may run there too. Without its prompts nothing shows.
+    const turns = (marks = turnMarks(term, { color: () => accent.value, shown: () => shown }))
+    cleanups.push(() => turns.dispose())
     // Right away for a terminal on screen, so the output so far isn't drawn by the DOM renderer first.
     setShown(el.getClientRects().length > 0)
     term.attachCustomKeyEventHandler(handleKey)
@@ -791,6 +816,11 @@ export function useTerminal(options: UseTerminalOptions) {
       fit()
     },
   )
+
+  // The marks of the prompts in the accent of another theme.
+  watch(accent, () => {
+    if (shown) marks?.refresh()
+  })
 
   // The output as text for a screen reader, once the setting or the system asks for it.
   watch(screenReader, (on) => {
