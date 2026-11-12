@@ -11,8 +11,10 @@ import {
   scanTranscript,
   SEARCH_ASSISTANT,
   SEARCH_USER,
+  toolDetail,
   toolSummary,
 } from './transcript-parser'
+import type { TranscriptMessage, TranscriptToolCall } from '@shared/types'
 
 const SESSION = '3f2b8c1e-9a4d-4e7b-8c2a-1d5e6f7a8b9c'
 const MODEL = 'claude-opus-4-5-20251101'
@@ -125,6 +127,11 @@ describe('cleanPrompt', () => {
     expect(cleanPrompt('<local-command-caveat>Caveat: …</local-command-caveat>')).toBe('')
     expect(cleanPrompt('<local-command-stdout>Compacted</local-command-stdout>')).toBe('')
     expect(cleanPrompt('<bash-stdout>On branch main</bash-stdout><bash-stderr></bash-stderr>')).toBe('')
+  })
+
+  it('takes pasted text and leaves out background tasks reporting back', () => {
+    expect(cleanPrompt('Schau:\n<pasted_content id="63cd">\nGucke dir die App an\n</pasted_content id="63cd">')).toBe('Schau:\nGucke dir die App an')
+    expect(cleanPrompt('<task-notification>\n<summary>Done</summary>\n</task-notification>')).toBe('')
   })
 
   it('keeps other markup and text as it is', () => {
@@ -441,6 +448,16 @@ describe('toolSummary', () => {
   })
 })
 
+/** A message of the history with what is the same for most. */
+function said(message: Pick<TranscriptMessage, 'uuid' | 'role' | 'kind' | 'timestamp' | 'text'> & Partial<TranscriptMessage>): TranscriptMessage {
+  return { output: null, failed: false, tools: [], model: message.role === 'assistant' ? MODEL : null, ...message }
+}
+
+/** A tool call of the history, as the parser makes it of a `tool_use` block. */
+function call(id: string | null, name: string, summary: string, status: TranscriptToolCall['status'], extra: Partial<TranscriptToolCall> = {}): TranscriptToolCall {
+  return { id, name, summary, detail: null, description: null, command: null, status, ...extra }
+}
+
 describe('readConversation', () => {
   const conversation = jsonl(
     user('Fix the tests', '2026-11-06T10:00:00.000Z', { uuid: 'u1' }),
@@ -469,36 +486,26 @@ describe('readConversation', () => {
       truncated: false,
       total: 6,
       messages: [
-        { uuid: 'u1', role: 'user', timestamp: '2026-11-06T10:00:00.000Z', text: 'Fix the tests', tools: [], model: null },
-        {
+        said({ uuid: 'u1', role: 'user', kind: 'prompt', timestamp: '2026-11-06T10:00:00.000Z', text: 'Fix the tests' }),
+        said({
           uuid: 'a1',
           role: 'assistant',
+          kind: 'answer',
           timestamp: '2026-11-06T10:00:01.000Z',
           text: 'Running them.',
-          tools: [{ id: 'toolu_01', name: 'Bash', summary: 'npm test', status: 'error' }],
-          model: MODEL,
-        },
-        {
+          tools: [call('toolu_01', 'Bash', 'npm test', 'error', { command: 'npm test' })],
+        }),
+        said({
           uuid: 'a4',
           role: 'assistant',
+          kind: 'answer',
           timestamp: '2026-11-06T10:00:05.000Z',
           text: '',
-          tools: [
-            { id: 'toolu_02', name: 'Edit', summary: 'src/a.ts', status: 'ok' },
-            { id: 'toolu_03', name: 'Read', summary: 'src/b.ts', status: null },
-          ],
-          model: MODEL,
-        },
-        { uuid: 'a5', role: 'assistant', timestamp: '2026-11-06T10:00:07.000Z', text: 'Done.\n\nAll green.', tools: [], model: MODEL },
-        {
-          uuid: 's1',
-          role: 'system',
-          timestamp: '2026-11-06T10:01:00.000Z',
-          text: 'Konversation wurde komprimiert (/compact).',
-          tools: [],
-          model: null,
-        },
-        { uuid: 'u4', role: 'user', timestamp: '2026-11-06T10:01:04.000Z', text: '/cost', tools: [], model: null },
+          tools: [call('toolu_02', 'Edit', 'src/a.ts', 'ok'), call('toolu_03', 'Read', 'src/b.ts', null)],
+        }),
+        said({ uuid: 'a5', role: 'assistant', kind: 'answer', timestamp: '2026-11-06T10:00:07.000Z', text: 'Done.\n\nAll green.' }),
+        said({ uuid: 's1', role: 'system', kind: 'compact', timestamp: '2026-11-06T10:01:00.000Z', text: 'Konversation wurde komprimiert (/compact).' }),
+        said({ uuid: 'u4', role: 'user', kind: 'command', timestamp: '2026-11-06T10:01:04.000Z', text: '/cost' }),
       ],
     })
   })
@@ -517,16 +524,128 @@ describe('readConversation', () => {
       { type: 'assistant', message: { content: [text('Hello'), { type: 'tool_use', input: { command: 'ls' } }, null] } },
     )
     expect(readConversation(buf, 10).messages).toEqual([
-      { uuid: '0', role: 'user', timestamp: null, text: 'Hi', tools: [], model: null },
-      {
-        uuid: '1',
-        role: 'assistant',
-        timestamp: null,
-        text: 'Hello',
-        tools: [{ id: null, name: 'Tool', summary: 'ls', status: null }],
-        model: null,
-      },
+      said({ uuid: '0', role: 'user', kind: 'prompt', timestamp: null, text: 'Hi' }),
+      said({ uuid: '1', role: 'assistant', kind: 'answer', timestamp: null, text: 'Hello', tools: [call(null, 'Tool', 'ls', null)], model: null }),
     ])
+  })
+
+  it('shows a slash command with what it printed, also as an entry of its own of newer versions', () => {
+    const t = '2026-11-06T10:00:00.000Z'
+    const local = (content: string, uuid: string): Entry => ({ type: 'system', subtype: 'local_command', content, uuid, timestamp: t, isMeta: false })
+    const buf = jsonl(
+      user('<local-command-caveat>Caveat: …</local-command-caveat>', t, { isMeta: true }),
+      user('<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>sonnet</command-args>', t, { uuid: 'c1' }),
+      user('<local-command-stdout>Set model to \u001b[1mSonnet\u001b[22m</local-command-stdout>', t, { uuid: 'o1' }),
+      user('<command-name>/clear</command-name>\n<command-args></command-args>', t, { uuid: 'c2' }),
+      local('<local-command-stdout></local-command-stdout>', 'o2'),
+      local('<command-name>/context</command-name>\n<command-args></command-args>', 'c3'),
+      local('<local-command-stdout>(no content)</local-command-stdout>', 'o3'),
+      local('<command-name>/doctor</command-name>', 'c4'),
+      local('<local-command-stderr>Not available</local-command-stderr>', 'o4'),
+      // Output without a command before it isn't shown.
+      local('<local-command-stdout>stray</local-command-stdout>', 'o5'),
+    )
+    expect(readConversation(buf, 10).messages).toEqual([
+      said({ uuid: 'c1', role: 'user', kind: 'command', timestamp: t, text: '/model sonnet', output: 'Set model to Sonnet' }),
+      said({ uuid: 'c2', role: 'user', kind: 'command', timestamp: t, text: '/clear' }),
+      said({ uuid: 'c3', role: 'user', kind: 'command', timestamp: t, text: '/context' }),
+      said({ uuid: 'c4', role: 'user', kind: 'command', timestamp: t, text: '/doctor', output: 'Not available', failed: true }),
+    ])
+  })
+
+  it('shows a command typed after ! with what it printed, errors too', () => {
+    const t = '2026-11-06T10:00:00.000Z'
+    const buf = jsonl(
+      user('<bash-input> git status </bash-input>', t, { uuid: 'b1' }),
+      user('<bash-stdout>On branch main\n</bash-stdout><bash-stderr></bash-stderr>', t, { uuid: 'o1' }),
+      user('<bash-input>Stop-Process -Id 1</bash-input>', t, { uuid: 'b2' }),
+      user('<bash-stdout></bash-stdout><bash-stderr>bash: Stop-Process: command not found\n</bash-stderr>', t, { uuid: 'o2' }),
+      user('Why did that fail?', t, { uuid: 'u1' }),
+      // A command's output after a prompt doesn't go to the command before it.
+      user('<bash-stdout>late</bash-stdout>', t, { uuid: 'o3' }),
+    )
+    expect(readConversation(buf, 10).messages).toEqual([
+      said({ uuid: 'b1', role: 'user', kind: 'shell', timestamp: t, text: 'git status', output: 'On branch main' }),
+      said({ uuid: 'b2', role: 'user', kind: 'shell', timestamp: t, text: 'Stop-Process -Id 1', output: 'bash: Stop-Process: command not found', failed: true }),
+      said({ uuid: 'u1', role: 'user', kind: 'prompt', timestamp: t, text: 'Why did that fail?' }),
+    ])
+  })
+
+  it('shows a background task reporting back by its summary, with its result', () => {
+    const t = '2026-11-06T10:00:00.000Z'
+    const notice = (status: string, summary: string, result = '') =>
+      `<task-notification>\n<task-id>b1</task-id>\n<tool-use-id>toolu_01</tool-use-id>\n<status>${status}</status>\n<summary>${summary}</summary>\n${result ? `<result>${result}</result>\n` : ''}</task-notification>`
+    const buf = jsonl(
+      user(notice('completed', 'Agent "Tests" finished', '## Report\nAll green.'), t, { uuid: 't1' }),
+      user(notice('failed', 'Background command "npm run build" failed with exit code 1'), t, { uuid: 't2' }),
+      user('<task-notification>\n<status>killed</status>\n</task-notification>', t, { uuid: 't3' }),
+    )
+    expect(readConversation(buf, 10).messages).toEqual([
+      said({ uuid: 't1', role: 'user', kind: 'task', timestamp: t, text: 'Agent "Tests" finished', output: '## Report\nAll green.' }),
+      said({ uuid: 't2', role: 'user', kind: 'task', timestamp: t, text: 'Background command "npm run build" failed with exit code 1', failed: true }),
+      said({ uuid: 't3', role: 'user', kind: 'task', timestamp: t, text: 'Eine Hintergrundaufgabe hat sich gemeldet.', failed: true }),
+    ])
+  })
+
+  it('shows what a compaction kept as a summary, not as a prompt, and keeps pasted text in its tags', () => {
+    const t = '2026-11-06T10:00:00.000Z'
+    const prompt = 'Schau dir das an:\n\n<pasted_content id="63cd">\nZeile 1\n</pasted_content id="63cd">\n'
+    const buf = jsonl(
+      user('This session is being continued.\n\n<system-reminder>\nTools: Read\n</system-reminder>\nSummary:\n1. Fixed it', t, {
+        uuid: 's1',
+        isCompactSummary: true,
+        isVisibleInTranscriptOnly: true,
+      }),
+      user(prompt, t, { uuid: 'u1' }),
+    )
+    expect(readConversation(buf, 10).messages).toEqual([
+      said({ uuid: 's1', role: 'user', kind: 'summary', timestamp: t, text: 'This session is being continued.\n\n\nSummary:\n1. Fixed it' }),
+      said({ uuid: 'u1', role: 'user', kind: 'prompt', timestamp: t, text: prompt.trim() }),
+    ])
+  })
+
+  it('sends a shell command whole up to 4000 characters, with what Claude said it is for', () => {
+    const long = `echo ${'x'.repeat(5000)}`
+    const buf = jsonl(
+      assistant(
+        'msg_01',
+        [
+          toolUse('toolu_01', 'PowerShell', { command: 'Get-ChildItem\n  | Select-Object Name', description: 'List the files' }),
+          toolUse('toolu_02', 'Bash', { command: long }),
+          toolUse('toolu_03', 'Read', { file_path: 'src/a.ts', offset: 10, limit: 50 }),
+        ],
+        't',
+      ),
+    )
+    const [answer] = readConversation(buf, 10).messages
+    expect(answer.tools[0]).toEqual(
+      call('toolu_01', 'PowerShell', 'Get-ChildItem | Select-Object Name', null, { command: 'Get-ChildItem\n  | Select-Object Name', description: 'List the files' }),
+    )
+    expect(answer.tools[1].command).toHaveLength(4001)
+    expect(answer.tools[1].command!.endsWith('x…')).toBe(true)
+    expect(answer.tools[2]).toEqual(call('toolu_03', 'Read', 'src/a.ts', null, { detail: 'Zeilen 10–59' }))
+  })
+})
+
+describe('toolDetail', () => {
+  it('says which lines or pages a Read took', () => {
+    expect(toolDetail('Read', { file_path: 'a', offset: 10, limit: 50 })).toBe('Zeilen 10–59')
+    expect(toolDetail('Read', { file_path: 'a', offset: 200 })).toBe('ab Zeile 200')
+    expect(toolDetail('Read', { file_path: 'a', limit: 30 })).toBe('Zeilen 1–30')
+    expect(toolDetail('Read', { file_path: 'a.pdf', pages: '1-5' })).toBe('Seiten 1-5')
+    expect(toolDetail('Read', { file_path: 'a', offset: -1, limit: 'x' })).toBeNull()
+  })
+
+  it('says where a search looked and how many edits or tasks a call has', () => {
+    expect(toolDetail('Grep', { pattern: 'x', path: 'src', glob: '*.ts' })).toBe('in src · *.ts')
+    expect(toolDetail('Grep', { pattern: 'x', type: 'py' })).toBe('in py')
+    expect(toolDetail('Glob', { pattern: '**/*.vue' })).toBeNull()
+    expect(toolDetail('Edit', { file_path: 'a', replace_all: true })).toBe('alle Stellen')
+    expect(toolDetail('MultiEdit', { file_path: 'a', edits: [{}, {}] })).toBe('2 Änderungen')
+    expect(toolDetail('TodoWrite', { todos: [{}] })).toBe('1 Aufgabe')
+    expect(toolDetail('Agent', { description: 'x', subagent_type: 'Explore' })).toBe('Explore')
+    expect(toolDetail('WebSearch', { query: 'x' })).toBeNull()
+    expect(toolDetail('Read', null)).toBeNull()
   })
 })
 

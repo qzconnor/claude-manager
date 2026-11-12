@@ -3,6 +3,7 @@
  * Pure functions — used by the indexer worker thread (`toolSummary` also by the main process).
  */
 import { folderKey, inFolder } from '@shared/folders'
+import { unwrapPasted } from '@shared/pasted'
 import type { SessionWorktree, TranscriptMessage, TranscriptToolCall, TranscriptToolDetail } from '@shared/types'
 
 export interface ParsedSummary {
@@ -78,20 +79,32 @@ const NOISE_TAGS = [
   'bash-stdout',
   'bash-stderr',
   'user-memory-input',
+  // A background task reporting back: Claude Code sends it as a message of the user's.
+  'task-notification',
 ]
 const NOISE_RE = new RegExp(`<(${NOISE_TAGS.join('|')})>[\\s\\S]*?</\\1>`, 'g')
 
+/** The text between `<tag>` and `</tag>`; null without. */
+function tagText(raw: string, tag: string): string | null {
+  const match = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(raw)
+  return match ? match[1] : null
+}
+
+/** A slash command as typed (`/review 123`); null when the message is none. */
+function commandOf(raw: string): string | null {
+  const name = tagText(raw, 'command-name')?.trim()
+  if (name === undefined) return null
+  const args = tagText(raw, 'command-args')?.trim()
+  return `${name.startsWith('/') ? name : `/${name}`}${args ? ` ${args}` : ''}`
+}
+
 /** Turns a raw user message into what the user actually typed (or the slash command). */
 export function cleanPrompt(raw: string): string {
-  const command = /<command-name>([\s\S]*?)<\/command-name>/.exec(raw)
-  if (command) {
-    const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(raw)
-    const name = command[1].trim()
-    return `${name.startsWith('/') ? name : `/${name}`}${args?.[1].trim() ? ` ${args[1].trim()}` : ''}`
-  }
-  const bash = /<bash-input>([\s\S]*?)<\/bash-input>/.exec(raw)
-  if (bash) return `! ${bash[1].trim()}`
-  return raw.replace(NOISE_RE, '').trim()
+  const command = commandOf(raw)
+  if (command !== null) return command
+  const bash = tagText(raw, 'bash-input')
+  if (bash !== null) return `! ${bash.trim()}`
+  return unwrapPasted(raw.replace(NOISE_RE, '')).trim()
 }
 
 function textOf(content: unknown): string {
@@ -393,13 +406,120 @@ export function toolSummary(name: string, input: unknown): string {
   }
 }
 
-/** Builds a readable conversation (user prompts, assistant text, tool calls). */
+/** Tools that run a command in a shell: the window shows it as code. */
+const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
+/** Longest command sent along with the call; longer ones are complete in `readToolCall`. */
+const MAX_COMMAND_CHARS = 4000
+
+/** A little more about a tool call than its summary, in a few words: lines, where it searched, how many. */
+export function toolDetail(name: string, input: unknown): string | null {
+  if (!input || typeof input !== 'object') return null
+  const i = input as Record<string, unknown>
+  const count = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : null)
+  switch (name) {
+    case 'Read': {
+      const pages = str(i.pages)
+      if (pages) return `Seiten ${pages}`
+      const offset = count(i.offset)
+      const limit = count(i.limit)
+      if (offset && limit) return `Zeilen ${offset}–${offset + limit - 1}`
+      if (offset) return `ab Zeile ${offset}`
+      return limit ? `Zeilen 1–${limit}` : null
+    }
+    case 'Grep':
+    case 'Glob': {
+      const where = [str(i.path), str(i.glob) ?? str(i.type)].filter(Boolean)
+      return where.length ? `in ${where.join(' · ')}` : null
+    }
+    case 'Edit':
+      return i.replace_all === true ? 'alle Stellen' : null
+    case 'MultiEdit':
+      return Array.isArray(i.edits) ? `${i.edits.length} ${i.edits.length === 1 ? 'Änderung' : 'Änderungen'}` : null
+    case 'Agent':
+    case 'Task':
+      return str(i.subagent_type)
+    case 'TodoWrite':
+      return Array.isArray(i.todos) ? `${i.todos.length} ${i.todos.length === 1 ? 'Aufgabe' : 'Aufgaben'}` : null
+    default:
+      return null
+  }
+}
+
+/** A tool call of the history from its `tool_use` block, without its outcome yet. */
+export function toolCallOf(id: string | null, name: string, input: unknown): TranscriptToolCall {
+  const i = input && typeof input === 'object' ? (input as Record<string, unknown>) : {}
+  const command = SHELL_TOOLS.has(name) ? str(i.command) : null
+  return {
+    id,
+    name,
+    summary: toolSummary(name, input),
+    detail: toolDetail(name, input),
+    description: str(i.description) ? shorten(i.description as string, 300) : null,
+    command: command && command.length > MAX_COMMAND_CHARS ? `${command.slice(0, MAX_COMMAND_CHARS)}…` : command,
+    status: null,
+  }
+}
+
+/** Colours and other escape sequences of the terminal, which commands like `/context` print. */
+// eslint-disable-next-line no-control-regex -- the escape character is what is searched for
+const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]/g
+
+/** What a command printed, from the tags of its output; null when it printed nothing. */
+function commandOutput(raw: string, out: string, err: string): { output: string | null; failed: boolean } | null {
+  const stdout = tagText(raw, out)
+  const stderr = tagText(raw, err)
+  if (stdout === null && stderr === null) return null
+  const clean = (text: string | null) => {
+    const plain = (text ?? '').replace(ANSI_RE, '').replace(/\s+$/, '')
+    return plain.trim() === '(no content)' ? '' : plain
+  }
+  const parts = [clean(stdout), clean(stderr)].filter(Boolean)
+  return { output: parts.length ? parts.join('\n') : null, failed: clean(stderr).trim() !== '' }
+}
+
+/** A background task reporting back: its summary, result and whether it went wrong. */
+function taskNotice(raw: string): { text: string; output: string | null; failed: boolean } | null {
+  const notice = tagText(raw, 'task-notification')
+  if (notice === null) return null
+  const status = tagText(notice, 'status')?.trim() ?? ''
+  const result = tagText(notice, 'result')?.trim()
+  return {
+    text: tagText(notice, 'summary')?.trim() || 'Eine Hintergrundaufgabe hat sich gemeldet.',
+    output: result || null,
+    failed: status === 'failed' || status === 'killed',
+  }
+}
+
+/**
+ * Builds a readable conversation: the user's prompts, commands and what they printed, background tasks
+ * reporting back, Claude's answers with their tool calls, and where it was compacted.
+ */
 export function readConversation(buf: Buffer, maxMessages: number): { messages: TranscriptMessage[]; truncated: boolean; total: number } {
   const messages: TranscriptMessage[] = []
   const byMessageId = new Map<string, TranscriptMessage>()
   const calls: TranscriptToolCall[] = []
   /** tool_use id → the result was an error */
   const results = new Map<string, boolean>()
+  /** The last entry if it is a command whose output may follow (as an entry of its own). */
+  let awaiting: TranscriptMessage | null = null
+
+  const push = (message: Omit<TranscriptMessage, 'output' | 'failed' | 'tools' | 'model'> & Partial<TranscriptMessage>) => {
+    const full: TranscriptMessage = { output: null, failed: false, tools: [], model: null, ...message }
+    messages.push(full)
+    awaiting = full.kind === 'command' || full.kind === 'shell' ? full : null
+    return full
+  }
+  /** Output of the command before, from an entry of its own; false when there is no such output. */
+  const outputOf = (raw: string): boolean => {
+    const printed = commandOutput(raw, 'local-command-stdout', 'local-command-stderr') ?? commandOutput(raw, 'bash-stdout', 'bash-stderr')
+    if (!printed) return false
+    const command = awaiting
+    if (command && command.output === null) {
+      command.output = printed.output
+      command.failed = printed.failed
+    }
+    return true
+  }
 
   forEachEntry(buf, (e) => {
     if (e.isSidechain || e.isMeta) return
@@ -412,9 +532,31 @@ export function readConversation(buf: Buffer, maxMessages: number): { messages: 
         const b = block as { type?: unknown; tool_use_id?: unknown; is_error?: unknown } | null
         if (b?.type === 'tool_result' && typeof b.tool_use_id === 'string') results.set(b.tool_use_id, b.is_error === true)
       }
-      const text = cleanPrompt(textOf(message?.content))
-      if (!text) return
-      messages.push({ uuid, role: 'user', timestamp, text, tools: [], model: null })
+      const raw = textOf(message?.content)
+      if (e.isCompactSummary) {
+        const text = raw.replace(NOISE_RE, '').trim()
+        if (text) push({ uuid, role: 'user', kind: 'summary', timestamp, text })
+        return
+      }
+      const command = commandOf(raw)
+      if (command !== null) {
+        push({ uuid, role: 'user', kind: 'command', timestamp, text: command })
+        return
+      }
+      const bash = tagText(raw, 'bash-input')
+      if (bash !== null) {
+        push({ uuid, role: 'user', kind: 'shell', timestamp, text: bash.trim() })
+        return
+      }
+      if (outputOf(raw)) return
+      const task = taskNotice(raw)
+      if (task) {
+        push({ uuid, role: 'user', kind: 'task', timestamp, ...task })
+        return
+      }
+      // Pasted text keeps its tags: the window shows it as a block of its own.
+      const text = raw.replace(NOISE_RE, '').trim()
+      if (text) push({ uuid, role: 'user', kind: 'prompt', timestamp, text })
       return
     }
     if (e.type === 'assistant') {
@@ -424,9 +566,8 @@ export function readConversation(buf: Buffer, maxMessages: number): { messages: 
       if (model === '<synthetic>') return
       let target = byMessageId.get(messageId)
       if (!target) {
-        target = { uuid, role: 'assistant', timestamp, text: '', tools: [], model }
+        target = push({ uuid, role: 'assistant', kind: 'answer', timestamp, text: '', model })
         byMessageId.set(messageId, target)
-        messages.push(target)
       }
       const blocks = Array.isArray(message?.content) ? message.content : []
       for (const block of blocks) {
@@ -435,16 +576,22 @@ export function readConversation(buf: Buffer, maxMessages: number): { messages: 
         if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
           target.text = target.text ? `${target.text}\n\n${b.text}` : b.text
         } else if (b.type === 'tool_use') {
-          const name = str(b.name) ?? 'Tool'
-          const call: TranscriptToolCall = { id: str(b.id), name, summary: toolSummary(name, b.input), status: null }
+          const call = toolCallOf(str(b.id), str(b.name) ?? 'Tool', b.input)
           target.tools.push(call)
           calls.push(call)
         }
       }
       return
     }
-    if (e.type === 'system' && typeof e.content === 'string' && e.subtype === 'compact_boundary') {
-      messages.push({ uuid, role: 'system', timestamp, text: 'Konversation wurde komprimiert (/compact).', tools: [], model: null })
+    if (e.type === 'system' && typeof e.content === 'string') {
+      if (e.subtype === 'compact_boundary') {
+        push({ uuid, role: 'system', kind: 'compact', timestamp, text: 'Konversation wurde komprimiert (/compact).' })
+      } else if (e.subtype === 'local_command') {
+        // Newer versions of Claude Code write commands and what they printed as entries of this kind.
+        const command = commandOf(e.content)
+        if (command !== null) push({ uuid, role: 'user', kind: 'command', timestamp, text: command })
+        else outputOf(e.content)
+      }
     }
   })
 

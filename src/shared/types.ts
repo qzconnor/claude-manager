@@ -602,7 +602,14 @@ export interface TranscriptToolCall {
   /** `tool_use` id: loads the complete call with `sessions.toolCall`. */
   id: string | null
   name: string
+  /** One line about the call: its command, file, pattern, URL… */
   summary: string
+  /** More about it in a few words, e.g. which lines a Read took or where a Grep searched; null without. */
+  detail: string | null
+  /** What Claude said the call is for (`description` of Bash, Agent …); null without one. */
+  description: string | null
+  /** The command of a shell tool (Bash, PowerShell), whole up to 4000 characters; null for other tools. */
+  command: string | null
   /** Outcome of the matching tool result; null when none was recorded (yet). */
   status: 'ok' | 'error' | null
 }
@@ -620,11 +627,25 @@ export interface TranscriptToolDetail {
   truncated: boolean
 }
 
+/**
+ * What an entry of the history is. From the user: `prompt` (typed or pasted, pasted text stays in
+ * `<pasted_content>` tags), `command` (a slash command such as `/model`), `shell` (a command typed
+ * after `!`), `task` (a background task Claude started reporting back: `text` is its summary) and
+ * `summary` (what a compaction kept of the conversation before). `answer` is Claude's, `compact` the
+ * compaction itself.
+ */
+export type TranscriptMessageKind = 'prompt' | 'command' | 'shell' | 'task' | 'summary' | 'answer' | 'compact'
+
 export interface TranscriptMessage {
   uuid: string
   role: 'user' | 'assistant' | 'system'
+  kind: TranscriptMessageKind
   timestamp: string | null
   text: string
+  /** What a command printed or a task's result, without terminal colours; null when nothing was recorded. */
+  output: string | null
+  /** A command printed errors, a task failed or was stopped. */
+  failed: boolean
   tools: TranscriptToolCall[]
   model: string | null
 }

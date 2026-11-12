@@ -225,6 +225,32 @@ const BY_NAME: Record<string, string> = {
   '.profile': 'bash',
 }
 
+/** Names a code block in markdown is given that are neither a language nor an extension. */
+const FENCE_ALIASES: Record<string, string> = {
+  shell: 'bash',
+  console: 'bash',
+  terminal: 'bash',
+  pwsh: 'powershell',
+  ps: 'powershell',
+  html: 'xml',
+  svelte: 'vue',
+  docker: 'dockerfile',
+  make: 'makefile',
+  golang: 'go',
+  'c++': 'cpp',
+  'c#': 'csharp',
+  'f#': 'fsharp',
+  objc: 'objectivec',
+}
+
+/** The language of a code block in markdown by its info string (```ts, ```sh title="x"); null without. */
+export function fenceLanguage(info: string): string | null {
+  const name = info.trim().split(/\s+/)[0]?.toLowerCase() ?? ''
+  if (!name) return null
+  if (LOADERS[name]) return name
+  return FENCE_ALIASES[name] ?? BY_EXTENSION[name] ?? null
+}
+
 /** The language of a file by its name (`/`-separated path); null for one without highlighting. */
 export function languageOf(path: string): string | null {
   const name = path.slice(path.lastIndexOf('/') + 1).toLowerCase()
@@ -291,6 +317,19 @@ export function splitHighlighted(html: string): string[] {
   }
   lines.push(line + html.slice(last) + '</span>'.repeat(open.length))
   return lines
+}
+
+/**
+ * A piece of code as highlighted HTML (escaped by highlight.js); null when its language isn't loaded
+ * (`loadLanguage`) or it is too long.
+ */
+export function highlightCode(code: string, language: string): string | null {
+  if (!hasLanguage(language) || code.length > MAX_HIGHLIGHT_CHARS) return null
+  try {
+    return hljs.highlight(code, { language, ignoreIllegals: true }).value
+  } catch {
+    return null
+  }
 }
 
 function highlightText(lines: string[], language: string): string[] | null {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { fileLines, parsePatch } from './file-diff'
-import { highlightDiff, languageOf, loadLanguage, splitHighlighted } from './syntax'
+import { fenceLanguage, highlightCode, highlightDiff, languageOf, loadLanguage, splitHighlighted } from './syntax'
 
 describe('languageOf', () => {
   it('knows files by extension and by name', () => {
@@ -54,6 +54,44 @@ describe('highlightDiff', () => {
 
   it('leaves out languages that are not loaded', () => {
     expect(highlightDiff(parsePatch('@@ -1 +1 @@\n-a\n+b').lines, 'cobol')).toBeNull()
+  })
+})
+
+describe('fenceLanguage', () => {
+  it('knows the languages of code blocks by name, extension and the usual other names', () => {
+    expect(fenceLanguage('typescript')).toBe('typescript')
+    expect(fenceLanguage('ts')).toBe('typescript')
+    expect(fenceLanguage('  TSX  ')).toBe('typescript')
+    expect(fenceLanguage('sh')).toBe('bash')
+    expect(fenceLanguage('shell')).toBe('bash')
+    expect(fenceLanguage('pwsh')).toBe('powershell')
+    expect(fenceLanguage('ps1')).toBe('powershell')
+    expect(fenceLanguage('html')).toBe('xml')
+    expect(fenceLanguage('python title="a.py"')).toBe('python')
+    expect(fenceLanguage('c++')).toBe('cpp')
+  })
+
+  it('leaves blocks without a language or of an unknown one plain', () => {
+    expect(fenceLanguage('')).toBeNull()
+    expect(fenceLanguage('text')).toBeNull()
+    expect(fenceLanguage('klingon')).toBeNull()
+  })
+})
+
+describe('highlightCode', () => {
+  it('highlights a command once its language is loaded, escaped', async () => {
+    expect(highlightCode('echo "<b>"', 'powershell')).toBeNull()
+    await loadLanguage('powershell')
+    const html = highlightCode('Get-ChildItem | Where-Object { $_.Name -eq "<b>" }', 'powershell')
+    expect(html).toContain('<span class="hljs-built_in">Get-ChildItem</span>')
+    expect(html).toContain('&lt;b&gt;')
+    expect(html).not.toContain('<b>')
+  })
+
+  it('leaves code that is too long or of no language plain', async () => {
+    await loadLanguage('bash')
+    expect(highlightCode('x'.repeat(400_001), 'bash')).toBeNull()
+    expect(highlightCode('x', 'klingon')).toBeNull()
   })
 })
 

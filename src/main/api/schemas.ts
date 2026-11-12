@@ -168,13 +168,24 @@ export const schemas: Record<string, Schema> = {
   TranscriptMessage: object({
     uuid: str,
     role: { type: 'string', enum: ['user', 'assistant', 'system'] },
+    kind: {
+      type: 'string',
+      enum: ['prompt', 'command', 'shell', 'task', 'summary', 'answer', 'compact'],
+      description:
+        'prompt: Eingabe (eingefügter Text in <pasted_content>), command: Slash-Befehl, shell: Befehl nach „!“, task: Meldung einer Hintergrundaufgabe, summary: Zusammenfassung einer Komprimierung, answer: Antwort von Claude, compact: Komprimierung',
+    },
     timestamp: nullable(dateTime),
     text: { type: 'string', description: 'Markdown' },
+    output: { ...nullable(str), description: 'Ausgabe eines Befehls oder Ergebnis einer Hintergrundaufgabe, ohne Terminalfarben' },
+    failed: { type: 'boolean', description: 'Der Befehl meldete Fehler oder die Aufgabe ist gescheitert' },
     tools: arrayOf(
       object({
         id: nullable(str),
         name: str,
         summary: str,
+        detail: { ...nullable(str), description: 'z. B. „Zeilen 10–59“ bei Read' },
+        description: { ...nullable(str), description: 'Wofür Claude den Aufruf macht' },
+        command: { ...nullable(str), description: 'Befehl von Bash und PowerShell, bis 4000 Zeichen' },
         status: { anyOf: [{ type: 'string', enum: ['ok', 'error'] }, { type: 'null' }] },
       }),
     ),

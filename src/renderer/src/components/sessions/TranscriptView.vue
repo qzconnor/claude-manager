@@ -14,9 +14,11 @@ import {
 } from '@/components/ui/message-scroller'
 import { Spinner } from '@/components/ui/spinner'
 import { useClock } from '@/composables/useClock'
+import { useDiffStyle } from '@/composables/useDiffStyle'
 import { usePauseWhileHidden } from '@/composables/usePauseWhileHidden'
 import { formatNumber } from '@/lib/format'
 import { transcriptRows } from '@/lib/transcript-days'
+import { useSettingsStore } from '@/stores/settings'
 import TranscriptMessage from './TranscriptMessage.vue'
 
 const props = defineProps<{
@@ -35,13 +37,23 @@ usePauseWhileHidden()
 const now = useClock(60_000)
 const rows = computed(() => transcriptRows(props.messages, now.value))
 const older = computed(() => Math.max(0, props.total - props.messages.length))
+
+// Code, commands and diffs in the terminal's colours and font, as the file diff shows them.
+// A little smaller than the text around it (13 px at the usual 16).
+const { colors, fontFamily } = useDiffStyle()
+const settings = useSettingsStore()
+const codeStyle = computed(() => {
+  const { background, color, ...vars } = colors.value
+  const size = Math.max(10, Math.round(settings.settings.appearance.uiFontSize * 0.8125))
+  return { ...vars, '--code-bg': background, '--code-fg': color, '--code-font': fontFamily.value, '--code-size': `${size}px` }
+})
 </script>
 
 <template>
   <MessageScrollerProvider default-scroll-position="end">
     <MessageScroller>
       <MessageScrollerViewport>
-        <MessageScrollerContent class="mx-auto w-full max-w-3xl gap-6 px-6 py-6">
+        <MessageScrollerContent class="w-full gap-6 px-6 py-6 lg:px-10" :style="codeStyle">
           <div v-if="truncated" class="flex flex-col items-center gap-2 text-xs text-muted-foreground">
             <span>{{ formatNumber(older) }} ältere {{ older === 1 ? 'Nachricht' : 'Nachrichten' }}</span>
             <Button variant="outline" size="xs" :disabled="loadingOlder" @click="$emit('loadOlder')">
@@ -53,8 +65,9 @@ const older = computed(() => Math.max(0, props.total - props.messages.length))
             <Marker v-if="row.kind === 'day'" variant="separator" class="text-xs">
               <MarkerContent>{{ row.label }}</MarkerContent>
             </Marker>
-            <MessageScrollerItem v-else :message-id="row.message.uuid">
-              <TranscriptMessage :message="row.message" :account-id="accountId" :session-id="sessionId" />
+            <!-- A message that goes on from the one before stands closer to it, without its head. -->
+            <MessageScrollerItem v-else :message-id="row.message.uuid" :class="row.continued && '-mt-3'">
+              <TranscriptMessage :message="row.message" :continued="row.continued" :account-id="accountId" :session-id="sessionId" />
             </MessageScrollerItem>
           </template>
         </MessageScrollerContent>

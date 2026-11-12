@@ -146,9 +146,12 @@ describe('formatTranscript', () => {
   const message = (i: number): TranscriptMessage => ({
     uuid: String(i),
     role: i % 2 ? 'assistant' : 'user',
+    kind: i % 2 ? 'answer' : 'prompt',
     timestamp: null,
     text: `message ${i}`,
-    tools: i === 1 ? [{ id: 't', name: 'Bash', summary: 'npm test', status: 'ok' }] : [],
+    output: null,
+    failed: false,
+    tools: i === 1 ? [{ id: 't', name: 'Bash', summary: 'npm test', detail: null, description: null, command: 'npm test', status: 'ok' }] : [],
     model: null,
   })
   const messages = Array.from({ length: 10 }, (_, i) => message(i))
@@ -156,8 +159,17 @@ describe('formatTranscript', () => {
   it('reads a part and says how to go on', () => {
     const text = formatTranscript(messages, 0, 3, false)
     expect(text).toContain('Messages 0–2 of 10')
+    expect(text).toContain('[0] user\nmessage 0')
     expect(text).toContain('  → Bash: npm test (ok)')
     expect(text).toContain('Read on with offset 3.')
+  })
+
+  it('says what commands and background tasks are, with what they printed', () => {
+    const command: TranscriptMessage = { ...message(0), kind: 'command', text: '/model sonnet', output: 'Set model to Sonnet' }
+    const task: TranscriptMessage = { ...message(0), uuid: 't', kind: 'task', text: 'Build failed', output: 'exit code 1', failed: true }
+    const text = formatTranscript([command, task], 0, 10, false)
+    expect(text).toContain('[0] user (command)\n/model sonnet\n  output: Set model to Sonnet')
+    expect(text).toContain('[1] user (task)\nBuild failed\n  failed, output: exit code 1')
   })
 
   it('counts a negative offset from the end', () => {

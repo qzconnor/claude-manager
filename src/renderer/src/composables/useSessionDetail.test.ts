@@ -14,6 +14,9 @@ const answer = (total: number) =>
       messages: Array.from({ length: count }, (_, i) => ({
         uuid: `${sessionId}-${total - count + i}`,
         role: 'user' as const,
+        kind: 'prompt' as const,
+        output: null,
+        failed: false,
         timestamp: null,
         text: 'x',
         tools: [],

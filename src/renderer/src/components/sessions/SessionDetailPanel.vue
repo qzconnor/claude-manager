@@ -197,7 +197,7 @@ async function copyId() {
           <AlertDescription>{{ error }}</AlertDescription>
         </Alert>
       </div>
-      <div v-else-if="!detail" class="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-6">
+      <div v-else-if="!detail" class="flex flex-col gap-6 px-6 py-6 lg:px-10">
         <div v-for="i in 4" :key="i" class="flex flex-col gap-2">
           <Skeleton class="h-3 w-24" />
           <Skeleton class="h-16 w-full" />
