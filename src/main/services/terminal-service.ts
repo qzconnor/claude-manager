@@ -23,6 +23,7 @@ import type {
   TerminalAttach,
   TerminalCreateOptions,
   TerminalInfo,
+  TerminalSleep,
 } from '@shared/types'
 import { withdrawBootEntries, withdrawBootEntriesSync, type EndedLaunch } from '../lib/boot-canary'
 import { colorFgBg, colorSchemeReport, ColorSchemeUpdates } from '../lib/color-scheme'
@@ -218,6 +219,22 @@ type Events = {
 }
 
 /** Whether the environment for a session holds a token or API key of the app. */
+/** A tab of the last run that waits to be shown before it starts (see `TerminalService.sleep`). */
+export interface SleepingTerminal {
+  accountId: string
+  authAccountId: string
+  cwd: string
+  mode: 'session' | 'shell'
+  /** The session it goes on with once it starts, if Claude Code wrote it. */
+  sessionId: string | null
+  /** With `fixedTitle` the tab's name, otherwise the title it showed (its session's); null for the default. */
+  title: string | null
+  fixedTitle: boolean
+  muted: boolean
+  args: string[]
+  restoredFrom: string | null
+}
+
 export function hasSecret(set: Record<string, string>): boolean {
   return 'CLAUDE_CODE_OAUTH_TOKEN' in set || 'ANTHROPIC_API_KEY' in set
 }
@@ -297,14 +314,18 @@ export class TerminalService extends TypedEmitter<Events> {
     return cwd === null ? null : this.create({ ...options, cwd })
   }
 
-  /** The tab in which the session of the account runs right now. */
+  /**
+   * The tab in which the session of the account runs right now, else one that waits to go on with it
+   * (`sleep`): opening the session again would have two processes write to it.
+   */
   runningSession(accountId: string, sessionId: string): TerminalInfo | null {
-    for (const t of this.terminals.values()) {
-      if (t.info.mode === 'session' && t.info.status === 'running' && t.info.accountId === accountId && t.info.sessionId === sessionId) {
-        return { ...t.info }
-      }
+    let asleep: TerminalInfo | null = null
+    for (const { info } of this.terminals.values()) {
+      if (info.mode !== 'session' || info.accountId !== accountId || info.sessionId !== sessionId) continue
+      if (info.status === 'running') return { ...info }
+      if (info.status === 'asleep') asleep ??= { ...info }
     }
-    return null
+    return asleep
   }
 
   /** True when no Claude Code has the session open, or the user wants to go on anyway. */
@@ -332,6 +353,82 @@ export class TerminalService extends TypedEmitter<Events> {
 
   /** Starts right away; a folder Claude Code doesn't trust yet gets its question in the terminal. */
   create(options: TerminalCreateOptions): TerminalInfo {
+    return this.start(options, randomUUID())
+  }
+
+  /**
+   * A tab of the last run that waits without a process until it is shown (see `wake`). Until then it
+   * keeps its place, title and session like any other tab, and the next start opens it again as it is.
+   */
+  sleep(options: SleepingTerminal): TerminalInfo {
+    const account = this.accounts.get(options.accountId)
+    const auth = this.accounts.get(options.authAccountId)
+    const defaultTitle = defaultTerminalTitle(options.mode, auth.name, options.cwd)
+    const title = options.title?.replace(/\s+/g, ' ').trim().slice(0, 120) || null
+    const fixedTitle = options.fixedTitle && title !== null
+    const autoTitle = (!options.fixedTitle && title) || defaultTitle
+    const info: TerminalInfo = {
+      id: randomUUID(),
+      accountId: account.id,
+      authAccountId: auth.id,
+      sessionId: options.sessionId,
+      limit: null,
+      resume: null,
+      context: null,
+      busy: false,
+      attention: null,
+      muted: options.muted,
+      title: fixedTitle ? title! : autoTitle,
+      fixedTitle,
+      autoTitle,
+      cwd: options.cwd,
+      mode: options.mode,
+      url: null,
+      resumeSessionId: options.sessionId,
+      args: [...options.args],
+      restoredFrom: options.restoredFrom,
+      status: 'asleep',
+      sleep: { waking: false, error: null },
+      exitCode: null,
+      pid: 0,
+      createdAt: new Date().toISOString(),
+      commandLine: '',
+      worktree: null,
+      hooks: false,
+      activity: null,
+      subagents: 0,
+      compacting: false,
+      turn: null,
+      prompt: null,
+    }
+    const record = newRecord(info, defaultTitle, null, Promise.resolve())
+    this.shareName(record)
+    this.add(record, {})
+    this.emitChanged()
+    return { ...info }
+  }
+
+  /**
+   * Starts a tab that waits (see `sleep`) in its place: it keeps its id, and so its place in the tab
+   * order, its group and its split. Throws when it doesn't start; it then goes on waiting.
+   */
+  wake(id: string, options: TerminalCreateOptions): TerminalInfo {
+    const { info } = this.require(id)
+    if (info.status !== 'asleep') throw new Error('Der Tab läuft schon.')
+    // Its session's title until the transcript tells it again.
+    return this.start({ ...options, split: null, replaces: null }, id, info.fixedTitle ? null : info.autoTitle)
+  }
+
+  /** Whether a tab that waits (see `sleep`) is starting, and why it didn't the last time. */
+  setSleep(id: string, sleep: TerminalSleep): void {
+    const record = this.terminals.get(id)
+    if (record?.info.status !== 'asleep' || sameSleep(record.info.sleep, sleep)) return
+    record.info.sleep = { ...sleep }
+    this.emitChanged()
+  }
+
+  /** `autoTitle`: the title it shows until its session's is known; the default otherwise. */
+  private start(options: TerminalCreateOptions, id: string, autoTitle: string | null = null): TerminalInfo {
     const account = this.accounts.get(options.accountId)
     const auth = options.authAccountId ? this.accounts.get(options.authAccountId) : account
     const settings = this.settings.get()
@@ -339,7 +436,6 @@ export class TerminalService extends TypedEmitter<Events> {
 
     const cwd = this.resolveCwd(options.cwd ?? account.defaultCwd ?? settings.claude.defaultCwd)
 
-    const id = randomUUID()
     const args: string[] = []
     let providers: SessionArgsProvider[] = []
     let sessionId: string | null = null
@@ -413,6 +509,7 @@ export class TerminalService extends TypedEmitter<Events> {
 
     const defaultTitle = defaultTerminalTitle(mode, auth.name, cwd)
     const fixedTitle = options.title?.trim().slice(0, 120) || null
+    const shown = autoTitle ?? defaultTitle
     const info: TerminalInfo = {
       id,
       accountId: account.id,
@@ -424,9 +521,9 @@ export class TerminalService extends TypedEmitter<Events> {
       busy: false,
       attention: null,
       muted: options.muted === true,
-      title: fixedTitle ?? defaultTitle,
+      title: fixedTitle ?? shown,
       fixedTitle: fixedTitle !== null,
-      autoTitle: defaultTitle,
+      autoTitle: shown,
       cwd,
       mode,
       url: null,
@@ -434,6 +531,7 @@ export class TerminalService extends TypedEmitter<Events> {
       args: mode === 'shell' ? [] : [...(options.args ?? [])],
       restoredFrom: options.restoredFrom ?? null,
       status: 'running',
+      sleep: null,
       exitCode: null,
       pid: proc.pid,
       createdAt: new Date().toISOString(),
@@ -505,6 +603,7 @@ export class TerminalService extends TypedEmitter<Events> {
       args: [],
       restoredFrom: options.restoredFrom ?? null,
       status: 'running',
+      sleep: null,
       exitCode: null,
       pid: 0,
       createdAt: new Date().toISOString(),
@@ -1356,7 +1455,10 @@ export class TerminalService extends TypedEmitter<Events> {
     return true
   }
 
-  /** Takes a new terminal in: in the place of `replaces`, next to the one it splits, or as a tab at the end. */
+  /**
+   * Takes a new terminal in: in the place of `replaces`, next to the one it splits, or as a tab at the
+   * end. One with the id of a tab that waited takes its place (see `wake`).
+   */
   private add(record: TerminalRecord, options: Pick<TerminalCreateOptions, 'replaces' | 'split'>): void {
     const { id } = record.info
     this.terminals.set(id, record)
@@ -1484,6 +1586,8 @@ function newRecord(info: TerminalInfo, defaultTitle: string, process: Pty.IPty |
     answer: null,
   }
 }
+
+const sameSleep = (a: TerminalSleep | null, b: TerminalSleep) => a?.waking === b.waking && a.error === b.error
 
 /** The tab drops its name and shows its session's title (it comes with the next round). */
 function followSessionTitle(info: TerminalInfo): void {

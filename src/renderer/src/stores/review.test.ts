@@ -25,6 +25,7 @@ function terminal(id: string, over: { cwd?: string; mode?: TerminalMode; status?
     resumeSessionId: null,
     args: [],
     status: over.status ?? 'running',
+    sleep: null,
     exitCode: null,
     pid: 0,
     createdAt: '',

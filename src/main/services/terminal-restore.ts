@@ -8,7 +8,7 @@ import { readJsonSync, writeJsonAtomicSync } from '../lib/json-file'
 import { locateTranscript, SESSION_ID_RE } from '../lib/session-files'
 import type { AccountService } from './account-service'
 import type { SettingsService } from './settings-service'
-import { defaultTerminalTitle, legacyTerminalTitle, type TerminalService } from './terminal-service'
+import { defaultTerminalTitle, legacyTerminalTitle, type SleepingTerminal, type TerminalService } from './terminal-service'
 
 /** What is remembered of a terminal. Login tabs are not. */
 interface SavedTerminal {
@@ -27,8 +27,6 @@ interface SavedTerminal {
   muted?: boolean
   /** Claude Code arguments that hold for every start (see `lastingArgs`). Missing in files of older versions. */
   args?: string[]
-  /** Starts in a row it didn't open at: after `MAX_FAILED_STARTS` it is left out. */
-  failedStarts?: number
   /**
    * On the first terminal of a tab that holds several: how they share its space. Instead of ids its
    * parts name the terminals by their index in the file. Older versions open them in tabs of their own.
@@ -48,22 +46,16 @@ interface SavedBrowser {
 
 type SavedTab = SavedTerminal | SavedBrowser
 
-/** How often a tab may fail to open at the start before it is forgotten. */
-const MAX_FAILED_STARTS = 3
-/** How long the start waits for a tab's folder, e.g. on a network drive that is gone. */
+/** How long a tab waits for its folder when it starts, e.g. on a network drive that is gone. */
 const FOLDER_TIMEOUT_MS = 4000
-
-/** A tab of the last run that didn't open, with the reason. */
-export interface RestoreFailure {
-  title: string
-  reason: string
-  /** Tried again on the next start; otherwise it failed too often and is gone. */
-  kept: boolean
-}
 
 /**
  * Remembers the open tabs and opens them again on the next start (setting `general.restoreTerminals`).
  * The file is rewritten on every change, so the tabs are also back after the app was ended abruptly.
+ *
+ * Terminals come back waiting (see `TerminalService.sleep`) and start once the window shows them
+ * (`wake`), or right after the start without `general.restoreAsleep`. One that doesn't start, e.g.
+ * because its folder is gone, keeps waiting with the reason, until it is tried again or closed.
  */
 export class TerminalRestore {
   private readonly file: string
@@ -74,10 +66,10 @@ export class TerminalRestore {
   /** Until then (ms) the file keeps the tabs as they were: see `hold`. */
   private heldUntil = 0
   private holdTimer: NodeJS.Timeout | undefined
-  /** Tabs that didn't open: they stay in the file for the next start, or a `retry`. */
-  private pending: { tab: SavedTerminal; reason: string }[] = []
-  /** What didn't open at the start, for the window to tell. */
-  private failed: RestoreFailure[] = []
+  /** The tabs that wait to start, by their id, as the file had them. */
+  private readonly asleep = new Map<string, SavedTerminal>()
+  /** Those starting right now. */
+  private readonly waking = new Set<string>()
 
   constructor(
     userDataDir: string,
@@ -91,15 +83,22 @@ export class TerminalRestore {
 
   /** Opens the tabs of the last run, then follows the open tabs. */
   async init(): Promise<void> {
-    if (this.settings.get().general.restoreTerminals) await this.restore()
+    if (this.settings.get().general.restoreTerminals) this.restore()
     if (this.disposed) return
     this.offs = [
-      this.terminals.on('changed', () => this.save()),
+      this.terminals.on('changed', (list) => {
+        // Closed while they waited.
+        const ids = new Set(list.map((t) => t.id))
+        for (const id of this.asleep.keys()) if (!ids.has(id)) this.asleep.delete(id)
+        this.save()
+      }),
       this.settings.on('changed', (next, previous) => {
         if (next.general.restoreTerminals !== previous.general.restoreTerminals) this.save()
       }),
     ]
     this.save()
+    // Started now, one after the other, as before tabs waited.
+    if (!this.settings.get().general.restoreAsleep) for (const id of [...this.asleep.keys()]) await this.wake(id)
   }
 
   /** Stops following the tabs. Must run before quitting closes them all. */
@@ -110,71 +109,56 @@ export class TerminalRestore {
     this.offs = []
   }
 
-  /** The tabs of the last run that didn't open at the start; told once. */
-  takeFailures(): RestoreFailure[] {
-    const failed = this.failed
-    this.failed = []
-    return failed
-  }
-
-  /** Opens the tabs that didn't open at the start once more; returns those that still don't. */
-  async retry(): Promise<RestoreFailure[]> {
-    const pending = this.pending
-    this.pending = []
-    const failed: RestoreFailure[] = []
-    for (const { tab } of pending) {
-      if (this.disposed) break
-      const result = await this.openTerminal(tab)
-      if (typeof result === 'string') {
-        this.pending.push({ tab, reason: result })
-        failed.push({ title: tab.title, reason: result, kept: true })
-      }
+  /**
+   * Starts a tab that waits; the window asks once it shows it, or to try again. One that doesn't start
+   * keeps waiting, with the reason.
+   */
+  async wake(id: string): Promise<void> {
+    const tab = this.asleep.get(id)
+    if (!tab || this.waking.has(id) || this.disposed) return
+    this.waking.add(id)
+    this.terminals.setSleep(id, { waking: true, error: null })
+    try {
+      const error = await this.start(id, tab)
+      // Closed or started in another way (e.g. with another account) while its folder was looked at.
+      if (this.disposed || !this.asleep.has(id)) return
+      if (error === null) this.asleep.delete(id)
+      else this.terminals.setSleep(id, { waking: false, error })
+    } finally {
+      this.waking.delete(id)
     }
-    this.save()
-    return failed
   }
 
-  private async restore(): Promise<void> {
+  private restore(): void {
     const saved = readJsonSync<unknown>(this.file)
     if (!Array.isArray(saved)) return
-    /** Index in the file → id of the terminal opened for it. */
+    /** Index in the file → id of the tab opened for it. */
     const opened = new Map<string, string>()
     for (const [index, tab] of saved.entries()) {
-      // The app quits: nothing more starts, the file keeps the tabs for the next start.
-      if (this.disposed) return
       if (isSavedBrowser(tab)) {
         const info = this.terminals.openBrowser({ url: tab.url, title: tab.fixedTitle ? tab.title : null, restoredFrom: savedId(tab) })
         opened.set(String(index), info.id)
         continue
       }
       if (!isSavedTerminal(tab)) continue
-      const result = await this.openTerminal(tab)
-      if (result === null) continue
-      if (typeof result !== 'string') {
-        opened.set(String(index), result.id)
-        continue
-      }
-      // Often only for a moment (a network drive, Claude Code updating itself): it is tried again.
-      const failedStarts = (tab.failedStarts ?? 0) + 1
-      const kept = failedStarts < MAX_FAILED_STARTS
-      if (kept) this.pending.push({ tab: { ...tab, layout: undefined, failedStarts }, reason: result })
-      this.failed.push({ title: tab.title, reason: result, kept })
+      const sleeping = this.sleeping(tab)
+      if (!sleeping) continue
+      const info = this.terminals.sleep(sleeping)
+      this.asleep.set(info.id, tab)
+      opened.set(String(index), info.id)
     }
     for (const tab of saved) {
       const layout = parsePaneNode((tab as SavedTab | null)?.layout)
       if (!layout) continue
-      // Terminals that didn't open leave their space to the others.
+      // Tabs that can't come back leave their space to the others.
       const missing = new Set(paneIds(layout).filter((index) => !opened.has(index)))
       const rest = removePanes(layout, missing)
       if (isSplit(rest)) this.terminals.arrange(mapPanes(rest, (index) => opened.get(index)!))
     }
   }
 
-  /**
-   * Opens a saved terminal: the id of the new one, the reason when it didn't open, null when it can't
-   * come back (its account is gone).
-   */
-  private async openTerminal(tab: SavedTerminal): Promise<string | null | { id: string }> {
+  /** How a saved terminal waits to start; null when it can't come back (its account is gone). */
+  private sleeping(tab: SavedTerminal): SleepingTerminal | null {
     const accounts = new Map(this.accounts.list().map((a) => [a.id, a]))
     if (!accounts.has(tab.accountId)) return null
     // Without the lending account the session runs with its own login again.
@@ -182,28 +166,53 @@ export class TerminalRestore {
     // Older versions saved no flag: a title other than the default (theirs had the account in it) was chosen.
     const defaults = [defaultTerminalTitle(tab.mode, auth.name, tab.cwd), legacyTerminalTitle(tab.mode, auth.name, tab.cwd)]
     const fixedTitle = tab.fixedTitle ?? !defaults.includes(tab.title)
+    return {
+      accountId: tab.accountId,
+      authAccountId: auth.id,
+      cwd: tab.cwd,
+      mode: tab.mode,
+      sessionId: tab.sessionId,
+      // A default title, also one of an older version, follows the folder the tab starts in.
+      title: fixedTitle || !defaults.includes(tab.title) ? tab.title : null,
+      fixedTitle,
+      muted: tab.muted === true,
+      args: tab.args ?? [],
+      restoredFrom: savedId(tab),
+    }
+  }
+
+  /** Starts the waiting tab `id` in its place; the reason when it doesn't start, null when it did. */
+  private async start(id: string, tab: SavedTerminal): Promise<string | null> {
+    // As it is now: it may have been renamed or muted while it waited.
+    const waiting = this.terminals.list().find((t) => t.id === id)
+    if (!waiting) return null
+    const auth = this.accounts.list().find((a) => a.id === waiting.authAccountId)
+    if (!auth) return 'Den Account dieses Tabs gibt es nicht mehr.'
     // In the folder the session is in now: `/cd` may have moved it after the tab was saved.
     const located = tab.sessionId ? await this.locate(tab.accountId, tab.sessionId, tab.cwd) : null
     const cwd = located?.cwd ?? tab.cwd
     // Checked without blocking first: starting the terminal looks at the folder synchronously.
     const folder = cwd ? await folderState(cwd) : 'ok'
-    // The app began to quit while this tab waited for its folder.
-    if (this.disposed) return null
+    // The app quits, or the tab went, while it waited for its folder.
+    if (this.disposed || !this.asleep.has(id)) return null
     if (folder === 'missing') return `Den Ordner „${cwd}“ gibt es nicht.`
     if (folder === 'unreachable') return `Der Ordner „${cwd}“ war nicht erreichbar.`
+    // Two processes must never write to the same transcript.
+    const elsewhere = this.terminals.runningSession(tab.accountId, tab.sessionId ?? '')
+    if (located && elsewhere && elsewhere.id !== id) return 'Die Session läuft schon in einem anderen Tab.'
     try {
-      const info = this.terminals.create({
+      this.terminals.wake(id, {
         accountId: tab.accountId,
         authAccountId: auth.id,
         cwd,
         mode: tab.mode,
         resumeSessionId: located ? tab.sessionId : null,
-        title: fixedTitle ? tab.title : null,
-        muted: tab.muted === true,
-        args: tab.args ?? [],
-        restoredFrom: savedId(tab),
+        title: waiting.fixedTitle ? waiting.title : null,
+        muted: waiting.muted,
+        args: waiting.args,
+        restoredFrom: waiting.restoredFrom ?? null,
       })
-      return { id: info.id }
+      return null
     } catch (error) {
       return error instanceof Error ? error.message : String(error)
     }
@@ -277,8 +286,7 @@ export class TerminalRestore {
         ...layout,
       }
     })
-    // Those that didn't open stay for the next start, as tabs of their own.
-    return [...open, ...this.pending.map(({ tab }) => tab)]
+    return open
   }
 }
 
@@ -315,8 +323,7 @@ function isSavedTerminal(value: unknown): value is SavedTerminal {
     typeof t.title === 'string' &&
     (t.fixedTitle === undefined || typeof t.fixedTitle === 'boolean') &&
     (t.muted === undefined || typeof t.muted === 'boolean') &&
-    (t.args === undefined || (Array.isArray(t.args) && t.args.every((arg) => typeof arg === 'string'))) &&
-    (t.failedStarts === undefined || (typeof t.failedStarts === 'number' && Number.isInteger(t.failedStarts) && t.failedStarts >= 0))
+    (t.args === undefined || (Array.isArray(t.args) && t.args.every((arg) => typeof arg === 'string')))
   )
 }
 

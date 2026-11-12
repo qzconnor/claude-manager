@@ -179,7 +179,8 @@ function findOpenTerminal(
 ): TerminalInfo | null {
   if (command.newTab || command.continue || command.resume === true || command.passthrough.length) return null
   const mode = command.shell ? 'shell' : 'session'
-  const running = terminals.filter((t) => t.status === 'running' && t.mode === mode)
+  // A tab of the last run that waits starts once it is shown, unless it failed to (see `TerminalInfo.sleep`).
+  const running = terminals.filter((t) => (t.status === 'running' || (t.status === 'asleep' && !t.sleep?.error)) && t.mode === mode)
   if (typeof command.resume === 'string') return running.find((t) => t.sessionId === command.resume) ?? null
   return (
     running.findLast(

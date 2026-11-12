@@ -54,7 +54,7 @@ const several = computed(() => accounts.accounts.length > 1)
 function tabOf(session: SessionSummary): TerminalInfo | null {
   return (
     terminals.terminals.find(
-      (t) => t.mode === 'session' && t.status === 'running' && t.accountId === session.accountId && t.sessionId === session.id,
+      (t) => t.mode === 'session' && t.status !== 'exited' && t.accountId === session.accountId && t.sessionId === session.id,
     ) ?? null
   )
 }

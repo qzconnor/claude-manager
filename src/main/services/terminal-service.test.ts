@@ -10,7 +10,15 @@ import { projectKey } from '../lib/session-files'
 import type { AccountService } from './account-service'
 import type { ClaudeCli } from './claude-cli'
 import type { SettingsService } from './settings-service'
-import { currentWorktree, hasSecret, movedTo, TerminalService, type TurnEnd } from './terminal-service'
+import {
+  currentWorktree,
+  defaultTerminalTitle,
+  hasSecret,
+  movedTo,
+  type SleepingTerminal,
+  TerminalService,
+  type TurnEnd,
+} from './terminal-service'
 import type { WorkspaceTrust } from './workspace-trust'
 
 vi.mock('electron', () => ({ app: { getPath: () => '' } }))
@@ -300,6 +308,105 @@ describe('resuming a session that is open elsewhere', () => {
     await own.open({ accountId: 'a', resumeSessionId: '99999999-2222-4333-8444-555555555555' })
     expect(ask).not.toHaveBeenCalled()
     expect(ensure).toHaveBeenCalledTimes(2)
+  })
+})
+
+// A tab of the last run waits without a process until the window shows it (see TerminalRestore).
+describe('a tab that waits to start', () => {
+  const SESSION = '11111111-2222-4333-8444-555555555555'
+  const waiting = (overrides: Partial<SleepingTerminal> = {}): SleepingTerminal => ({
+    accountId: 'a',
+    authAccountId: 'a',
+    cwd: tmpdir(),
+    mode: 'session',
+    sessionId: SESSION,
+    title: 'Fix the build',
+    fixedTitle: false,
+    muted: true,
+    args: ['--model', 'opus'],
+    restoredFrom: 'old',
+    ...overrides,
+  })
+
+  it('starts in its place once woken: same id, same place in the order and in its split', () => {
+    const own = serviceWithPty(tmpdir())
+    const before = own.create({ accountId: 'a', mode: 'shell' })
+    const tab = own.sleep(waiting())
+    const after = own.create({ accountId: 'a', mode: 'shell' })
+    own.arrange({ direction: 'row', ratio: 0.5, first: tab.id, second: after.id })
+    const started = ptys.length
+    expect(tab).toMatchObject({
+      status: 'asleep',
+      sleep: { waking: false, error: null },
+      pid: 0,
+      title: 'Fix the build',
+      autoTitle: 'Fix the build',
+      fixedTitle: false,
+      muted: true,
+      sessionId: SESSION,
+      resumeSessionId: SESSION,
+      args: ['--model', 'opus'],
+      restoredFrom: 'old',
+    })
+    // Nothing runs that could take input or a size.
+    own.write(tab.id, 'x')
+    own.resize(tab.id, 100, 30)
+    expect(ptys.length).toBe(started)
+
+    own.setSleep(tab.id, { waking: true, error: null })
+    expect(own.get(tab.id).sleep).toEqual({ waking: true, error: null })
+    const options = { accountId: 'a', cwd: tmpdir(), resumeSessionId: SESSION, args: ['--model', 'opus'], muted: true, restoredFrom: 'old' }
+    const woken = own.wake(tab.id, options)
+    expect(ptys.length).toBe(started + 1)
+    // Its session's title stays until the transcript tells it again.
+    expect(woken).toMatchObject({
+      id: tab.id,
+      status: 'running',
+      sleep: null,
+      title: 'Fix the build',
+      autoTitle: 'Fix the build',
+      sessionId: SESSION,
+    })
+    expect(own.list().map((t) => t.id)).toEqual([before.id, tab.id, after.id])
+    expect(own.layouts()).toEqual([{ direction: 'row', ratio: 0.5, first: tab.id, second: after.id }])
+
+    // Running, it neither starts again nor takes a reason to wait.
+    expect(() => own.wake(tab.id, options)).toThrow('Der Tab läuft schon.')
+    own.setSleep(tab.id, { waking: false, error: 'x' })
+    expect(own.get(tab.id).sleep).toBeNull()
+    expect(ptys.length).toBe(started + 1)
+  })
+
+  it('tells only a change of how it waits', () => {
+    const own = serviceWithPty(tmpdir())
+    const { id } = own.sleep(waiting())
+    const changed = vi.fn()
+    own.on('changed', changed)
+    own.setSleep(id, { waking: false, error: null })
+    expect(changed).not.toHaveBeenCalled()
+    own.setSleep(id, { waking: false, error: 'Den Ordner gibt es nicht.' })
+    own.setSleep(id, { waking: false, error: 'Den Ordner gibt es nicht.' })
+    expect(changed).toHaveBeenCalledOnce()
+    expect(own.get(id).sleep).toEqual({ waking: false, error: 'Den Ordner gibt es nicht.' })
+  })
+
+  it('shows the default title without one, and a name it was given', () => {
+    const own = serviceWithPty(tmpdir())
+    const shell = defaultTerminalTitle('shell', 'A', tmpdir())
+    const titles = (info: TerminalInfo) => [info.title, info.autoTitle, info.fixedTitle]
+    expect(titles(own.sleep(waiting({ mode: 'shell', sessionId: null, title: null })))).toEqual([shell, shell, false])
+    const named = own.sleep(waiting({ mode: 'shell', sessionId: null, title: '  Build ', fixedTitle: true }))
+    expect(titles(named)).toEqual(['Build', shell, true])
+    expect(titles(own.sleep(waiting({ mode: 'shell', sessionId: null, title: null, fixedTitle: true })))).toEqual([shell, shell, false])
+  })
+
+  it('is the tab of its session until one runs it, so the session isn’t resumed twice', () => {
+    const own = serviceWithPty(tmpdir())
+    const tab = own.sleep(waiting())
+    expect(own.runningSession('a', SESSION)?.id).toBe(tab.id)
+    const running = own.create({ accountId: 'a', resumeSessionId: SESSION })
+    expect(own.runningSession('a', SESSION)?.id).toBe(running.id)
+    expect(own.runningSession('b', SESSION)).toBeNull()
   })
 })
 

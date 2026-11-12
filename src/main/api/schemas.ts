@@ -316,7 +316,15 @@ export const schemas: Record<string, Schema> = {
       description: 'Eigene Argumente für claude, mit denen der Tab gestartet wurde (ohne die aus Einstellungen und Account)',
     },
     restoredFrom: { ...nullable(str), description: 'Beim Start wieder geöffnet: die ID, die der Tab im letzten Lauf hatte' },
-    status: { type: 'string', enum: ['running', 'exited'] },
+    status: {
+      type: 'string',
+      enum: ['running', 'exited', 'asleep'],
+      description: 'asleep = Tab vom letzten Start, der erst startet, wenn die App ihn zeigt (siehe sleep)',
+    },
+    sleep: {
+      ...nullable(ref('TerminalSleep')),
+      description: 'Nur bei status asleep: ob er gerade startet und warum er zuletzt nicht startete',
+    },
     exitCode: nullable(int),
     pid: int,
     createdAt: dateTime,
@@ -332,6 +340,10 @@ export const schemas: Record<string, Schema> = {
       ...nullable(dateTime),
       description: 'Wann die Session mit ihrem Account weitergeht: eine Minute nach dem Reset; null, wenn er unbekannt ist',
     },
+  }),
+  TerminalSleep: object({
+    waking: { type: 'boolean', description: 'Er startet gerade; der Ordner wird zuerst geprüft' },
+    error: { ...nullable(str), description: 'Warum er zuletzt nicht startete, z. B. weil sein Ordner fehlt; null, bevor er es versuchte' },
   }),
   TerminalTurn: object({
     kind: {

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { BrowserOpenOptions, PaneNode, PaneSplit, TerminalCreateOptions, TerminalInfo } from '@shared/types'
+import type { BrowserOpenOptions, PaneNode, PaneSplit, TerminalCreateOptions, TerminalInfo, TerminalSleep } from '@shared/types'
 
 // terminal-service (for the default title) pulls in modules that import electron.
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: false } }))
@@ -12,7 +12,7 @@ import { projectKey } from '../lib/session-files'
 import type { AccountService } from './account-service'
 import type { SettingsService } from './settings-service'
 import { TerminalRestore } from './terminal-restore'
-import type { TerminalService } from './terminal-service'
+import type { SleepingTerminal, TerminalService } from './terminal-service'
 
 const S1 = '0f8fad5b-d9cb-469f-a165-70867728950e'
 const S2 = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
@@ -41,9 +41,12 @@ let file: string
 let terminalList: TerminalInfo[]
 let layoutList: PaneSplit[]
 let restoreTerminals: boolean
+let restoreAsleep: boolean
 const terminalEvents = new Emitter()
 const settingsEvents = new Emitter()
-const create = vi.fn<(options: TerminalCreateOptions) => TerminalInfo>()
+const sleep = vi.fn<(options: SleepingTerminal) => TerminalInfo>()
+const wake = vi.fn<(id: string, options: TerminalCreateOptions) => TerminalInfo>()
+const setSleep = vi.fn<(id: string, sleep: TerminalSleep) => void>()
 const arrange = vi.fn<(layout: PaneNode) => void>()
 const openBrowser = vi.fn<(options: BrowserOpenOptions) => TerminalInfo>()
 
@@ -51,9 +54,14 @@ const terminals = {
   on: (event: string, listener: Listener) => terminalEvents.on(event, listener),
   list: () => terminalList,
   layouts: () => layoutList,
-  create,
+  sleep,
+  wake,
+  setSleep,
   arrange,
   openBrowser,
+  runningSession: (accountId: string, sessionId: string) =>
+    terminalList.find((t) => t.status === 'running' && t.mode === 'session' && t.accountId === accountId && t.sessionId === sessionId) ??
+    null,
 } as unknown as TerminalService
 
 const accounts = {
@@ -65,7 +73,7 @@ const accounts = {
 } as unknown as AccountService
 
 const settings = {
-  get: () => ({ general: { restoreTerminals } }),
+  get: () => ({ general: { restoreTerminals, restoreAsleep } }),
   on: (event: string, listener: Listener) => settingsEvents.on(event, listener),
 } as unknown as SettingsService
 
@@ -90,6 +98,7 @@ function info(overrides: Partial<TerminalInfo>): TerminalInfo {
     resumeSessionId: null,
     args: [],
     status: 'running',
+    sleep: null,
     exitCode: null,
     pid: 1,
     createdAt: '2026-11-06T12:00:00.000Z',
@@ -122,11 +131,35 @@ beforeEach(async () => {
   terminalList = []
   layoutList = []
   restoreTerminals = true
+  restoreAsleep = true
   arrange.mockReset()
   openBrowser.mockReset()
-  openBrowser.mockImplementation((options) => info({ id: `browser-${openBrowser.mock.calls.length}`, mode: 'browser', url: options.url ?? null }))
-  create.mockReset()
-  create.mockImplementation((options) => info({ id: `new-${create.mock.calls.length}`, cwd: options.cwd ?? '' }))
+  openBrowser.mockImplementation((options) => {
+    const browser = info({ id: `browser-${openBrowser.mock.calls.length}`, mode: 'browser', url: options.url ?? null, fixedTitle: false })
+    terminalList = [...terminalList, browser]
+    return browser
+  })
+  // Like the service: the waiting tab is in the list, and starting it keeps its id.
+  sleep.mockReset()
+  sleep.mockImplementation((options) => {
+    const tab = info({
+      ...options,
+      id: `new-${sleep.mock.calls.length}`,
+      title: options.title ?? 'Default',
+      resumeSessionId: options.sessionId,
+      status: 'asleep',
+      sleep: { waking: false, error: null },
+    })
+    terminalList = [...terminalList, tab]
+    return tab
+  })
+  wake.mockReset()
+  wake.mockImplementation((id) => {
+    const started = info({ ...terminalList.find((t) => t.id === id), status: 'running', sleep: null })
+    terminalList = terminalList.map((t) => (t.id === id ? started : t))
+    return started
+  })
+  setSleep.mockReset()
 })
 
 let restore: TerminalRestore | null = null
@@ -142,48 +175,248 @@ function start(): TerminalRestore {
   return restore
 }
 
+const shell = { accountId: 'acc-a', authAccountId: 'acc-a', cwd: '', mode: 'shell', sessionId: null, fixedTitle: true }
+
 describe('TerminalRestore on start', () => {
-  it('opens the saved tabs again', async () => {
+  it('opens the saved tabs again as tabs that wait to start', async () => {
     const project = join(dir, 'project')
     const other = join(dir, 'other')
-    await mkdir(project)
-    await mkdir(other)
-    await writeTranscript(S1, project)
     await writeFile(
       file,
       JSON.stringify([
         // Default title of an older version without fixedTitle: follows the session again.
-        { accountId: 'acc-a', authAccountId: 'acc-a', cwd: project, mode: 'session', sessionId: S1, title: 'Alpha · project', args: ['--model', 'opus'] },
-        // The lending account is gone; no transcript was written; a chosen title of an older version.
+        {
+          accountId: 'acc-a',
+          authAccountId: 'acc-a',
+          cwd: project,
+          mode: 'session',
+          sessionId: S1,
+          title: 'Alpha · project',
+          args: ['--model', 'opus'],
+        },
+        // The lending account is gone; a chosen title of an older version.
         { accountId: 'acc-b', authAccountId: 'gone', cwd: other, mode: 'session', sessionId: S2, title: 'Custom', muted: true },
-        { accountId: 'acc-a', authAccountId: 'acc-b', cwd: project, mode: 'session', sessionId: null, title: 'Mine', fixedTitle: false },
+        // The title Claude gave the session.
+        {
+          accountId: 'acc-a',
+          authAccountId: 'acc-b',
+          cwd: project,
+          mode: 'session',
+          sessionId: null,
+          title: 'Fix the build',
+          fixedTitle: false,
+        },
         { accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', sessionId: null, title: 'Build', fixedTitle: true },
         // Today's default titles name the folder, not the account.
         { accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', sessionId: null, title: 'Shell · other' },
       ]),
     )
     await start().init()
-    expect(create.mock.calls.map(([options]) => options)).toEqual([
-      { accountId: 'acc-a', authAccountId: 'acc-a', cwd: project, mode: 'session', resumeSessionId: S1, title: null, muted: false, args: ['--model', 'opus'], restoredFrom: null },
-      { accountId: 'acc-b', authAccountId: 'acc-b', cwd: other, mode: 'session', resumeSessionId: null, title: 'Custom', muted: true, args: [], restoredFrom: null },
-      { accountId: 'acc-a', authAccountId: 'acc-b', cwd: project, mode: 'session', resumeSessionId: null, title: null, muted: false, args: [], restoredFrom: null },
-      { accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', resumeSessionId: null, title: 'Build', muted: false, args: [], restoredFrom: null },
-      { accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', resumeSessionId: null, title: null, muted: false, args: [], restoredFrom: null },
+    const base = { muted: false, args: [], restoredFrom: null }
+    expect(sleep.mock.calls.map(([options]) => options)).toEqual([
+      {
+        ...base,
+        accountId: 'acc-a',
+        authAccountId: 'acc-a',
+        cwd: project,
+        mode: 'session',
+        sessionId: S1,
+        title: null,
+        fixedTitle: false,
+        args: ['--model', 'opus'],
+      },
+      {
+        ...base,
+        accountId: 'acc-b',
+        authAccountId: 'acc-b',
+        cwd: other,
+        mode: 'session',
+        sessionId: S2,
+        title: 'Custom',
+        fixedTitle: true,
+        muted: true,
+      },
+      {
+        ...base,
+        accountId: 'acc-a',
+        authAccountId: 'acc-b',
+        cwd: project,
+        mode: 'session',
+        sessionId: null,
+        title: 'Fix the build',
+        fixedTitle: false,
+      },
+      { ...base, accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', sessionId: null, title: 'Build', fixedTitle: true },
+      { ...base, accountId: 'acc-a', authAccountId: 'acc-a', cwd: other, mode: 'shell', sessionId: null, title: null, fixedTitle: false },
     ])
+    // Nothing starts before the window shows it.
+    expect(wake).not.toHaveBeenCalled()
   })
 
-  it('resumes a session /cd moved after the tab was saved in its new folder', async () => {
+  it('starts a waiting tab in its place once woken, going on with its session', async () => {
+    const project = join(dir, 'project')
+    await mkdir(project)
+    await writeTranscript(S1, project)
+    await writeFile(
+      file,
+      JSON.stringify([
+        { accountId: 'acc-a', authAccountId: 'acc-b', cwd: project, mode: 'session', sessionId: S1, title: 'T', args: ['--model', 'opus'] },
+      ]),
+    )
+    const service = start()
+    await service.init()
+    // Renamed and muted while it waited.
+    terminalList = terminalList.map((t) => ({ ...t, title: 'Mine', fixedTitle: true, muted: true }))
+    await service.wake('new-1')
+    expect(setSleep.mock.calls).toEqual([['new-1', { waking: true, error: null }]])
+    expect(wake.mock.calls).toEqual([
+      [
+        'new-1',
+        {
+          accountId: 'acc-a',
+          authAccountId: 'acc-b',
+          cwd: project,
+          mode: 'session',
+          resumeSessionId: S1,
+          title: 'Mine',
+          muted: true,
+          args: ['--model', 'opus'],
+          restoredFrom: null,
+        },
+      ],
+    ])
+    // Started once: asked again, nothing happens.
+    await service.wake('new-1')
+    expect(wake).toHaveBeenCalledOnce()
+  })
+
+  it('starts a new session when the saved one was never written, and a session /cd moved in its new folder', async () => {
     const project = join(dir, 'project')
     const moved = join(dir, 'moved')
+    await mkdir(project)
     await mkdir(moved)
     // Claude Code took the transcript along into the project folder of the new folder.
     await mkdir(join(configDir, 'projects', projectKey(project)), { recursive: true })
     const folder = join(configDir, 'projects', projectKey(moved))
     await mkdir(folder, { recursive: true })
     await writeFile(join(folder, `${S1}.jsonl`), `${JSON.stringify({ type: 'relocated', sessionId: S1, relocatedCwd: moved })}\n`)
-    await writeFile(file, JSON.stringify([{ accountId: 'acc-a', authAccountId: 'acc-a', cwd: project, mode: 'session', sessionId: S1, title: 'T', fixedTitle: false }]))
+    const tab = { accountId: 'acc-a', authAccountId: 'acc-a', cwd: project, mode: 'session', title: 'T', fixedTitle: false }
+    await writeFile(
+      file,
+      JSON.stringify([
+        { ...tab, sessionId: S1 },
+        { ...tab, sessionId: S2 },
+      ]),
+    )
+    const service = start()
+    await service.init()
+    await service.wake('new-1')
+    await service.wake('new-2')
+    expect(wake.mock.calls.map(([, options]) => [options.cwd, options.resumeSessionId])).toEqual([
+      [moved, S1],
+      [project, null],
+    ])
+  })
+
+  it('keeps a tab that did not start waiting, with the reason, and starts it when tried again', async () => {
+    const missing = join(dir, 'missing')
+    await writeFile(
+      file,
+      JSON.stringify([
+        { ...shell, cwd: missing, title: 'gone' },
+        { ...shell, cwd: dir, title: 'busy' },
+      ]),
+    )
+    const service = start()
+    await service.init()
+    // A folder that isn't there is not even tried.
+    await service.wake('new-1')
+    expect(wake).not.toHaveBeenCalled()
+    expect(setSleep.mock.calls.at(-1)).toEqual(['new-1', { waking: false, error: `Den Ordner „${missing}“ gibt es nicht.` }])
+    wake.mockImplementationOnce(() => {
+      throw new Error('Claude Code wurde nicht gefunden.')
+    })
+    await service.wake('new-2')
+    expect(setSleep.mock.calls.at(-1)).toEqual(['new-2', { waking: false, error: 'Claude Code wurde nicht gefunden.' }])
+    // The file keeps them as they were.
+    terminalEvents.fire('changed', terminalList)
+    expect(((await readSaved()) as { title: string }[]).map((t) => t.title)).toEqual(['gone', 'busy'])
+
+    await mkdir(missing)
+    await service.wake('new-1')
+    expect(setSleep.mock.calls.at(-1)).toEqual(['new-1', { waking: true, error: null }])
+    expect(wake.mock.calls.at(-1)![0]).toBe('new-1')
+  })
+
+  it('starts a tab once when asked twice while it starts', async () => {
+    await writeFile(file, JSON.stringify([{ ...shell, cwd: dir, title: 'a' }]))
+    const service = start()
+    await service.init()
+    await Promise.all([service.wake('new-1'), service.wake('new-1')])
+    expect(wake).toHaveBeenCalledOnce()
+    expect(setSleep.mock.calls).toEqual([['new-1', { waking: true, error: null }]])
+  })
+
+  it('tells when the account of a waiting tab is gone by now', async () => {
+    await writeFile(file, JSON.stringify([{ ...shell, cwd: dir, title: 'a' }]))
+    const service = start()
+    await service.init()
+    terminalList = terminalList.map((t) => ({ ...t, authAccountId: 'removed' }))
+    await service.wake('new-1')
+    expect(wake).not.toHaveBeenCalled()
+    expect(setSleep.mock.calls.at(-1)).toEqual(['new-1', { waking: false, error: 'Den Account dieses Tabs gibt es nicht mehr.' }])
+  })
+
+  it('does not start a waiting tab whose session runs in another tab by now', async () => {
+    const project = join(dir, 'project')
+    await mkdir(project)
+    await writeTranscript(S1, project)
+    await writeFile(
+      file,
+      JSON.stringify([{ accountId: 'acc-a', authAccountId: 'acc-a', cwd: project, mode: 'session', sessionId: S1, title: 'T' }]),
+    )
+    const service = start()
+    await service.init()
+    terminalList = [...terminalList, info({ id: 'other', sessionId: S1 })]
+    await service.wake('new-1')
+    expect(wake).not.toHaveBeenCalled()
+    expect(setSleep.mock.calls.at(-1)).toEqual(['new-1', { waking: false, error: 'Die Session läuft schon in einem anderen Tab.' }])
+  })
+
+  it('starts nothing for a waiting tab that was closed, also while it looked at its folder', async () => {
+    await writeFile(
+      file,
+      JSON.stringify([
+        { ...shell, cwd: dir, title: 'a' },
+        { ...shell, cwd: dir, title: 'b' },
+      ]),
+    )
+    const service = start()
+    await service.init()
+    const waking = service.wake('new-1')
+    terminalList = terminalList.filter((t) => t.id !== 'new-1')
+    terminalEvents.fire('changed', terminalList)
+    await waking
+    terminalList = terminalList.filter((t) => t.id !== 'new-2')
+    terminalEvents.fire('changed', terminalList)
+    await service.wake('new-2')
+    expect(wake).not.toHaveBeenCalled()
+    expect(setSleep.mock.calls.map(([id]) => id)).toEqual(['new-1'])
+  })
+
+  it('starts the tabs one after the other right away when they should not wait', async () => {
+    restoreAsleep = false
+    await writeFile(
+      file,
+      JSON.stringify([
+        { ...shell, cwd: dir, title: 'a' },
+        { ...shell, cwd: join(dir, 'missing'), title: 'b' },
+        { ...shell, cwd: dir, title: 'c' },
+      ]),
+    )
     await start().init()
-    expect(create.mock.calls[0]![0]).toMatchObject({ cwd: moved, resumeSessionId: S1 })
+    expect(wake.mock.calls.map(([id]) => id)).toEqual(['new-1', 'new-3'])
+    expect(setSleep.mock.calls.at(-2)![1].error).toContain('gibt es nicht')
   })
 
   it('leaves out invalid tabs and tabs of removed accounts', async () => {
@@ -202,109 +435,42 @@ describe('TerminalRestore on start', () => {
         { ...valid, muted: 1 },
         { ...valid, args: '--model opus' },
         { ...valid, args: ['--model', 5] },
-        { ...valid, title: 'kept' },
+        // A count of failed starts of an older version doesn't matter.
+        { ...valid, title: 'kept', failedStarts: 2 },
       ]),
     )
     await start().init()
-    expect(create).toHaveBeenCalledOnce()
-    expect(create.mock.calls[0][0].title).toBe('kept')
+    expect(sleep).toHaveBeenCalledOnce()
+    expect(sleep.mock.calls[0][0].title).toBe('kept')
   })
 
-  it('goes on with the next tab when one cannot be opened', async () => {
-    const tab = { accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'shell', sessionId: null, fixedTitle: true }
-    await writeFile(file, JSON.stringify([{ ...tab, title: 'first' }, { ...tab, title: 'second' }]))
-    create.mockImplementationOnce(() => {
-      throw new Error('folder missing')
-    })
-    await start().init()
-    expect(create.mock.calls.map(([options]) => options.title)).toEqual(['first', 'second'])
-  })
-
-  it('keeps a tab that did not open for the next starts, and tells why', async () => {
-    const tab = { accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'shell', sessionId: null, fixedTitle: true }
-    await writeFile(
-      file,
-      JSON.stringify([
-        { ...tab, title: 'opens' },
-        { ...tab, title: 'busy' },
-        { ...tab, title: 'gone', cwd: join(dir, 'missing') },
-        { ...tab, title: 'last try', failedStarts: 2 },
-      ]),
-    )
-    create.mockImplementation((options) => {
-      if (options.title !== 'opens') throw new Error('Claude Code wurde nicht gefunden.')
-      return info({ id: 'new-1', title: 'opens', mode: 'shell', cwd: dir, fixedTitle: true })
-    })
-    const restore = start()
-    await restore.init()
-    // A folder that isn't there is not even tried.
-    expect(create.mock.calls.map(([options]) => options.title)).toEqual(['opens', 'busy', 'last try'])
-    expect(restore.takeFailures()).toEqual([
-      { title: 'busy', reason: 'Claude Code wurde nicht gefunden.', kept: true },
-      { title: 'gone', reason: `Den Ordner „${join(dir, 'missing')}“ gibt es nicht.`, kept: true },
-      { title: 'last try', reason: 'Claude Code wurde nicht gefunden.', kept: false },
-    ])
-    expect(restore.takeFailures()).toEqual([])
-
-    // The file keeps them, counting the starts they failed at, also when the open tabs change.
-    terminalList = [create.mock.results[0]!.value as TerminalInfo]
-    terminalEvents.fire('changed', terminalList)
-    const saved = (await readSaved()) as { title: string; failedStarts?: number }[]
-    expect(saved.map((t) => [t.title, t.failedStarts])).toEqual([
-      ['opens', undefined],
-      ['busy', 1],
-      ['gone', 1],
-    ])
-  })
-
-  it('opens the tabs that did not open when asked to try again', async () => {
-    const tab = { accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'shell', sessionId: null, fixedTitle: true }
-    await writeFile(file, JSON.stringify([{ ...tab, title: 'busy' }, { ...tab, title: 'still busy' }]))
-    let ready = false
-    create.mockImplementation((options) => {
-      if (!ready || options.title === 'still busy') throw new Error('not yet')
-      return info({ id: 'new-1' })
-    })
-    const restore = start()
-    await restore.init()
-    ready = true
-    expect(await restore.retry()).toEqual([{ title: 'still busy', reason: 'not yet', kept: true }])
-    expect((await readSaved()) as unknown[]).toHaveLength(1)
-  })
-
-  it('puts the terminals of a split tab together again, without those that did not open', async () => {
+  it('puts the tabs of a split tab together again, without those that are left out', async () => {
     const tab = { accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'shell', sessionId: null, fixedTitle: false }
     const split = (first: PaneNode, second: PaneNode, direction: 'row' | 'column' = 'row') => ({ direction, ratio: 0.3, first, second })
     await writeFile(
       file,
       JSON.stringify([
         { ...tab, title: 'a', layout: split('0', split('1', '2', 'column')) },
-        { ...tab, title: 'b' },
+        // Of an account that is gone.
+        { ...tab, title: 'b', accountId: 'gone' },
         { ...tab, title: 'c' },
         { ...tab, title: 'alone' },
         // Broken: refers to itself twice.
         { ...tab, title: 'd', layout: split('4', '4') },
         { ...tab, title: 'e' },
         { ...tab, title: 'f', layout: split('6', '7') },
-        { ...tab, title: 'g' },
+        { ...tab, title: 'g', accountId: 'gone' },
       ]),
     )
-    // The terminals of b and g fail to open.
-    create.mockImplementation(() => {
-      const n = create.mock.calls.length
-      if (n === 2 || n === 8) throw new Error('folder missing')
-      return info({ id: `new-${n}` })
-    })
     await start().init()
-    expect(arrange.mock.calls).toEqual([[split('new-1', 'new-3')]])
+    expect(arrange.mock.calls).toEqual([[split('new-1', 'new-2')]])
   })
 
   it('opens browsers again at their page, next to the terminals they shared a tab with', async () => {
-    const tab = { accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'shell', sessionId: null, title: 's', fixedTitle: false }
     await writeFile(
       file,
       JSON.stringify([
-        { ...tab, layout: { direction: 'row', ratio: 0.4, first: '0', second: '1' } },
+        { ...shell, cwd: dir, title: 's', fixedTitle: false, layout: { direction: 'row', ratio: 0.4, first: '0', second: '1' } },
         { mode: 'browser', url: 'http://localhost:5173/', title: 'Vite App', fixedTitle: false },
         { mode: 'browser', url: 'https://example.com/', title: 'Docs', fixedTitle: true },
         // Not a page the browser may show: left out.
@@ -320,7 +486,7 @@ describe('TerminalRestore on start', () => {
   })
 
   it('tells each tab the id it had, so the window finds its group again', async () => {
-    const tab = { accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'shell', sessionId: null, title: 's', fixedTitle: false }
+    const tab = { ...shell, cwd: dir, title: 's', fixedTitle: false }
     await writeFile(
       file,
       JSON.stringify([
@@ -329,22 +495,28 @@ describe('TerminalRestore on start', () => {
         { ...tab, id: '../not an id' },
       ]),
     )
-    await start().init()
-    expect(create.mock.calls.map(([options]) => options.restoredFrom)).toEqual(['old-1', null])
+    const service = start()
+    await service.init()
+    expect(sleep.mock.calls.map(([options]) => options.restoredFrom)).toEqual(['old-1', null])
     expect(openBrowser.mock.calls[0]![0].restoredFrom).toBe('old-2')
+    await service.wake('new-1')
+    expect(wake.mock.calls[0]![1].restoredFrom).toBe('old-1')
   })
 
   it('opens nothing for a file that is no list', async () => {
     await writeFile(file, JSON.stringify({ accountId: 'acc-a' }))
     await start().init()
-    expect(create).not.toHaveBeenCalled()
+    expect(sleep).not.toHaveBeenCalled()
   })
 
   it('opens nothing and forgets the tabs when restoring is off', async () => {
     restoreTerminals = false
-    await writeFile(file, JSON.stringify([{ accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'shell', sessionId: null, title: 'T' }]))
+    await writeFile(
+      file,
+      JSON.stringify([{ accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'shell', sessionId: null, title: 'T' }]),
+    )
     await start().init()
-    expect(create).not.toHaveBeenCalled()
+    expect(sleep).not.toHaveBeenCalled()
     expect(await readSaved()).toEqual([])
   })
 })
@@ -466,18 +638,56 @@ describe('TerminalRestore while running', () => {
     }
   })
 
-  it('starts nothing more and does not start following when disposed while restoring', async () => {
+  it('starts nothing more and keeps the tabs for the next start when disposed while they start', async () => {
+    restoreAsleep = false
     const tab = { accountId: 'acc-a', authAccountId: 'acc-a', cwd: dir, mode: 'session', sessionId: S1, title: 'T' }
-    await writeFile(file, JSON.stringify([tab, { ...tab, sessionId: S2 }, { mode: 'browser', url: 'https://example.com/', title: 'B', fixedTitle: false }]))
+    await writeFile(
+      file,
+      JSON.stringify([tab, { ...tab, sessionId: S2 }, { mode: 'browser', url: 'https://example.com/', title: 'B', fixedTitle: false }]),
+    )
     const service = start()
     const init = service.init()
     service.dispose()
     await init
-    expect(create).not.toHaveBeenCalled()
-    expect(openBrowser).not.toHaveBeenCalled()
+    expect(wake).not.toHaveBeenCalled()
     terminalList = []
     terminalEvents.fire('changed', terminalList)
     // The tabs of the last run are still there for the next start.
     expect(await readSaved()).toHaveLength(3)
+  })
+
+  it('keeps a waiting tab in the file as the last run had it', async () => {
+    await writeFile(
+      file,
+      JSON.stringify([
+        {
+          id: 'old',
+          accountId: 'acc-a',
+          authAccountId: 'acc-b',
+          cwd: dir,
+          mode: 'session',
+          sessionId: S1,
+          title: 'Fix',
+          fixedTitle: false,
+          args: ['--model', 'opus'],
+        },
+      ]),
+    )
+    await start().init()
+    terminalEvents.fire('changed', terminalList)
+    expect(await readSaved()).toEqual([
+      {
+        id: 'new-1',
+        accountId: 'acc-a',
+        authAccountId: 'acc-b',
+        cwd: dir,
+        mode: 'session',
+        sessionId: S1,
+        title: 'Fix',
+        fixedTitle: false,
+        muted: false,
+        args: ['--model', 'opus'],
+      },
+    ])
   })
 })

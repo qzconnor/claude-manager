@@ -161,7 +161,8 @@ export interface CswapImportInput {
 // Terminals
 // ---------------------------------------------------------------------------
 
-export type TerminalStatus = 'running' | 'exited'
+/** `asleep`: a tab of the last run that starts once it is shown (see `TerminalInfo.sleep`). */
+export type TerminalStatus = 'running' | 'exited' | 'asleep'
 
 /** `row`: the parts lie side by side (split vertically), `column`: one above the other (split horizontally). */
 export type SplitDirection = 'row' | 'column'
@@ -501,6 +502,8 @@ export interface TerminalInfo {
   /** Opened again at the start: the id it had in the last run, so the window finds its place in the groups. */
   restoredFrom?: string | null
   status: TerminalStatus
+  /** While it is `asleep`: whether it is starting and why it didn't the last time; null otherwise. */
+  sleep: TerminalSleep | null
   exitCode: number | null
   pid: number
   createdAt: string
@@ -530,6 +533,14 @@ export interface TerminalInfo {
   turn: TerminalTurn | null
   /** The beginning of the last prompt, on one line; only with `hooks`, null before the first one. */
   prompt: string | null
+}
+
+/** A tab of the last run that waits to be shown before it starts (see `TerminalInfo.sleep`). */
+export interface TerminalSleep {
+  /** It is starting: its folder is looked at first, which takes a few seconds for a network drive that is gone. */
+  waking: boolean
+  /** Why it didn't start the last time, e.g. its folder is gone; null before it was tried. */
+  error: string | null
 }
 
 /** How a tab at a usage limit goes on by itself (see `TerminalInfo.resume`). */
@@ -1135,6 +1146,8 @@ export interface GeneralSettings {
   defaultAccountId: string
   /** Remember the open tabs (folder and session) and open them again on the next start. */
   restoreTerminals: boolean
+  /** Tabs opened again at the start begin to run only once they are shown; until then they wait without a process. */
+  restoreAsleep: boolean
   /** `cm` shows a running tab in the same folder instead of opening another one (`cm -n` always opens one). */
   cmReuseTab: boolean
   /** Closing the window only hides it; the app keeps running in the notification area (tray). */

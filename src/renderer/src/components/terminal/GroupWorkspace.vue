@@ -27,6 +27,7 @@ import BrowserBar from './BrowserBar.vue'
 import BrowserEmpty from './BrowserEmpty.vue'
 import BrowserPane from './BrowserPane.vue'
 import GroupTabBar from './GroupTabBar.vue'
+import SleepingPane from './SleepingPane.vue'
 import TerminalEmptyState from './TerminalEmptyState.vue'
 import TerminalPane from './TerminalPane.vue'
 
@@ -284,7 +285,7 @@ const dockPreview = computed(() => {
 
     <!-- A browser shows its page instead of a terminal; a session's page lies in the browser tab. -->
     <component
-      :is="terminal.mode === 'browser' ? BrowserPane : TerminalPane"
+      :is="terminal.mode === 'browser' ? BrowserPane : terminal.status === 'asleep' ? SleepingPane : TerminalPane"
       v-for="terminal in mounted"
       v-show="onScreen(terminal.id) || inBackground(terminal.id)"
       :key="terminal.id"

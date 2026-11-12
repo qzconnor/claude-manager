@@ -15,13 +15,13 @@ export function useSessionMove() {
   const terminals = useTerminalsStore()
   const ui = useUiStore()
 
-  /** The tab the session runs in now; null when it runs in none. */
+  /** The tab the session runs in now, or waits to start in; null when it is in none. */
   function runningTab(session: Pick<SessionSummary, 'accountId' | 'id'>): TerminalInfo | null {
     return (
       terminals.terminals.find(
         (t) =>
           t.mode === 'session' &&
-          t.status === 'running' &&
+          t.status !== 'exited' &&
           t.accountId === session.accountId &&
           (t.sessionId ?? t.resumeSessionId) === session.id,
       ) ?? null

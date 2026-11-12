@@ -161,6 +161,8 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     }
   })
 
+  // The tabs of the last run: the window starts those that wait once it shows them (see `TerminalRestore.wake`).
+  const restore = new TerminalRestore(userDataDir, terminals, accounts, settings)
   const ctx: AppContext = {
     userDataDir,
     settings,
@@ -172,6 +174,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     browser,
     sessions,
     handoff,
+    restore,
     autoSwitch,
     usage,
     artifacts: new ArtifactService(accounts, userAgent, () => cli.version()),
@@ -204,7 +207,6 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   }
   registerIpc(ctx)
   // Runs while the window loads; its tabs appear as soon as they are open.
-  const restore = new TerminalRestore(userDataDir, terminals, accounts, settings)
   let restoreError: string | null = null
   const restored = restore.init().catch((error) => {
     console.error('[restore] tabs could not be restored', error)
@@ -421,38 +423,18 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
       code: serverError,
     })
   }
-  // Tabs of the last run that didn't open: the user learns why and can try again right away. A window
-  // hidden in the tray stays hidden; those tabs come again on the next start.
+  // The tabs of the last run didn't come back at all: the user learns why. A single tab that doesn't
+  // start waits in its place with the reason and „Erneut versuchen“ (see TerminalRestore).
   void restored.then(async () => {
-    if (restoreError !== null && !startHidden && !firstWindow.isDestroyed()) {
-      await dialogs.show(firstWindow, {
-        kind: 'alert',
-        warning: true,
-        title: 'Die Tabs vom letzten Mal gingen nicht auf',
-        description:
-          'Die App versucht es beim nächsten Start noch einmal. Was du bis dahin öffnest, merkt sie sich diesmal nicht für den nächsten Start.',
-        code: restoreError,
-      })
-      return
-    }
-    let failures = restore.takeFailures()
-    while (failures.length > 0 && !startHidden && !firstWindow.isDestroyed()) {
-      await dialogs.whenReady(firstWindow)
-      const again = failures.some((failure) => failure.kept)
-      const retry = await dialogs.show(firstWindow, {
-        kind: again ? 'confirm' : 'alert',
-        warning: true,
-        title: failures.length === 1 ? 'Ein Tab vom letzten Mal ging nicht auf' : `${failures.length} Tabs vom letzten Mal gingen nicht auf`,
-        description: again
-          ? 'Die App versucht es beim nächsten Start noch einmal, oder jetzt gleich.'
-          : 'Sie gingen schon bei mehreren Starts nicht auf, die App versucht es nicht mehr.',
-        code: failures.map((failure) => `${failure.title}: ${failure.reason}${failure.kept ? '' : ' (aufgegeben)'}`).join('\n'),
-        confirmText: again ? 'Erneut versuchen' : 'OK',
-        cancelText: 'Später',
-      })
-      if (!again || !retry) break
-      failures = await restore.retry()
-    }
+    if (restoreError === null || startHidden || firstWindow.isDestroyed()) return
+    await dialogs.show(firstWindow, {
+      kind: 'alert',
+      warning: true,
+      title: 'Die Tabs vom letzten Mal gingen nicht auf',
+      description:
+        'Die App versucht es beim nächsten Start noch einmal. Was du bis dahin öffnest, merkt sie sich diesmal nicht für den nächsten Start.',
+      code: restoreError,
+    })
   })
   if (launchRequest) {
     // Wait for the page so it can select the new tab.

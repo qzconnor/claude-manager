@@ -23,6 +23,7 @@ function terminal(id: string, mode: TerminalMode = 'session', extra: Partial<Ter
     resumeSessionId: null,
     args: [],
     status: 'running',
+    sleep: null,
     exitCode: null,
     pid: 0,
     createdAt: '',

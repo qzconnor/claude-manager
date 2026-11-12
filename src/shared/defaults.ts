@@ -129,6 +129,7 @@ export function createDefaultSettings(platform = 'win32'): AppSettings {
       closeOnExit: 'graceful',
       defaultAccountId: SYSTEM_ACCOUNT_ID,
       restoreTerminals: false,
+      restoreAsleep: true,
       cmReuseTab: true,
       runInTray: false,
       launchAtLogin: false,

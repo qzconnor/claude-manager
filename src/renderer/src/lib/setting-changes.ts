@@ -83,6 +83,7 @@ export const SETTING_PLACES: Record<string, { anchor: SettingsAnchor; label?: st
   'general.confirmCloseRunning': { anchor: 'claude.confirmClose' },
   'general.closeOnExit': { anchor: 'claude.closeOnExit' },
   'general.restoreTerminals': { anchor: 'claude.restoreTerminals' },
+  'general.restoreAsleep': { anchor: 'claude.restoreAsleep' },
   'general.cmReuseTab': { anchor: 'claude.commandReuseTab', label: '„cm“ nutzt einen offenen Tab' },
   'general.runInTray': { anchor: 'claude.runInTray' },
   'general.launchAtLogin': { anchor: 'claude.launchAtLogin' },

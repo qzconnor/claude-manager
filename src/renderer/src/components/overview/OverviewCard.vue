@@ -82,8 +82,9 @@ const working = computed(() => {
 })
 
 const idleText = computed(() => {
-  const { mode, turn, exitCode, status } = props.terminal
+  const { mode, turn, exitCode, status, sleep } = props.terminal
   if (status === 'exited') return exitCode === null ? 'Beendet' : `Beendet mit Code ${exitCode}`
+  if (sleep) return sleep.error ? `Startete nicht: ${sleep.error}` : 'Vom letzten Mal, startet beim Öffnen'
   if (mode === 'shell') return 'Shell'
   if (mode === 'login') return 'Anmeldung bei Claude'
   return turn?.detail ?? (turn ? 'Fertig' : 'Bereit für den ersten Prompt')

@@ -90,6 +90,7 @@ function tab(overrides: Partial<TerminalInfo>): TerminalInfo {
     resumeSessionId: null,
     args: [],
     status: 'running',
+    sleep: null,
     exitCode: null,
     pid: 1,
     createdAt: '2026-11-06T12:00:00.000Z',

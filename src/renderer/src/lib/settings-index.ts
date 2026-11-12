@@ -183,6 +183,11 @@ const TREE = [
         fields: [
           { id: 'claude.defaultAccount', label: 'Account für neue Sessions', keywords: 'Konto neue Session Vorgabe Standard-Account cm' },
           { id: 'claude.restoreTerminals', label: 'Tabs beim Start wiederherstellen', keywords: 'Sessions fortsetzen Neustart' },
+          {
+            id: 'claude.restoreAsleep',
+            label: 'Wiederhergestellte Tabs erst beim Ansehen starten',
+            keywords: 'schlafende Tabs Platzhalter später starten Speicher schneller',
+          },
           { id: 'claude.confirmClose', label: 'Schließen laufender Terminals bestätigen', keywords: 'Nachfrage' },
           { id: 'claude.closeOnExit', label: 'Tab schließen, wenn der Prozess endet', keywords: 'beenden exit' },
           { id: 'claude.usageRefresh', label: 'Usage-Aktualisierung', keywords: 'Limits Nutzung Intervall Minuten' },

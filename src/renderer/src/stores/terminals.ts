@@ -920,6 +920,23 @@ export const useTerminalsStore = defineStore('terminals', () => {
     await window.api.terminals.rename(id, title)
   }
 
+  /**
+   * Starts the tabs among `ids` that wait to (see `TerminalInfo.sleep`), unless they are starting or
+   * didn't start the last time: those wait for „Erneut versuchen“.
+   */
+  function wakeShown(ids: readonly string[]): void {
+    for (const id of ids) {
+      const sleep = byId.value.get(id)?.sleep
+      if (!sleep || sleep.waking || sleep.error) continue
+      window.api.terminals.wake(id).catch((error: unknown) => console.warn('[terminals] a waiting tab did not start', error))
+    }
+  }
+
+  /** Starts a tab of the last run that waits, also once more after it didn't start. */
+  async function wakeTerminal(id: string): Promise<void> {
+    await window.api.terminals.wake(id)
+  }
+
   async function setMuted(id: string, muted: boolean): Promise<void> {
     await window.api.terminals.setMuted(id, muted)
   }
@@ -1226,6 +1243,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
     closeBrowserTab,
     sleeping,
     wake,
+    wakeShown,
+    wakeTerminal,
     focusedAt: focusedAtOf,
     runningCount,
     load,

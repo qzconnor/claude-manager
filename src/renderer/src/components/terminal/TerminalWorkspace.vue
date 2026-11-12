@@ -10,6 +10,7 @@ import { useBrowsersStore } from '@/stores/browsers'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import BrowserPane from './BrowserPane.vue'
+import SleepingPane from './SleepingPane.vue'
 import TerminalEmptyState from './TerminalEmptyState.vue'
 import TerminalPane from './TerminalPane.vue'
 
@@ -162,7 +163,7 @@ watch(waking, (ids) => ids.forEach((id) => terminals.wake(id)), { immediate: tru
   >
     <!-- A browser tab shows its page instead of a terminal. -->
     <component
-      :is="terminal.mode === 'browser' ? BrowserPane : TerminalPane"
+      :is="terminal.mode === 'browser' ? BrowserPane : terminal.status === 'asleep' ? SleepingPane : TerminalPane"
       v-for="terminal in panes"
       v-show="onScreen(terminal.id) || inBackground(terminal.id)"
       :key="terminal.id"

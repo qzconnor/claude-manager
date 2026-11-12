@@ -6,6 +6,7 @@ import ChangesView from '@/components/files/ChangesView.vue'
 import DiffView from '@/components/files/DiffView.vue'
 import FileTreePanel from '@/components/files/FileTreePanel.vue'
 import TerminalWorkspace from '@/components/terminal/TerminalWorkspace.vue'
+import { useWakeShown } from '@/composables/useWakeShown'
 import { separatorValue } from '@/lib/separator-keys'
 import { cn } from '@/lib/utils'
 import { useBrowsersStore } from '@/stores/browsers'
@@ -138,6 +139,7 @@ watch(
   (ids) => window.api.terminals.viewing(ids ? ids.split(',') : []),
   { immediate: true },
 )
+useWakeShown(() => (onTerminals.value ? (terminals.activeTab?.panes.map((p) => p.id) ?? []) : []))
 </script>
 
 <template>

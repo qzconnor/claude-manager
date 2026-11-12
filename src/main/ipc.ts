@@ -338,6 +338,7 @@ export function registerIpc(ctx: AppContext): void {
     const image = await clipboardImage()
     return image !== null && ctx.terminals.keepPastedImage(terminalId, number, image)
   })
+  handle(IpcInvoke.terminalsWake, (_e, id: unknown) => ctx.restore.wake(requireString(id, 'id')))
   on(IpcSend.terminalViewing, (_e, ids: unknown) => {
     ctx.notifications.setViewing(Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string' && !!id) : [])
   })

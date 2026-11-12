@@ -23,6 +23,7 @@ function terminal(id: string, patch: Partial<TerminalInfo> = {}): TerminalInfo {
     resumeSessionId: null,
     args: [],
     status: 'running',
+    sleep: null,
     exitCode: null,
     pid: 1,
     createdAt: '2026-11-12T08:00:00Z',

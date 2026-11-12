@@ -53,6 +53,7 @@ import { useBrowsersStore } from '@/stores/browsers'
 import { useTerminalsStore, type TerminalTab } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import BrowserFavicon from './BrowserFavicon.vue'
+import SleepIcon from './SleepIcon.vue'
 import TerminalTabCard from './TerminalTabCard.vue'
 
 /**
@@ -336,6 +337,7 @@ function openFolder() {
                     />
                     <BrowserFavicon v-else :terminal-id="pane.id" class="size-3.5" />
                   </template>
+                  <SleepIcon v-else-if="pane.status === 'asleep'" :sleep="pane.sleep" />
                   <LoaderCircleIcon
                     v-else-if="pane.busy"
                     role="status"
@@ -367,6 +369,7 @@ function openFolder() {
                     cn(
                       'min-w-0 flex-1 truncate',
                       pane.status === 'exited' && 'text-muted-foreground line-through',
+                      pane.status === 'asleep' && 'text-muted-foreground',
                       attention && pane.status !== 'exited' && 'font-medium text-foreground',
                     )
                   "

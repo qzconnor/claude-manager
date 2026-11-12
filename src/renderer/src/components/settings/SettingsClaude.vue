@@ -71,6 +71,10 @@ const restoreTerminals = useSetting(
   (s) => s.general.restoreTerminals,
   (restoreTerminals) => ({ general: { restoreTerminals } }),
 )
+const restoreAsleep = useSetting(
+  (s) => s.general.restoreAsleep,
+  (restoreAsleep) => ({ general: { restoreAsleep } }),
+)
 const runInTray = useSetting(
   (s) => s.general.runInTray,
   (runInTray) => ({ general: { runInTray } }),
@@ -204,7 +208,10 @@ async function recheck() {
     <SettingsSection
       anchor="claude.general"
       title="Allgemein"
-      :reset="{ general: ['defaultAccountId', 'restoreTerminals', 'confirmCloseRunning', 'closeOnExit'], claude: ['usageRefreshMinutes'] }"
+      :reset="{
+        general: ['defaultAccountId', 'restoreTerminals', 'restoreAsleep', 'confirmCloseRunning', 'closeOnExit'],
+        claude: ['usageRefreshMinutes'],
+      }"
     >
       <SettingField anchor="claude.defaultAccount" for="default-account" label="Account für neue Sessions" description="Die Vorgabe für „+“, Strg+Umschalt+T und cm.">
         <AccountSelect id="default-account" v-model="defaultAccountId" size="sm" class="w-56" />
@@ -216,6 +223,14 @@ async function recheck() {
         description="Merkt sich Ordner und Session jedes offenen Tabs. Beim nächsten Start wird die Session fortgesetzt, ohne gespeicherte Session startet eine neue im selben Ordner."
       >
         <Switch id="restore-terminals" v-model="restoreTerminals" />
+      </SettingField>
+      <SettingField
+        anchor="claude.restoreAsleep"
+        for="restore-asleep"
+        label="Wiederhergestellte Tabs erst beim Ansehen starten"
+        description="Bis du einen Tab öffnest, wartet er ohne Prozess. Das macht den Start schneller und spart Speicher. Startet er nicht, etwa weil sein Ordner fehlt, steht dort warum, mit „Erneut versuchen“. Aus: Alle starten gleich beim Start der App."
+      >
+        <Switch id="restore-asleep" v-model="restoreAsleep" :disabled="!restoreTerminals" />
       </SettingField>
       <SettingField anchor="claude.confirmClose" for="confirm-close" label="Schließen laufender Terminals bestätigen">
         <Switch id="confirm-close" v-model="confirmCloseRunning" />

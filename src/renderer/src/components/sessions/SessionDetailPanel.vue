@@ -76,13 +76,16 @@ const pane = ref<'messages' | 'changes'>('messages')
 /** The project's folder: for a session in a worktree, the folder it was started in. */
 const folder = computed(() => sessionFolder(props.summary))
 
-/** The tab the session runs in right now: „Fortsetzen“ shows it instead of starting the session again. */
+/**
+ * The tab the session runs in right now, or waits to start in (it starts once shown): „Fortsetzen“
+ * shows it instead of starting the session again.
+ */
 const tab = computed(
   () =>
     terminals.terminals.find(
       (t) =>
         t.mode === 'session' &&
-        t.status === 'running' &&
+        t.status !== 'exited' &&
         t.accountId === props.summary.accountId &&
         t.sessionId === props.summary.id,
     ) ?? null,

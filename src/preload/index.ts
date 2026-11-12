@@ -85,6 +85,7 @@ const api: ManagerApi = {
     resumeAtReset: (id, on) => invoke(IpcInvoke.terminalsResumeAtReset, id, on),
     pastedImage: (id, n) => invoke(IpcInvoke.terminalsPastedImage, id, n),
     keepPastedImage: (id, n) => invoke(IpcInvoke.terminalsKeepPastedImage, id, n),
+    wake: (id) => invoke(IpcInvoke.terminalsWake, id),
     viewing: (ids) => ipcRenderer.send(IpcSend.terminalViewing, ids),
     colorScheme: (dark) => ipcRenderer.send(IpcSend.terminalColorScheme, dark),
     reorder: (ids) => ipcRenderer.send(IpcSend.terminalReorder, ids),

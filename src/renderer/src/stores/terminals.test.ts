@@ -30,6 +30,7 @@ function terminal(id: string, mode: TerminalMode = 'session'): TerminalInfo {
     resumeSessionId: null,
     args: [],
     status: 'running',
+    sleep: null,
     exitCode: null,
     pid: 0,
     createdAt: '',
@@ -86,6 +87,7 @@ const api = {
     reorder: vi.fn(),
     arrange: vi.fn(),
     close: vi.fn(),
+    wake: vi.fn(async () => {}),
   },
 }
 
@@ -513,6 +515,30 @@ describe('where a terminal main reports goes', () => {
     terminals.activate('s2')
     changed(sessions('s1', 'n1', 's2'), [])
     expect(tabsOf(terminals)).toEqual([['s1', 'n1', 's2']])
+  })
+})
+
+describe('tabs of the last run that wait to start', () => {
+  const waiting = (id: string, sleep: TerminalInfo['sleep']): TerminalInfo => ({ ...terminal(id), status: 'asleep', sleep })
+
+  it('starts those that are shown, but not one that is starting or did not start', async () => {
+    const terminals = await load(
+      [
+        waiting('w', { waking: false, error: null }),
+        waiting('starting', { waking: true, error: null }),
+        waiting('failed', { waking: false, error: 'Den Ordner gibt es nicht.' }),
+        terminal('running'),
+      ],
+      [],
+    )
+    terminals.wakeShown(['w', 'starting', 'failed', 'running', 'gone'])
+    expect(api.terminals.wake.mock.calls).toEqual([['w']])
+  })
+
+  it('starts one that did not start once more when asked', async () => {
+    const terminals = await load([waiting('failed', { waking: false, error: 'Den Ordner gibt es nicht.' })], [])
+    await terminals.wakeTerminal('failed')
+    expect(api.terminals.wake.mock.calls).toEqual([['failed']])
   })
 })
 

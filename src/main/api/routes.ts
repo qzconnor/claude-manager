@@ -398,6 +398,7 @@ export const routes: Route[] = [
     handler: async (ctx) => {
       const terminal = requireTerminal(ctx, ctx.params.id)
       const data = requiredString(await ctx.body(), 'data', 256 * 1024)
+      if (terminal.status === 'asleep') throw new HttpError(409, 'Der Tab ist vom letzten Start und startet erst, wenn die App ihn zeigt.')
       if (terminal.status !== 'running') throw new HttpError(409, 'Der Prozess ist bereits beendet.')
       ctx.app.terminals.write(ctx.params.id, data)
     },

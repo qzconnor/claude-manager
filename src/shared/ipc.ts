@@ -117,6 +117,7 @@ export const IpcInvoke = {
   terminalsResumeAtReset: 'terminals:resume-at-reset',
   terminalsPastedImage: 'terminals:pasted-image',
   terminalsKeepPastedImage: 'terminals:keep-pasted-image',
+  terminalsWake: 'terminals:wake',
   browserFavicon: 'browser:favicon',
   browserLog: 'browser:log',
   browserClearLog: 'browser:clear-log',
@@ -421,6 +422,11 @@ export interface ManagerApi {
      * from it: so it shows before it is sent. False when the clipboard holds no image.
      */
     keepPastedImage(id: string, n: number): Promise<boolean>
+    /**
+     * Starts a tab of the last run that waits (status `asleep`) in its place, once it is shown or to try
+     * again; one that doesn't start keeps waiting with the reason (see `TerminalInfo.sleep`).
+     */
+    wake(id: string): Promise<void>
     /** Tells which terminals the window shows (none: another page): their news counts as seen. */
     viewing(ids: string[]): void
     /** Tells whether the terminal theme is dark; programs that asked for it hear when that changes. */

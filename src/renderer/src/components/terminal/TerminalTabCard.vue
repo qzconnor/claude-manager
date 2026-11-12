@@ -29,6 +29,7 @@ import { fileManagerLabel } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { limitLabel, resumeLabel } from '@/lib/usage'
 import BrowserFavicon from './BrowserFavicon.vue'
+import SleepIcon from './SleepIcon.vue'
 
 /**
  * What the hover card of a tab shows: the full title and where the session runs. The title is the
@@ -52,6 +53,12 @@ const attention = computed(() =>
   props.terminal.attention && props.terminal.attention !== 'limit' ? attentionLook[props.terminal.attention] : null,
 )
 const folder = computed(() => props.terminal.cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? props.terminal.cwd)
+/** A tab of the last run that waits to start (see `TerminalInfo.sleep`). */
+const sleepText = computed(() => {
+  const { sleep } = props.terminal
+  if (sleep?.error) return `Startete nicht: ${sleep.error}`
+  return sleep?.waking ? 'Startet …' : 'Vom letzten Mal: startet, sobald du den Tab öffnest'
+})
 
 // What runs, as the session's hooks tell it. A tool only counts while Claude works: after a declined
 // permission it stays behind.
@@ -183,6 +190,11 @@ const activity = computed(() => {
       <div v-if="terminal.muted" class="flex gap-2 text-muted-foreground">
         <BellOffIcon class="mt-px size-3.5 shrink-0" />
         <p class="min-w-0 flex-1">Benachrichtigungen stummgeschaltet</p>
+      </div>
+
+      <div v-if="terminal.sleep" :class="cn('flex gap-2', terminal.sleep.error ? 'text-warning' : 'text-muted-foreground')">
+        <SleepIcon :sleep="terminal.sleep" class="mt-px shrink-0" />
+        <p class="min-w-0 flex-1 break-words">{{ sleepText }}</p>
       </div>
 
       <div v-if="terminal.status === 'exited'" class="flex gap-2 text-muted-foreground">

@@ -23,6 +23,7 @@ function terminal(id: string, status: TerminalStatus = 'running'): TerminalInfo 
     resumeSessionId: null,
     args: [],
     status,
+    sleep: null,
     exitCode: null,
     pid: 0,
     createdAt: '',

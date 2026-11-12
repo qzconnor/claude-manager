@@ -86,6 +86,7 @@ function terminal(overrides: Partial<TerminalInfo> = {}): TerminalInfo {
     resumeSessionId: null,
     args: [],
     status: 'running',
+    sleep: null,
     exitCode: null,
     pid: 1,
     createdAt: '2026-11-06T12:00:00.000Z',
@@ -279,10 +280,16 @@ describe('other terminal routes', () => {
   })
 
   it('writes input only to a running process', async () => {
-    const app = fakeApp({ terminals: [terminal(), terminal({ id: 't2', status: 'exited' })] })
+    const waiting = terminal({ id: 't3', status: 'asleep', sleep: { waking: false, error: null } })
+    const app = fakeApp({ terminals: [terminal(), terminal({ id: 't2', status: 'exited' }), waiting] })
     await call(app, 'POST', '/api/v1/terminals/t1/input', { data: 'hi\r' })
     expect(app.terminals.write).toHaveBeenCalledWith('t1', 'hi\r')
     await expectStatus(call(app, 'POST', '/api/v1/terminals/t2/input', { data: 'hi\r' }), 409)
+    // A tab of the last run starts once the app shows it.
+    const asleep = call(app, 'POST', '/api/v1/terminals/t3/input', { data: 'hi\r' })
+    await expectStatus(asleep, 409)
+    await asleep.catch((error: HttpError) => expect(error.message).toContain('startet erst'))
+    expect(app.terminals.write).toHaveBeenCalledOnce()
     await expectStatus(call(app, 'POST', '/api/v1/terminals/t1/input', {}), 400)
   })
 

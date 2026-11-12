@@ -12,6 +12,7 @@ import type { NotificationService } from './services/notification-service'
 import type { SessionHandoff } from './services/session-handoff'
 import type { SessionService } from './services/session-service'
 import type { SettingsService } from './services/settings-service'
+import type { TerminalRestore } from './services/terminal-restore'
 import type { TerminalService } from './services/terminal-service'
 import type { ThemeService } from './services/theme-service'
 import type { UpdateService } from './services/update-service'
@@ -35,6 +36,7 @@ export interface AppContext {
   sessions: SessionService
   /** Continuing sessions with another account's limits. */
   handoff: SessionHandoff
+  restore: TerminalRestore
   /** Continues sessions at a limit with another account by themselves (setting `claude.autoSwitch`). */
   autoSwitch: AutoSwitch
   usage: UsageService
