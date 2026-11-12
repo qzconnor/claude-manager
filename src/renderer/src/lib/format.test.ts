@@ -6,6 +6,7 @@ import {
   formatClock,
   formatDateTime,
   formatNumber,
+  formatPeriod,
   formatRelative,
   formatReset,
   formatTokens,
@@ -90,6 +91,28 @@ describe('formatDateTime', () => {
     expect(formatDateTime(null)).toBe('–')
     expect(formatDateTime(undefined)).toBe('–')
     expect(formatDateTime('not a date')).toBe('–')
+  })
+})
+
+describe('formatPeriod', () => {
+  it('names the day once for a span within it', () => {
+    expect(formatPeriod('2026-11-06T08:10:00Z', '2026-11-06T12:00:00Z')).toBe('06.11.2026, 09:10 – 13:00')
+  })
+
+  it('names both days for a span over midnight, by local time', () => {
+    expect(formatPeriod('2026-11-05T22:30:00Z', '2026-11-06T00:15:00Z')).toBe('05.11.2026, 23:30 – 06.11.2026, 01:15')
+    // 22:59 and 23:01 UTC are the same day in UTC, but not in Berlin.
+    expect(formatPeriod('2026-11-05T22:59:00Z', '2026-11-05T23:01:00Z')).toBe('05.11.2026, 23:59 – 06.11.2026, 00:01')
+  })
+
+  it('shows one time when both ends are the same minute', () => {
+    expect(formatPeriod('2026-11-06T12:00:00Z', '2026-11-06T12:00:40Z')).toBe('06.11.2026, 13:00')
+  })
+
+  it('falls back to the end that can be read', () => {
+    expect(formatPeriod(null, '2026-11-06T12:00:00Z')).toBe('06.11.2026, 13:00')
+    expect(formatPeriod('2026-11-06T12:00:00Z', 'kaputt')).toBe('06.11.2026, 13:00')
+    expect(formatPeriod(null, null)).toBe('–')
   })
 })
 

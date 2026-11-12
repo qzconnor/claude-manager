@@ -51,6 +51,18 @@ export function formatDateTime(iso: string | null | undefined): string {
   return Number.isNaN(ms) ? '–' : dateTime.format(ms)
 }
 
+/**
+ * From when to when something ran: "06.11.2026, 09:10 – 13:00" within a day (by local time), else both
+ * ends in full. One time when both are the same.
+ */
+export function formatPeriod(start: string | null | undefined, end: string | null | undefined): string {
+  const from = start ? Date.parse(start) : NaN
+  const to = end ? Date.parse(end) : NaN
+  if (Number.isNaN(from) || Number.isNaN(to)) return formatDateTime(Number.isNaN(from) ? end : start)
+  if (dateTime.format(from) === dateTime.format(to)) return dateTime.format(from)
+  return `${dateTime.format(from)} – ${(startOfDay(from) === startOfDay(to) ? time : dateTime).format(to)}`
+}
+
 /** Clock time, with the weekday when it is more than a day away (e.g. "19:40", "Mo., 04:00"). */
 export function formatClock(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return '–'

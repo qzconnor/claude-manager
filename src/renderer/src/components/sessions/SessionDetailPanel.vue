@@ -4,14 +4,17 @@ import {
   ChevronDownIcon,
   CopyIcon,
   CpuIcon,
+  EllipsisIcon,
   FolderGit2Icon,
   FolderIcon,
   FolderOpenIcon,
   GitBranchIcon,
   GitForkIcon,
+  HardDriveIcon,
   MessagesSquareIcon,
   PencilIcon,
   PlayIcon,
+  SquareTerminalIcon,
   Trash2Icon,
   TriangleAlertIcon,
 } from '@lucide/vue'
@@ -21,26 +24,30 @@ import type { SessionDetail, SessionSummary } from '@shared/types'
 import AccountBadge from '@/components/common/AccountBadge.vue'
 import AccountChoiceItems from '@/components/common/AccountChoiceItems.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
+  DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAccountSwitch } from '@/composables/useAccountSwitch'
 import { useLauncher } from '@/composables/useLauncher'
 import { useSessionRemoval } from '@/composables/useSessionRemoval'
+import { modelName } from '@/lib/context'
 import { attempt } from '@/lib/errors'
-import { formatBytes, formatDateTime, shortenPath } from '@/lib/format'
+import { formatBytes, formatPeriod, shortenPath } from '@/lib/format'
 import { sessionFolder } from '@/lib/session-tree'
 import { useAppStore } from '@/stores/app'
+import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import TranscriptView from './TranscriptView.vue'
 
@@ -55,6 +62,7 @@ defineEmits<{ loadOlder: [] }>()
 
 const app = useAppStore()
 const ui = useUiStore()
+const terminals = useTerminalsStore()
 const launcher = useLauncher()
 const accountSwitch = useAccountSwitch()
 const removal = useSessionRemoval()
@@ -62,6 +70,25 @@ const choicesOpen = ref(false)
 
 /** The project's folder: for a session in a worktree, the folder it was started in. */
 const folder = computed(() => sessionFolder(props.summary))
+
+/** The tab the session runs in right now: „Fortsetzen“ shows it instead of starting the session again. */
+const tab = computed(
+  () =>
+    terminals.terminals.find(
+      (t) =>
+        t.mode === 'session' &&
+        t.status === 'running' &&
+        t.accountId === props.summary.accountId &&
+        t.sessionId === props.summary.id,
+    ) ?? null,
+)
+
+const model = computed(() => (props.summary.model ? (modelName(props.summary.model) ?? props.summary.model) : null))
+const messages = computed(() => {
+  const count = props.summary.messageCount
+  const exact = props.summary.messageCountExact
+  return `${count.toLocaleString('de')}${exact ? '' : '+'} ${count === 1 && exact ? 'Nachricht' : 'Nachrichten'}`
+})
 
 function openFolder() {
   if (folder.value) void attempt(() => window.api.app.openPath(folder.value!), 'Ordner konnte nicht geöffnet werden')
@@ -79,92 +106,36 @@ async function copyId() {
 
 <template>
   <div class="flex size-full min-h-0 flex-col">
-    <header class="flex flex-col gap-3 border-b px-6 py-4">
-      <div class="flex items-start justify-between gap-4">
-        <div class="flex min-w-0 flex-col gap-1.5">
-          <h2 class="selectable font-heading text-base leading-snug font-semibold">{{ summary.title }}</h2>
-          <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <AccountBadge :account-id="summary.accountId" />
-            <span v-if="folder" class="flex min-w-0 items-center gap-1" v-tooltip="folder">
-              <FolderIcon class="size-3.5 shrink-0" />
-              <span class="selectable truncate font-mono">{{ shortenPath(folder, app.info?.homeDir) }}</span>
-            </span>
-            <span
-              v-if="summary.worktree"
-              class="flex min-w-0 items-center gap-1"
-              v-tooltip="`Worktree in ${summary.worktree.path}`"
-            >
-              <FolderGit2Icon class="size-3.5 shrink-0" />
-              <span class="selectable truncate">Worktree {{ summary.worktree.name }}</span>
-            </span>
-            <span v-if="summary.gitBranch" class="flex items-center gap-1">
-              <GitBranchIcon class="size-3.5" />
-              {{ summary.gitBranch }}
-            </span>
-            <span v-if="summary.model" class="flex items-center gap-1">
-              <CpuIcon class="size-3.5" />
-              {{ summary.model }}
-            </span>
-            <span class="flex items-center gap-1">
-              <MessagesSquareIcon class="size-3.5" />
-              {{ summary.messageCount }}{{ summary.messageCountExact ? '' : '+' }} · {{ formatBytes(summary.sizeBytes) }}
-            </span>
-            <span class="flex items-center gap-1">
-              <CalendarIcon class="size-3.5" />
-              {{ formatDateTime(summary.createdAt) }} – {{ formatDateTime(summary.updatedAt) }}
-            </span>
-          </div>
+    <header class="flex flex-col gap-3 border-b px-6 py-4 lg:px-10">
+      <div class="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+        <div class="group/title flex min-w-0 flex-1 basis-72 items-start gap-1">
+          <h2 class="selectable min-w-0 font-heading text-lg leading-snug font-semibold [overflow-wrap:anywhere]">
+            {{ summary.title }}
+          </h2>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Umbenennen"
+            v-tooltip="'Umbenennen'"
+            class="mt-[2px] size-[24px] shrink-0 text-muted-foreground opacity-0 group-hover/title:opacity-100 focus-visible:opacity-100"
+            @click="rename"
+          >
+            <PencilIcon />
+          </Button>
         </div>
+
+        <!-- Going on with the session first, what else can be done with it behind „…“. -->
         <div class="flex shrink-0 items-center gap-2">
           <Spinner v-if="loading && detail" class="text-muted-foreground" />
-          <ButtonGroup>
-            <Tooltip>
-              <TooltipTrigger as-child>
-                <Button variant="outline" size="icon-sm" aria-label="Umbenennen" @click="rename">
-                  <PencilIcon />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Umbenennen</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger as-child>
-                <Button variant="outline" size="icon-sm" aria-label="Session-ID kopieren" @click="copyId">
-                  <CopyIcon />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Session-ID kopieren</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger as-child>
-                <Button variant="outline" size="icon-sm" aria-label="Projektordner öffnen" :disabled="!folder" @click="openFolder">
-                  <FolderOpenIcon />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Projektordner öffnen</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger as-child>
-                <Button
-                  variant="outline"
-                  size="icon-sm"
-                  aria-label="Session löschen"
-                  class="hover:text-destructive"
-                  @click="removal.remove([summary])"
-                >
-                  <Trash2Icon />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Löschen (in den Papierkorb)</TooltipContent>
-            </Tooltip>
-          </ButtonGroup>
-          <Button size="sm" variant="outline" @click="launcher.resume(summary, true)">
+          <Button size="sm" variant="outline" v-tooltip="'Als neue Session abzweigen'" @click="launcher.resume(summary, true)">
             <GitForkIcon data-icon="inline-start" />
             Abzweigen
           </Button>
           <ButtonGroup>
             <Button size="sm" @click="launcher.resume(summary)">
-              <PlayIcon data-icon="inline-start" />
-              Fortsetzen
+              <SquareTerminalIcon v-if="tab" data-icon="inline-start" />
+              <PlayIcon v-else data-icon="inline-start" />
+              {{ tab ? 'Zum Tab' : 'Fortsetzen' }}
             </Button>
             <DropdownMenu v-model:open="choicesOpen">
               <DropdownMenuTrigger as-child>
@@ -185,6 +156,82 @@ async function copyId() {
               </DropdownMenuContent>
             </DropdownMenu>
           </ButtonGroup>
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button variant="outline" size="icon-sm" aria-label="Weitere Aktionen" v-tooltip="'Weitere Aktionen'">
+                <EllipsisIcon />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" class="w-56">
+              <DropdownMenuGroup>
+                <DropdownMenuItem @select="rename">
+                  <PencilIcon />
+                  Umbenennen…
+                </DropdownMenuItem>
+                <DropdownMenuItem :disabled="!folder" @select="openFolder">
+                  <FolderOpenIcon />
+                  Projektordner öffnen
+                </DropdownMenuItem>
+                <DropdownMenuItem @select="copyId">
+                  <CopyIcon />
+                  Session-ID kopieren
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" @select="removal.remove([summary])">
+                <Trash2Icon />
+                Löschen…
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+
+      <!-- Where the session ran, then what it holds. -->
+      <div class="flex flex-col gap-1.5 text-xs text-muted-foreground">
+        <div class="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1">
+          <AccountBadge :account-id="summary.accountId" />
+          <Badge v-if="tab" variant="secondary" class="gap-1.5">
+            <Spinner v-if="tab.busy" class="size-3" />
+            <span v-else class="size-1.5 rounded-full bg-primary" />
+            {{ tab.busy ? 'Claude arbeitet' : 'Offen in einem Tab' }}
+          </Badge>
+          <button
+            v-if="folder"
+            type="button"
+            class="flex min-w-0 cursor-pointer items-center gap-1 rounded-sm transition-colors outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+            v-tooltip="`${folder} · Öffnen`"
+            @click="openFolder"
+          >
+            <FolderIcon class="size-3.5 shrink-0" />
+            <span class="truncate font-mono">{{ shortenPath(folder, app.info?.homeDir) }}</span>
+          </button>
+          <span v-if="summary.worktree" class="flex min-w-0 items-center gap-1" v-tooltip="`Worktree in ${summary.worktree.path}`">
+            <FolderGit2Icon class="size-3.5 shrink-0" />
+            <span class="selectable truncate">Worktree {{ summary.worktree.name }}</span>
+          </span>
+          <span v-if="summary.gitBranch" class="flex min-w-0 items-center gap-1">
+            <GitBranchIcon class="size-3.5 shrink-0" />
+            <span class="selectable truncate">{{ summary.gitBranch }}</span>
+          </span>
+        </div>
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <span v-if="model" class="flex items-center gap-1" v-tooltip="summary.model">
+            <CpuIcon class="size-3.5 shrink-0" />
+            {{ model }}
+          </span>
+          <span class="flex items-center gap-1">
+            <MessagesSquareIcon class="size-3.5 shrink-0" />
+            {{ messages }}
+          </span>
+          <span class="flex items-center gap-1">
+            <HardDriveIcon class="size-3.5 shrink-0" />
+            {{ formatBytes(summary.sizeBytes) }}
+          </span>
+          <span class="flex items-center gap-1">
+            <CalendarIcon class="size-3.5 shrink-0" />
+            {{ formatPeriod(summary.createdAt, summary.updatedAt) }}
+          </span>
         </div>
       </div>
     </header>
