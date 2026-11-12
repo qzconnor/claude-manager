@@ -190,7 +190,8 @@ describe('FileTreeService with git', () => {
     expect(diff.patch).toContain('+HELLO')
     expect((await service.searchList(repo)).paths).toContain('a.txt')
     expect(await programs()).toEqual([])
-  })
+    // About 15 runs of git and sh: on Windows, with the other tests running, more than the 5 s default.
+  }, 20_000)
 
   it('shows the files of a repository without a commit as new', async () => {
     const repo = join(dir, 'repo')
