@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { GaugeIcon, HistoryIcon, SearchIcon, SettingsIcon, UsersIcon } from '@lucide/vue'
+import { GaugeIcon, HistoryIcon, SearchIcon, SettingsIcon, ShapesIcon, UsersIcon } from '@lucide/vue'
 import { computed, type Component } from 'vue'
 import TerminalTabs from '@/components/terminal/TerminalTabs.vue'
 import { Separator } from '@/components/ui/separator'
@@ -21,6 +21,7 @@ interface NavItem {
 const primary: NavItem[] = [
   { name: 'dashboard', label: 'Usage-Dashboard', icon: GaugeIcon },
   { name: 'sessions', label: 'Sessions', icon: HistoryIcon },
+  { name: 'artifacts', label: 'Artefakte', icon: ShapesIcon },
   { name: 'accounts', label: 'Accounts', icon: UsersIcon },
 ]
 

@@ -18,6 +18,7 @@ import type {
   AccountUsage,
   ApiStatus,
   AppInfo,
+  ArtifactList,
   CommandStatus,
   AppSettings,
   CswapImportInput,
@@ -156,6 +157,12 @@ export const IpcInvoke = {
   usageGet: 'usage:get',
   usageRefresh: 'usage:refresh',
   usageStats: 'usage:stats',
+
+  artifactsList: 'artifacts:list',
+  artifactsRename: 'artifacts:rename',
+  artifactsRemove: 'artifacts:remove',
+  artifactsPin: 'artifacts:pin',
+  artifactsThumbnail: 'artifacts:thumbnail',
 
   gitBranch: 'git:branch',
   gitWatch: 'git:watch',
@@ -536,6 +543,16 @@ export interface ManagerApi {
   notifications: {
     /** Shows an example notification with the current settings. */
     test(): Promise<void>
+  }
+  /** The pages and documents Claude published on claude.ai, per account (see `ArtifactService`). */
+  artifacts: {
+    list(accountId: string): Promise<ArtifactList>
+    rename(accountId: string, id: string, title: string): Promise<void>
+    /** Deletes an own artifact for good; `gone` when it was deleted already. */
+    remove(accountId: string, id: string): Promise<'deleted' | 'gone'>
+    setPinned(accountId: string, id: string, pinned: boolean): Promise<void>
+    /** Its thumbnail of the last list as a `data:` URL; null without one. */
+    thumbnail(accountId: string, id: string, dark: boolean): Promise<string | null>
   }
   usage: {
     get(): Promise<AccountUsage[]>

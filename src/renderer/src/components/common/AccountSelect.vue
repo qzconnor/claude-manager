@@ -1,11 +1,13 @@
 <script setup lang="ts">
+import type { Account } from '@shared/types'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useAccountsStore } from '@/stores/accounts'
 import AccountDot from './AccountDot.vue'
 
-defineProps<{ id?: string; size?: 'sm' | 'default'; class?: string }>()
+/** `accounts`: the ones to choose from, all without. */
+const props = defineProps<{ id?: string; size?: 'sm' | 'default'; class?: string; accounts?: Account[] }>()
 const model = defineModel<string>({ required: true })
-const accounts = useAccountsStore()
+const store = useAccountsStore()
 </script>
 
 <template>
@@ -15,7 +17,7 @@ const accounts = useAccountsStore()
     </SelectTrigger>
     <SelectContent>
       <SelectGroup>
-        <SelectItem v-for="account in accounts.accounts" :key="account.id" :value="account.id">
+        <SelectItem v-for="account in props.accounts ?? store.accounts" :key="account.id" :value="account.id">
           <AccountDot :color="account.color" />
           {{ account.name }}
         </SelectItem>

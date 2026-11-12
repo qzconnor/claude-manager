@@ -18,6 +18,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import AccountsView from '@/views/AccountsView.vue'
+import ArtifactsView from '@/views/ArtifactsView.vue'
 import DashboardView from '@/views/DashboardView.vue'
 import SessionsView from '@/views/SessionsView.vue'
 import SettingsView from '@/views/SettingsView.vue'
@@ -51,6 +52,7 @@ const treeSide = computed(() => settings.settings.appearance.fileTreeSide)
 
 const PAGE_VIEWS: Record<PageName, Component> = {
   sessions: SessionsView,
+  artifacts: ArtifactsView,
   dashboard: DashboardView,
   accounts: AccountsView,
   settings: SettingsView,

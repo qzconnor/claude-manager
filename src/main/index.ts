@@ -20,6 +20,7 @@ import { fallbackSessionFolder } from './lib/session-folder'
 import { loadShellEnv } from './lib/shell-env'
 import { AccountService } from './services/account-service'
 import { SessionPrompt } from './services/app-context'
+import { ArtifactService } from './services/artifact-service'
 import { ClaudeCli } from './services/claude-cli'
 import { CswapImport } from './services/cswap-import'
 import { FileTreeService } from './services/file-tree-service'
@@ -172,6 +173,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     handoff,
     autoSwitch,
     usage,
+    artifacts: new ArtifactService(accounts, userAgent, () => cli.version()),
     notifications,
     git,
     files,

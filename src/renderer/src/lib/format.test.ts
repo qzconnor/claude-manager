@@ -9,6 +9,7 @@ import {
   formatPeriod,
   formatRelative,
   formatReset,
+  formatShortDate,
   formatTokens,
   formatUpcoming,
   identityLabel,
@@ -91,6 +92,27 @@ describe('formatDateTime', () => {
     expect(formatDateTime(null)).toBe('–')
     expect(formatDateTime(undefined)).toBe('–')
     expect(formatDateTime('not a date')).toBe('–')
+  })
+})
+
+describe('formatShortDate', () => {
+  const now = Date.parse('2026-11-12T12:00:00Z')
+
+  it('is relative within the last week', () => {
+    expect(formatShortDate('2026-11-12T11:59:40Z', now)).toBe('gerade eben')
+    expect(formatShortDate('2026-11-12T09:00:00Z', now)).toBe('vor 3 Stunden')
+    expect(formatShortDate('2026-11-06T12:00:00Z', now)).toBe('vor 6 Tagen')
+  })
+
+  it('names the day before that, the year only when it is another one', () => {
+    expect(formatShortDate('2026-11-05T12:00:00Z', now)).toBe('5. Nov.')
+    expect(formatShortDate('2026-09-16T11:18:00Z', now)).toBe('16. Sept.')
+    expect(formatShortDate('2025-12-24T12:00:00Z', now)).toBe('24. Dez. 2025')
+  })
+
+  it('has a dash without a time', () => {
+    expect(formatShortDate(null, now)).toBe('–')
+    expect(formatShortDate('kaputt', now)).toBe('–')
   })
 })
 

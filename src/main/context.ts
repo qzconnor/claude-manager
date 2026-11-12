@@ -1,6 +1,7 @@
 import type { BrowserControl } from './browser/browser-control'
 import type { CommandIntegration } from './cli/command-integration'
 import type { AccountService } from './services/account-service'
+import type { ArtifactService } from './services/artifact-service'
 import type { AutoSwitch } from './services/auto-switch'
 import type { ClaudeCli } from './services/claude-cli'
 import type { CswapImport } from './services/cswap-import'
@@ -37,6 +38,8 @@ export interface AppContext {
   /** Continues sessions at a limit with another account by themselves (setting `claude.autoSwitch`). */
   autoSwitch: AutoSwitch
   usage: UsageService
+  /** The pages and documents Claude published on claude.ai, of the accounts' logins. */
+  artifacts: ArtifactService
   /** Notifications, the flashing taskbar and the unread dot of tabs. */
   notifications: NotificationService
   /** Branch of the repository a terminal works in, for the title bar. */

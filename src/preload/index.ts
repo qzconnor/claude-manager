@@ -161,6 +161,13 @@ const api: ManagerApi = {
   notifications: {
     test: () => invoke(IpcInvoke.notificationsTest),
   },
+  artifacts: {
+    list: (accountId) => invoke(IpcInvoke.artifactsList, accountId),
+    rename: (accountId, id, title) => invoke(IpcInvoke.artifactsRename, accountId, id, title),
+    remove: (accountId, id) => invoke(IpcInvoke.artifactsRemove, accountId, id),
+    setPinned: (accountId, id, pinned) => invoke(IpcInvoke.artifactsPin, accountId, id, pinned),
+    thumbnail: (accountId, id, dark) => invoke(IpcInvoke.artifactsThumbnail, accountId, id, dark),
+  },
   usage: {
     get: () => invoke(IpcInvoke.usageGet),
     refresh: (accountId) => invoke(IpcInvoke.usageRefresh, accountId),

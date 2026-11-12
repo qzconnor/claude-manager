@@ -587,6 +587,59 @@ export interface SessionRemoveResult {
 }
 
 /** A session whose conversation contains every word of a search. */
+/** A page or document Claude published on claude.ai (the Artifact tool), as the account's login lists it. */
+export interface Artifact {
+  /** The id in its link `https://claude.ai/code/artifact/<id>`. */
+  id: string
+  url: string
+  title: string
+  description: string | null
+  /** The short name of the version last published. */
+  label: string | null
+  kind: 'page' | 'document'
+  /** Made by the account's login (`mine`) or shared with it. Only own ones can be renamed and deleted. */
+  mine: boolean
+  /** Whether the login may give it another title. */
+  renamable: boolean
+  /** Who made it, for one shared with the login. */
+  ownerEmail: string | null
+  /** Shared from another organization. */
+  external: boolean
+  /** Who may open it: only its owner, the people it is shared with, the organization or anyone with the link. */
+  audience: ArtifactAudience | null
+  createdAt: string | null
+  updatedAt: string | null
+  lastViewedAt: string | null
+  /** How often it was opened; null where the list doesn't say. */
+  views: number | null
+  /** Pinned in the sidebar of claude.ai. */
+  pinned: boolean
+}
+
+export type ArtifactAudience = 'owner' | 'users' | 'org' | 'public'
+
+export type ArtifactListStatus =
+  /** Listed. */
+  | 'ok'
+  /** The login can't list artifacts: an API key, a token without access, or not offered for the account. */
+  | 'unavailable'
+  /** The login has expired or was signed out: signing in again helps. */
+  | 'signed-out'
+  | 'error'
+
+export interface ArtifactList {
+  accountId: string
+  status: ArtifactListStatus
+  message: string | null
+  /** Most recently viewed first. */
+  artifacts: Artifact[]
+  /** Whether pinning is offered for the login. */
+  pinsEnabled: boolean
+  /** There were more than the app lists. */
+  truncated: boolean
+  fetchedAt: string
+}
+
 export interface SessionSearchHit {
   accountId: string
   sessionId: string

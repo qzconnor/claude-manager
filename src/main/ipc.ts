@@ -574,6 +574,22 @@ export function registerIpc(ctx: AppContext): void {
   )
   ctx.usage.on('changed', (usage) => broadcast(IpcEvent.usageChanged, usage))
 
+  // --- artifacts -----------------------------------------------------------
+  handle(IpcInvoke.artifactsList, (_e, accountId: unknown) => ctx.artifacts.list(requireString(accountId, 'accountId')))
+  handle(IpcInvoke.artifactsRename, (_e, accountId: unknown, id: unknown, title: unknown) =>
+    ctx.artifacts.rename(requireString(accountId, 'accountId'), requireString(id, 'id'), requireString(title, 'title')),
+  )
+  handle(IpcInvoke.artifactsRemove, (_e, accountId: unknown, id: unknown) =>
+    ctx.artifacts.remove(requireString(accountId, 'accountId'), requireString(id, 'id')),
+  )
+  handle(IpcInvoke.artifactsPin, (_e, accountId: unknown, id: unknown, pinned: unknown) => {
+    if (typeof pinned !== 'boolean') throw new Error('pinned muss true oder false sein.')
+    return ctx.artifacts.setPinned(requireString(accountId, 'accountId'), requireString(id, 'id'), pinned)
+  })
+  handle(IpcInvoke.artifactsThumbnail, (_e, accountId: unknown, id: unknown, dark: unknown) =>
+    ctx.artifacts.thumbnail(requireString(accountId, 'accountId'), requireString(id, 'id'), dark === true),
+  )
+
   // --- git -----------------------------------------------------------------
   handle(IpcInvoke.gitBranch, (_e, cwd: unknown) => ctx.git.branch(requireString(cwd, 'cwd')))
   handle(IpcInvoke.gitWatch, (_e, cwds: unknown) => {

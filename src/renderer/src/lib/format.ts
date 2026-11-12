@@ -4,6 +4,8 @@ import { isPersonalOrganizationName } from '@shared/utils'
 const rtf = new Intl.RelativeTimeFormat('de', { numeric: 'auto' })
 const dateTime = new Intl.DateTimeFormat('de', { dateStyle: 'medium', timeStyle: 'short' })
 const time = new Intl.DateTimeFormat('de', { hour: '2-digit', minute: '2-digit' })
+const dayMonth = new Intl.DateTimeFormat('de', { day: 'numeric', month: 'short' })
+const dayMonthYear = new Intl.DateTimeFormat('de', { day: 'numeric', month: 'short', year: 'numeric' })
 const weekdayTime = new Intl.DateTimeFormat('de', { weekday: 'short', hour: '2-digit', minute: '2-digit' })
 const compact = new Intl.NumberFormat('de', { notation: 'compact', maximumFractionDigits: 1 })
 const integer = new Intl.NumberFormat('de')
@@ -49,6 +51,17 @@ export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '–'
   const ms = Date.parse(iso)
   return Number.isNaN(ms) ? '–' : dateTime.format(ms)
+}
+
+/**
+ * Short, for a card: within the last week relative ("vor 3 Stunden", "gestern"), before that the day
+ * ("16. Sept."), with the year only when it isn't this one.
+ */
+export function formatShortDate(iso: string | null | undefined, now = Date.now()): string {
+  const ms = iso ? Date.parse(iso) : NaN
+  if (Number.isNaN(ms)) return '–'
+  if (Math.abs(Math.round((startOfDay(now) - startOfDay(ms)) / 86_400_000)) < 7) return formatRelative(iso, now)
+  return (new Date(ms).getFullYear() === new Date(now).getFullYear() ? dayMonth : dayMonthYear).format(ms)
 }
 
 /**
