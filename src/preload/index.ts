@@ -56,7 +56,9 @@ const api: ManagerApi = {
     update: (id, patch) => invoke(IpcInvoke.accountsUpdate, id, patch),
     remove: (id, options) => invoke(IpcInvoke.accountsRemove, id, options),
     refresh: () => invoke(IpcInvoke.accountsRefresh),
+    renewLogin: (id) => invoke(IpcInvoke.accountsRenewLogin, id),
     onChanged: (cb) => subscribe(IpcEvent.accountsChanged, cb),
+    onShow: (cb) => subscribe(IpcEvent.accountsShow, cb),
   },
   cswap: {
     status: () => invoke(IpcInvoke.cswapStatus),

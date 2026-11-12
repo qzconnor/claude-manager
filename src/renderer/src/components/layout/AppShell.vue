@@ -35,6 +35,10 @@ onBeforeUnmount(offAutoSwitch)
 // A click on the warning about a limit.
 const offUsageShow = window.api.usage.onShow(() => void router.push({ name: 'dashboard' }))
 onBeforeUnmount(offUsageShow)
+
+// A click on the notification about a login that ended.
+const offAccountsShow = window.api.accounts.onShow(() => void router.push({ name: 'accounts' }))
+onBeforeUnmount(offAccountsShow)
 </script>
 
 <template>

@@ -231,6 +231,9 @@ describe('standardTwin', () => {
       authState: 'ok',
       identity: ident,
       tokenExpiresAt: null,
+      loginEndsAt: null,
+      tokenSavedAt: null,
+      renewable: false,
       expectedLogin: null,
     }
   }

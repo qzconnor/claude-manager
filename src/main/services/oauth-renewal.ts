@@ -43,11 +43,19 @@ const deadRefreshTokens = new Set<string>()
  * Renews the expired access token of a browser login with its refresh token, the way Claude Code
  * does it at the start of a session: under Claude Code's own lock for the config folder, and the
  * new tokens are only written if the file still holds the refresh token that was used. A refresh
- * token works only once, so two processes must never use the same one.
+ * token works only once, so two processes must never use the same one. With `force` also a token
+ * that still works ("Jetzt erneuern" on the accounts page); a session that still holds the old one
+ * reads the new one from the file, as after a renewal by another Claude Code.
  */
-export async function renewOAuthLogin(configDir: string, credentialsFile: string, userAgent: string): Promise<RenewResult> {
+export async function renewOAuthLogin(
+  configDir: string,
+  credentialsFile: string,
+  userAgent: string,
+  { force = false }: { force?: boolean } = {},
+): Promise<RenewResult> {
   const before = (await readCredentials(credentialsFile))?.claudeAiOauth
-  if (!before || !isExpired(before)) return 'renewed'
+  if (!before) return force ? 'rejected' : 'renewed'
+  if (!force && !isExpired(before)) return 'renewed'
   if (!isRenewable(before)) return 'rejected'
 
   const lock = await acquireLocks(configDir)
@@ -57,7 +65,7 @@ export async function renewOAuthLogin(configDir: string, credentialsFile: string
     const file = await readCredentials(credentialsFile)
     const current = file?.claudeAiOauth
     if (!file || !current) return 'rejected'
-    if (current.accessToken !== before.accessToken || !isExpired(current)) return 'renewed'
+    if (current.accessToken !== before.accessToken || (!force && !isExpired(current))) return 'renewed'
     if (!isRenewable(current)) return 'rejected'
 
     const tokens = await requestTokens(current, userAgent)
@@ -75,6 +83,15 @@ export async function renewOAuthLogin(configDir: string, credentialsFile: string
 
 function isExpired(oauth: StoredOAuth): boolean {
   return typeof oauth.expiresAt === 'number' && oauth.expiresAt <= Date.now()
+}
+
+/**
+ * Whether the login of a credentials file can still get new access tokens: its refresh token is
+ * there, hasn't expired and wasn't refused. Without, only signing in again helps once the access
+ * token expires.
+ */
+export function canRenew(oauth: object): boolean {
+  return isRenewable(oauth as StoredOAuth)
 }
 
 /** A refresh token that may still work, and the scopes to ask for (Claude Code's condition). */

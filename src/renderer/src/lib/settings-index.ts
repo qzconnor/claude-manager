@@ -258,6 +258,7 @@ const TREE = [
           { id: 'notifications.onLimit', label: 'Limit erreicht', keywords: 'Nutzungslimit Reset' },
           { id: 'notifications.onNearLimit', label: 'Limit fast verbraucht', keywords: 'Warnung Usage' },
           { id: 'notifications.nearLimitPercent', label: 'Schwelle (%)', keywords: 'Prozent Limit' },
+          { id: 'notifications.onLoginLost', label: 'Login abgelaufen', keywords: 'Anmeldung Token erneuern Refresh' },
         ],
       },
       {

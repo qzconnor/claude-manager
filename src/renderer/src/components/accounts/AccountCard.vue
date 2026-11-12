@@ -184,7 +184,12 @@ function keepLogin() {
         <KeyRoundIcon data-icon="inline-start" />
         Anmelden
       </Button>
-      <Button v-else-if="unexpectedLogin" size="sm" variant="outline" @click="launcher.login(account.id)">
+      <Button
+        v-else-if="unexpectedLogin || (canLogin && account.authState === 'dead')"
+        size="sm"
+        variant="outline"
+        @click="launcher.login(account.id)"
+      >
         <KeyRoundIcon data-icon="inline-start" />
         Neu anmelden
       </Button>

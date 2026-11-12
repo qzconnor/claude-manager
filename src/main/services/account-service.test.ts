@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -351,5 +351,65 @@ describe('AccountService launchEnv', () => {
     expect(() => accounts.launchEnv('web', 'empty')).toThrow('Für „Name empty“ ist kein gültiges Secret gespeichert.')
     expect(() => accounts.launchEnv('gone')).toThrow('Konto „gone“ existiert nicht.')
     expect(() => accounts.launchEnv('web', 'gone')).toThrow('Konto „gone“ existiert nicht.')
+  })
+})
+
+describe('AccountService and the browser login', () => {
+  const HOUR = 3_600_000
+  async function credentials(oauth: Record<string, unknown>): Promise<string> {
+    await mkdir(join(dir, '.claude'), { recursive: true })
+    const file = join(dir, '.claude', '.credentials.json')
+    await writeFile(file, JSON.stringify({ claudeAiOauth: oauth }))
+    return new Date((await stat(file)).mtimeMs).toISOString()
+  }
+  const login = (extra: Record<string, unknown> = {}) => ({
+    accessToken: 'sk-ant-oat01-access',
+    refreshToken: 'sk-ant-ort01-refresh',
+    scopes: ['user:inference', 'user:profile'],
+    ...extra,
+  })
+
+  it('knows when the access token and the login end and when the tokens were saved', async () => {
+    const expiresAt = Date.now() + HOUR
+    const refreshTokenExpiresAt = Date.now() + 30 * 24 * HOUR
+    const savedAt = await credentials(login({ expiresAt, refreshTokenExpiresAt }))
+    const accounts = await start()
+    expect(accounts.get('system')).toMatchObject({
+      authState: 'ok',
+      tokenExpiresAt: new Date(expiresAt).toISOString(),
+      loginEndsAt: new Date(refreshTokenExpiresAt).toISOString(),
+      tokenSavedAt: savedAt,
+      renewable: true,
+    })
+  })
+
+  it('tells an expired token that can be renewed from a login that is dead', async () => {
+    await credentials(login({ expiresAt: Date.now() - 1000 }))
+    let accounts = await start()
+    expect(accounts.get('system')).toMatchObject({ authState: 'expired', renewable: true, loginEndsAt: null })
+
+    await credentials(login({ expiresAt: Date.now() - 1000, refreshTokenExpiresAt: Date.now() - 1000 }))
+    accounts = await start()
+    expect(accounts.get('system')).toMatchObject({ authState: 'dead', renewable: false })
+
+    await credentials(login({ expiresAt: Date.now() - 1000, refreshToken: undefined }))
+    accounts = await start()
+    expect(accounts.get('system')).toMatchObject({ authState: 'dead', renewable: false })
+
+    // A token that still works stays usable, even when it can't be renewed afterwards.
+    await credentials(login({ expiresAt: Date.now() + HOUR, refreshToken: undefined }))
+    accounts = await start()
+    expect(accounts.get('system')).toMatchObject({ authState: 'ok', renewable: false })
+  })
+
+  it('knows nothing of a login without credentials', async () => {
+    const accounts = await start()
+    expect(accounts.get('system')).toMatchObject({
+      authState: 'missing',
+      tokenExpiresAt: null,
+      loginEndsAt: null,
+      tokenSavedAt: null,
+      renewable: false,
+    })
   })
 })

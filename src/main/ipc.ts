@@ -287,6 +287,7 @@ export function registerIpc(ctx: AppContext): void {
     return ctx.accounts.remove(accountId, { deleteConfigDir: options?.deleteConfigDir === true })
   })
   handle(IpcInvoke.accountsRefresh, () => ctx.accounts.refresh())
+  handle(IpcInvoke.accountsRenewLogin, (_e, id: unknown) => ctx.usage.renewLogin(requireString(id, 'id')))
   ctx.accounts.on('changed', (accounts) => broadcast(IpcEvent.accountsChanged, accounts))
 
   // --- cswap import --------------------------------------------------------

@@ -38,6 +38,9 @@ function account(id: string, name: string, email: string | null = null): Account
       rateLimitTier: null,
     },
     tokenExpiresAt: null,
+    loginEndsAt: null,
+    tokenSavedAt: null,
+    renewable: false,
     expectedLogin: null,
   }
 }

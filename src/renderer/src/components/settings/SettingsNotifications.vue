@@ -24,7 +24,7 @@ function notificationSetting<K extends keyof NotificationSettings>(key: K, delay
 
 /** The page shows all of them: the reset of its first card takes all along. */
 const RESET: SettingsResetKeys = {
-  notifications: ['enabled', 'onDone', 'minBusySeconds', 'onInput', 'onLimit', 'onNearLimit', 'nearLimitPercent', 'when', 'toast', 'preview', 'sound', 'flashTaskbar', 'unreadDot'],
+  notifications: ['enabled', 'onDone', 'minBusySeconds', 'onInput', 'onLimit', 'onNearLimit', 'nearLimitPercent', 'onLoginLost', 'when', 'toast', 'preview', 'sound', 'flashTaskbar', 'unreadDot'],
 }
 
 const enabled = notificationSetting('enabled')
@@ -34,6 +34,7 @@ const onInput = notificationSetting('onInput')
 const onLimit = notificationSetting('onLimit')
 const onNearLimit = notificationSetting('onNearLimit')
 const nearLimitPercent = notificationSetting('nearLimitPercent', 300)
+const onLoginLost = notificationSetting('onLoginLost')
 const when = notificationSetting('when')
 const toast = notificationSetting('toast')
 const preview = notificationSetting('preview')
@@ -137,6 +138,14 @@ async function sendTest() {
           :step="5"
           :disabled="off || !toast || !onNearLimit"
         />
+      </SettingField>
+      <SettingField
+        anchor="notifications.onLoginLost"
+        for="notify-login-lost"
+        label="Login abgelaufen"
+        :description="`Der Browser-Login eines Accounts ist abgelaufen und lässt sich nicht mehr erneuern, nur neu anmelden hilft. Einmal pro Login, nur als ${toastName}, ein Klick öffnet die Accounts-Seite.`"
+      >
+        <Switch id="notify-login-lost" v-model="onLoginLost" :disabled="off || !toast" />
       </SettingField>
     </SettingsSection>
 

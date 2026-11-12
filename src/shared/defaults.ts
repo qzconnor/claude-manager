@@ -140,6 +140,7 @@ export function createDefaultSettings(platform = 'win32'): AppSettings {
       onLimit: true,
       onNearLimit: true,
       nearLimitPercent: 80,
+      onLoginLost: true,
       when: 'background',
       toast: true,
       preview: true,

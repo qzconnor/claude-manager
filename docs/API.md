@@ -33,6 +33,7 @@ Die API läuft, solange die App läuft. Soll sie immer erreichbar sein, unter *E
 | GET | `/api/v1/accounts/{accountId}/usage-history` | Verlauf des 5-Stunden- und des Wochenlimits (2 bzw. 15 Tage) |
 | GET | `/api/v1/usage` | 5-Stunden- und Wochen-Limits aller Accounts |
 | POST | `/api/v1/usage/refresh` | Limits jetzt neu abrufen |
+| POST | `/api/v1/accounts/{accountId}/renew-login` | Browser-Login jetzt erneuern (`renewed`, `busy`, `rejected`, `failed`) |
 | GET | `/api/v1/sessions?accountId=` | Sessions, gruppiert nach Account |
 | GET | `/api/v1/sessions/{accountId}/{sessionId}?limit=600` | Verlauf einer Session: die neuesten `limit` Nachrichten, `total` zählt alle, `truncated` sagt, ob ältere fehlen |
 | GET | `/api/v1/terminals` | offene Terminals |

@@ -33,7 +33,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   }
 })
 
-import { renewOAuthLogin } from './oauth-renewal'
+import { canRenew, renewOAuthLogin } from './oauth-renewal'
 
 const TOKEN_URL = 'https://platform.claude.com/v1/oauth/token'
 const CLAUDE_CODE_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
@@ -493,5 +493,62 @@ describe('renewOAuthLogin', () => {
     expect(await readFile(credentialsFile, 'utf8')).toBe(text)
     expect(await readdir(configDir)).toEqual(['.credentials.json'])
     await expectNoLocks()
+  })
+})
+
+describe('renewOAuthLogin with force', () => {
+  it('renews a token that still works, under the lock', async () => {
+    const login = expiredLogin({ expiresAt: Date.now() + HOUR })
+    await store({ claudeAiOauth: login })
+    fetchMock.mockResolvedValue(respond(200, TOKENS))
+
+    expect(await renewOAuthLogin(configDir, credentialsFile, UA, { force: true })).toBe('renewed')
+    expect(requestBody()).toMatchObject({ grant_type: 'refresh_token', refresh_token: login.refreshToken })
+    expect((await stored()).claudeAiOauth).toMatchObject({ accessToken: 'sk-ant-oat01-new', refreshToken: 'sk-ant-ort01-new' })
+    await expectNoLocks()
+  })
+
+  it('waits for Claude Code renewing it right now', async () => {
+    await store({ claudeAiOauth: expiredLogin({ expiresAt: Date.now() + HOUR }) })
+    await mkdir(currentLock)
+
+    expect(await renewOAuthLogin(configDir, credentialsFile, UA, { force: true })).toBe('busy')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('takes a token Claude Code renewed while the lock was being taken, without asking', async () => {
+    const login = expiredLogin({ expiresAt: Date.now() + HOUR })
+    await store({ claudeAiOauth: login })
+    hooks.beforeMkdir = async (path) => {
+      if (path !== currentLock) return
+      hooks.beforeMkdir = null
+      await store({ claudeAiOauth: { ...login, accessToken: 'sk-ant-oat01-by-claude-code' } })
+    }
+
+    expect(await renewOAuthLogin(configDir, credentialsFile, UA, { force: true })).toBe('renewed')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects without a login or without a refresh token, and when Anthropic refuses it', async () => {
+    expect(await renewOAuthLogin(configDir, credentialsFile, UA, { force: true })).toBe('rejected')
+    await store({ claudeAiOauth: expiredLogin({ expiresAt: Date.now() + HOUR, refreshToken: undefined }) })
+    expect(await renewOAuthLogin(configDir, credentialsFile, UA, { force: true })).toBe('rejected')
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    const login = expiredLogin({ expiresAt: Date.now() + HOUR })
+    await store({ claudeAiOauth: login })
+    fetchMock.mockResolvedValue(respond(400, { error: 'invalid_grant' }))
+    expect(await renewOAuthLogin(configDir, credentialsFile, UA, { force: true })).toBe('rejected')
+    expect(canRenew(login)).toBe(false)
+  })
+})
+
+describe('canRenew', () => {
+  it('knows logins with a refresh token that may still work', () => {
+    expect(canRenew(expiredLogin())).toBe(true)
+    expect(canRenew(expiredLogin({ refreshToken: undefined }))).toBe(false)
+    expect(canRenew(expiredLogin({ scopes: ['user:profile'] }))).toBe(false)
+    expect(canRenew(expiredLogin({ refreshTokenExpiresAt: Date.now() - 1000 }))).toBe(false)
+    expect(canRenew(expiredLogin({ refreshTokenExpiresAt: Date.now() + HOUR }))).toBe(true)
   })
 })

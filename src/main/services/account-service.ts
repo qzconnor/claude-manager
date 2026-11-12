@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { copyFile, lstat, mkdir, readdir, readlink, rm, stat, symlink } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { ACCOUNT_COLORS, SYSTEM_ACCOUNT_ID } from '@shared/defaults'
 import type {
@@ -19,6 +19,7 @@ import { decryptSecret, encryptSecret } from '../lib/secrets'
 import { TypedEmitter } from '../lib/typed-emitter'
 import { AUTH_OVERRIDE_ENV } from './claude-cli'
 import { fingerprintOf, type LoginProfile, type LoginProfiles } from './login-profiles'
+import { canRenew } from './oauth-renewal'
 
 interface StoredAccount {
   id: string
@@ -46,6 +47,7 @@ interface OAuthCredentials {
   accessToken?: string
   refreshToken?: string
   expiresAt?: number
+  refreshTokenExpiresAt?: number
   subscriptionType?: string | null
   rateLimitTier?: string | null
   scopes?: string[]
@@ -438,13 +440,20 @@ export class AccountService extends TypedEmitter<Events> {
     const identity = buildIdentity(this.profileOf(stored, oauth, true), config, oauth)
     let authState: AuthState = 'missing'
     let tokenExpiresAt: string | null = null
+    let loginEndsAt: string | null = null
+    let tokenSavedAt: string | null = null
+    let renewable = false
     if (stored.kind === 'token' || stored.kind === 'apiKey') {
       // A secret that can't be decrypted (e.g. copied from another Windows user) is as good as none.
       authState = this.secrets.has(stored.id) ? 'ok' : 'missing'
     } else if (oauth?.accessToken) {
       const expires = typeof oauth.expiresAt === 'number' ? oauth.expiresAt : null
-      tokenExpiresAt = expires ? new Date(expires).toISOString() : null
-      authState = expires !== null && expires <= Date.now() ? 'expired' : 'ok'
+      const iso = (ms: unknown) => (typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : null)
+      tokenExpiresAt = iso(expires)
+      loginEndsAt = iso(oauth.refreshTokenExpiresAt)
+      tokenSavedAt = iso(modifiedAt(paths.credentialsFile))
+      renewable = canRenew(oauth)
+      authState = expires !== null && expires <= Date.now() ? (renewable ? 'expired' : 'dead') : 'ok'
     }
     return {
       id: stored.id,
@@ -461,6 +470,9 @@ export class AccountService extends TypedEmitter<Events> {
       authState,
       identity,
       tokenExpiresAt,
+      loginEndsAt,
+      tokenSavedAt,
+      renewable,
       expectedLogin: toExpectedLogin(stored.expectedLogin),
     }
   }
@@ -530,6 +542,15 @@ function planMatches(organizationType: string | undefined, subscriptionType: str
 
 function isExpired(oauth: OAuthCredentials): boolean {
   return typeof oauth.expiresAt === 'number' && oauth.expiresAt <= Date.now()
+}
+
+/** When the file was last written; null when it isn't there. */
+function modifiedAt(file: string): number | null {
+  try {
+    return statSync(file).mtimeMs
+  } catch {
+    return null
+  }
 }
 
 function readOAuth(file: string): OAuthCredentials | null {

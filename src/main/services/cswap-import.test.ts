@@ -63,6 +63,9 @@ function account(
       rateLimitTier: null,
     },
     tokenExpiresAt: null,
+    loginEndsAt: null,
+    tokenSavedAt: null,
+    renewable: false,
     expectedLogin,
   }
 }

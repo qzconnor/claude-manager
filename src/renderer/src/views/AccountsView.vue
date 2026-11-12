@@ -6,6 +6,7 @@ import type { Account, CswapStatus } from '@shared/types'
 import AccountCard from '@/components/accounts/AccountCard.vue'
 import AccountFormDialog from '@/components/accounts/AccountFormDialog.vue'
 import CswapImportDialog from '@/components/accounts/CswapImportDialog.vue'
+import LoginOverviewCard from '@/components/accounts/LoginOverviewCard.vue'
 import RemoveAccountDialog from '@/components/accounts/RemoveAccountDialog.vue'
 import PageContainer from '@/components/common/PageContainer.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -95,6 +96,8 @@ function remove(account: Account) {
         @remove="remove(account)"
       />
     </div>
+
+    <LoginOverviewCard :accounts="shownAccounts" />
 
     <Item v-if="accounts.standardTwin" variant="muted" size="sm">
       <ItemMedia variant="icon">

@@ -50,8 +50,19 @@ export type AuthState =
   | 'ok'
   /** OAuth credentials present, but the access token expired (Claude Code refreshes it on next start) */
   | 'expired'
+  /**
+   * OAuth: the access token expired and can't be renewed (no refresh token, it expired or Anthropic
+   * refused it): only signing in again helps.
+   */
+  | 'dead'
   /** no usable credentials found */
   | 'missing'
+
+/**
+ * What "Jetzt erneuern" did: `renewed` (a new access token is saved), `busy` (Claude Code renews it
+ * right now), `rejected` (only signing in again helps) or `failed` (network or server, try again).
+ */
+export type LoginRenewResult = 'renewed' | 'busy' | 'rejected' | 'failed'
 
 export interface Account {
   id: string
@@ -76,6 +87,12 @@ export interface Account {
   identity: AccountIdentity
   /** ISO timestamp the access token expires (OAuth/system accounts only). */
   tokenExpiresAt: string | null
+  /** When the browser login itself ends (its refresh token expires): then only signing in again helps. */
+  loginEndsAt: string | null
+  /** When Claude Code or the app last saved the tokens of the browser login (signed in or renewed). */
+  tokenSavedAt: string | null
+  /** The browser login has a refresh token that may still work (see `AuthState` `dead`). */
+  renewable: boolean
   /** Who should log in here, e.g. after an import from cswap; `null` when nobody in particular. */
   expectedLogin: ExpectedLogin | null
 }
@@ -1138,6 +1155,8 @@ export interface NotificationSettings {
   onNearLimit: boolean
   /** Usage of a limit window (%) from which `onNearLimit` warns. */
   nearLimitPercent: number
+  /** An account's browser login ended and can't be renewed: once per login, only as a system notification. */
+  onLoginLost: boolean
   when: NotifyWhen
   /** System notification (Windows: in the notification center). */
   toast: boolean

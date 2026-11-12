@@ -119,6 +119,7 @@ function fakeApp(options: { terminals?: TerminalInfo[]; buffer?: { data: string;
       stats: vi.fn(async () => ({})),
       history: vi.fn((accountId: string) => ({ accountId, fiveHour: [], sevenDay: [] })),
       refresh: vi.fn(async () => []),
+      renewLogin: vi.fn(async () => 'renewed'),
     },
     sessions: { get: vi.fn(async () => ({})) },
   }
@@ -336,6 +337,13 @@ describe('session and usage routes', () => {
     expect(result).toEqual({ accountId: 'system', fiveHour: [], sevenDay: [] })
     await expectStatus(call(app, 'GET', '/api/v1/accounts/ghost/usage-history'), 404)
     expect(app.usage.history.mock.calls).toEqual([['system']])
+  })
+
+  it('renews the login of a known account', async () => {
+    const app = fakeApp()
+    expect((await call(app, 'POST', '/api/v1/accounts/system/renew-login')).result).toEqual({ result: 'renewed' })
+    await expectStatus(call(app, 'POST', '/api/v1/accounts/ghost/renew-login'), 404)
+    expect(app.usage.renewLogin.mock.calls).toEqual([['system']])
   })
 
   it('refreshes the usage of one known account or all', async () => {

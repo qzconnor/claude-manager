@@ -25,6 +25,9 @@ function account(identity: Partial<AccountIdentity>, fields: Partial<Account> = 
     authState: 'ok',
     identity: { ...expectedIdentity(EXPECTED), ...identity },
     tokenExpiresAt: null,
+    loginEndsAt: null,
+    tokenSavedAt: null,
+    renewable: false,
     expectedLogin: EXPECTED,
     ...fields,
   }

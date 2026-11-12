@@ -14,6 +14,9 @@ const status = computed(() => {
   if (authState === 'expired') {
     return { icon: ClockAlertIcon, tone: 'text-warning', text: 'Access-Token abgelaufen – wird beim nächsten Usage-Abruf erneuert' }
   }
+  if (authState === 'dead') {
+    return { icon: CircleAlertIcon, tone: 'text-destructive', text: 'Login abgelaufen – lässt sich nicht erneuern, bitte neu anmelden' }
+  }
   return {
     icon: CircleAlertIcon,
     tone: 'text-destructive',

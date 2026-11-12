@@ -149,6 +149,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   const notifications = new NotificationService(terminals, accounts, usage, settings, userDataDir, () => mainWindow, {
     terminal: (id) => showTerminal(id),
     usage: () => showUsage(),
+    accounts: () => showAccounts(),
   })
   await notifications.init()
   notifications.watchAutoSwitch(autoSwitch)
@@ -292,6 +293,14 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     if (!win || win.isDestroyed()) return
     revealWindow(win)
     win.webContents.send(IpcEvent.usageShow)
+  }
+
+  /** Brings the window to the front with the accounts page (a notification about a login that ended was clicked). */
+  const showAccounts = () => {
+    const win = mainWindow
+    if (!win || win.isDestroyed()) return
+    revealWindow(win)
+    win.webContents.send(IpcEvent.accountsShow)
   }
 
   /**

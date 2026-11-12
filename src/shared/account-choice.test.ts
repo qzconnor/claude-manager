@@ -102,6 +102,12 @@ describe('accountChoices', () => {
     ])
   })
 
+  it('counts a browser login that can no longer be renewed as logged out', () => {
+    const dead = account('dead', 'oauth', { authState: 'dead' })
+    const [choice] = accountChoices(context([own, dead], { usage: () => usage('dead', 10) }), 'own', 'own')
+    expect(choice).toMatchObject({ standing: { kind: 'logged-out' }, disabled: true })
+  })
+
   it('counts an account as limited while a session stopped at its limit, until the reset', () => {
     const blocked = [
       { accountId: 'token', resetsAt: LATER },

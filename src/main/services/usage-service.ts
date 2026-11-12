@@ -150,6 +150,24 @@ export class UsageService extends TypedEmitter<Events> {
     return this.getAll()
   }
 
+  /**
+   * "Jetzt erneuern" on the accounts page: gets a new access token with the refresh token of the
+   * browser login, also while the old one still works, and asks for the usage with it.
+   */
+  async renewLogin(accountId: string): Promise<RenewResult> {
+    const creds = this.accounts.credentials(accountId)
+    if (creds.kind !== 'system' && creds.kind !== 'oauth') throw new Error('Nur Browser-Logins lassen sich erneuern.')
+    if (!creds.accessToken) throw new Error('Der Account ist nicht angemeldet.')
+    const tokenKey = fingerprintOf(creds.accessToken)
+    const result = await renewOAuthLogin(creds.paths.configDir, creds.paths.credentialsFile, this.userAgent, { force: true })
+    if (result === 'renewed') this.renewals.delete(accountId)
+    else if (result === 'rejected') this.renewals.set(accountId, { tokenKey, result, retryAt: Date.now() })
+    // Shows the new expiry, or the login as dead.
+    this.accounts.refresh()
+    if (result === 'renewed') void this.refresh(accountId).catch(() => undefined)
+    return result
+  }
+
   /** How full the five-hour and the weekly limit of the account were over the last days. */
   history(accountId: string): UsageHistory {
     const of = (key: string) => structuredClone(this.readings.get(sampleKey(accountId, key)) ?? [])
@@ -361,10 +379,13 @@ export class UsageService extends TypedEmitter<Events> {
     if (last?.tokenKey === tokenKey && (last.result === 'rejected' || (!manual && now < last.retryAt))) return
 
     const result = await renewOAuthLogin(creds.paths.configDir, creds.paths.credentialsFile, this.userAgent)
+    if (result === 'renewed' || result === 'rejected') {
+      // Renewed: shows the account as signed in again and resolves the login of the new token.
+      // Rejected: shows the login as dead.
+      this.accounts.refresh()
+    }
     if (result === 'renewed') {
       this.renewals.delete(accountId)
-      // Shows the account as signed in again and resolves the login of the new token.
-      this.accounts.refresh()
       return
     }
     const wait = result === 'busy' ? RENEW_BUSY_RETRY_MS : this.settings.get().claude.usageRefreshMinutes * 60_000

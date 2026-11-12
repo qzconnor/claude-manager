@@ -50,9 +50,16 @@ export const schemas: Record<string, Schema> = {
     createdAt: dateTime,
     hasSecret: bool,
     secretHint: { ...nullable(str), description: 'Maskierte Vorschau, nie das Secret selbst' },
-    authState: { type: 'string', enum: ['ok', 'expired', 'missing'] },
+    authState: {
+      type: 'string',
+      enum: ['ok', 'expired', 'dead', 'missing'],
+      description: '`expired`: Access-Token abgelaufen, wird erneuert. `dead`: abgelaufen und nicht erneuerbar, nur neu anmelden hilft',
+    },
     identity: ref('AccountIdentity'),
     tokenExpiresAt: nullable(dateTime),
+    loginEndsAt: { ...nullable(dateTime), description: 'Ende des Browser-Logins (Ablauf des Refresh-Tokens)' },
+    tokenSavedAt: { ...nullable(dateTime), description: 'Wann Claude Code oder die App die Tokens zuletzt gespeichert hat' },
+    renewable: { ...bool, description: 'Der Browser-Login hat einen Refresh-Token, der noch gehen kann' },
     expectedLogin: {
       ...nullable(ref('ExpectedLogin')),
       description: 'Wer sich hier anmelden soll, z. B. nach dem Import aus cswap',

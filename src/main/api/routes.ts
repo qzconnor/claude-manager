@@ -123,6 +123,31 @@ export const routes: Route[] = [
     },
     handler: (ctx) => requireAccount(ctx, ctx.params.accountId),
   },
+  {
+    method: 'POST',
+    path: '/api/v1/accounts/{accountId}/renew-login',
+    doc: {
+      tag: 'Accounts',
+      summary: 'Login erneuern',
+      description:
+        'Holt mit dem Refresh-Token des Browser-Logins einen neuen Access-Token, auch wenn der alte noch gilt, ' +
+        'wie Claude Code beim Start einer Session. `rejected`: Nur neu anmelden hilft. `busy`: Claude Code erneuert gerade. ' +
+        '`failed`: Netzwerk oder Server, später erneut versuchen.',
+      pathParams: [accountIdParam],
+      response: {
+        description: 'Ergebnis',
+        schema: {
+          type: 'object',
+          properties: { result: { type: 'string', enum: ['renewed', 'busy', 'rejected', 'failed'] } },
+          required: ['result'],
+        },
+      },
+    },
+    handler: async (ctx) => {
+      requireAccount(ctx, ctx.params.accountId)
+      return { result: await ctx.app.usage.renewLogin(ctx.params.accountId) }
+    },
+  },
 
   // --- usage -----------------------------------------------------------------
   {

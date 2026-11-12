@@ -32,6 +32,7 @@ import type {
   FileTreeWatch,
   GitBranch,
   GitTreeStatus,
+  LoginRenewResult,
   ReviewBase,
   WorktreeCheck,
   PaneNode,
@@ -93,6 +94,7 @@ export const IpcInvoke = {
   accountsUpdate: 'accounts:update',
   accountsRemove: 'accounts:remove',
   accountsRefresh: 'accounts:refresh',
+  accountsRenewLogin: 'accounts:renew-login',
 
   cswapStatus: 'cswap:status',
   cswapImport: 'cswap:import',
@@ -239,6 +241,8 @@ export const IpcEvent = {
   appScreenReader: 'event:app-screen-reader',
   settingsChanged: 'event:settings-changed',
   accountsChanged: 'event:accounts-changed',
+  /** A notification about a login that ended was clicked: the window shows the accounts page. */
+  accountsShow: 'event:accounts-show',
   terminalsChanged: 'event:terminals-changed',
   terminalData: 'event:terminal-data',
   terminalExit: 'event:terminal-exit',
@@ -349,7 +353,10 @@ export interface ManagerApi {
     update(id: string, patch: AccountUpdateInput): Promise<Account>
     remove(id: string, options: { deleteConfigDir: boolean }): Promise<void>
     refresh(): Promise<Account[]>
+    /** Gets a new access token for the browser login with its refresh token, also while the old one works. */
+    renewLogin(id: string): Promise<LoginRenewResult>
     onChanged(cb: (accounts: Account[]) => void): Unsubscribe
+    onShow(cb: () => void): Unsubscribe
   }
   /** Taking accounts over from claude-swap (only name, email and organization). */
   cswap: {

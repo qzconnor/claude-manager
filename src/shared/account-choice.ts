@@ -37,7 +37,8 @@ export interface AccountChoiceContext {
 }
 
 function standing(account: Account, context: AccountChoiceContext): AccountStanding {
-  if (account.authState === 'missing') return { kind: 'logged-out' }
+  // A dead login only works again after signing in.
+  if (account.authState === 'missing' || account.authState === 'dead') return { kind: 'logged-out' }
 
   // A session that stopped at a limit is the most precise source (also for tokens). Accounts with the
   // same login share their limits, e.g. the standard account and its twin from cswap.
