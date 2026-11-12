@@ -20,6 +20,7 @@ import type {
   FileTreeWatch,
   FolderMovedEvent,
   FolderMoveResult,
+  TabSetTab,
   TerminalCreateOptions,
 } from '@shared/types'
 import type { ApiServer } from './api/api-server'
@@ -524,6 +525,18 @@ export function registerIpc(ctx: AppContext): void {
     return followMove(source, target)
   })
   ctx.workspaces.on('changed', () => broadcast(IpcEvent.workspacesChanged))
+
+  // --- tab sets ------------------------------------------------------------
+  handle(IpcInvoke.tabSetsList, () => ctx.tabSets.list())
+  handle(IpcInvoke.tabSetsSave, (_e, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('Ungültiges Tab-Set.')
+    const { id, name, tabs } = input as Record<string, unknown>
+    const saved = id == null ? null : requireString(id, 'id')
+    return ctx.tabSets.save({ id: saved, name: requireString(name, 'name'), tabs: tabs as TabSetTab[] })
+  })
+  handle(IpcInvoke.tabSetsRemove, (_e, id: unknown) => ctx.tabSets.remove(requireString(id, 'id')))
+  handle(IpcInvoke.tabSetsOpen, (_e, id: unknown) => ctx.tabSets.open(requireString(id, 'id')))
+  ctx.tabSets.on('changed', (sets) => broadcast(IpcEvent.tabSetsChanged, sets))
 
   // --- themes --------------------------------------------------------------
   handle(IpcInvoke.themesList, () => ctx.themes.list())

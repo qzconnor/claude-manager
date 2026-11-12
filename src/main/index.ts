@@ -41,6 +41,7 @@ import { TerminalService } from './services/terminal-service'
 import { UpdateService } from './services/update-service'
 import { UsageService } from './services/usage-service'
 import { ThemeService } from './services/theme-service'
+import { TabSetService } from './services/tab-set-service'
 import { WorkspaceService } from './services/workspace-service'
 import { WorkspaceTrust } from './services/workspace-trust'
 import { WindowDialogs } from './window/dialogs'
@@ -102,6 +103,9 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
   const terminals = new TerminalService(accounts, cli, settings, trust, sessionNames)
   const workspaces = new WorkspaceService(userDataDir)
   workspaces.init()
+  // Tabs saved under a name, to open them all again with one click.
+  const tabSets = new TabSetService(userDataDir, terminals, accounts)
+  tabSets.init()
   const themes = new ThemeService(userDataDir, (path) => shell.trashItem(path))
   themes.init()
   // Claude sessions learn that they run in the app, without the user seeing it (setting `appContext`),
@@ -184,6 +188,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     command,
     updates,
     workspaces,
+    tabSets,
     themes,
     trust,
     async appInfo(): Promise<AppInfo> {
@@ -239,6 +244,7 @@ async function bootstrap(launchRequest: LaunchRequest | null, shellEnv: Promise<
     sessionServer.dispose()
     usage.dispose()
     workspaces.dispose()
+    tabSets.dispose()
     themes.dispose()
     git.dispose()
     files.dispose()

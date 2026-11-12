@@ -54,6 +54,9 @@ import type {
   FolderMoveResult,
   Workspace,
   WorkspaceCreateInput,
+  TabSet,
+  TabSetInput,
+  TabSetOpenResult,
   TerminalInfo,
   TranscriptToolDetail,
   ReleaseNote,
@@ -158,6 +161,11 @@ export const IpcInvoke = {
   workspacesWritePrompt: 'workspaces:write-prompt',
   workspacesMove: 'workspaces:move',
   workspacesRelocate: 'workspaces:relocate',
+
+  tabSetsList: 'tab-sets:list',
+  tabSetsSave: 'tab-sets:save',
+  tabSetsRemove: 'tab-sets:remove',
+  tabSetsOpen: 'tab-sets:open',
 
   themesList: 'themes:list',
   themesCreate: 'themes:create',
@@ -288,6 +296,8 @@ export const IpcEvent = {
   workspacesChanged: 'event:workspaces-changed',
   /** A folder of a workspace was moved outside the app, and its sessions went along. */
   workspacesMoved: 'event:workspaces-moved',
+  /** A tab set was saved or deleted, with all of them. */
+  tabSetsChanged: 'event:tab-sets-changed',
   /** A file in the themes folder came, went or changed (also by hand). */
   themesChanged: 'event:themes-changed',
   /** The app wrote a theme (the window or Claude's theme tools), with the theme. */
@@ -555,6 +565,16 @@ export interface ManagerApi {
     onChanged(cb: () => void): Unsubscribe
     /** A folder of a workspace was moved outside the app (e.g. in Explorer), its sessions went along. */
     onMoved(cb: (move: FolderMovedEvent) => void): Unsubscribe
+  }
+  /** Tabs saved under a name, to open them all again with one click (`tab-sets.json`). */
+  tabSets: {
+    list(): Promise<TabSet[]>
+    /** Makes a set, or replaces the one with `input.id`. */
+    save(input: TabSetInput): Promise<TabSet>
+    remove(id: string): Promise<void>
+    /** Opens its tabs after the open ones; a session that runs in a tab already is that tab. */
+    open(id: string): Promise<TabSetOpenResult>
+    onChanged(cb: (sets: TabSet[]) => void): Unsubscribe
   }
   /** The user's own themes, one JSON file each in the folder `themes` of the app's data. */
   themes: {

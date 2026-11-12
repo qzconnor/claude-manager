@@ -1289,6 +1289,62 @@ export interface WorkspaceCreateInput {
 }
 
 // ---------------------------------------------------------------------------
+// Tab sets
+// ---------------------------------------------------------------------------
+
+/** Tabs saved under a name, to open them all again with one click (see TabSetService). */
+export interface TabSet {
+  id: string
+  name: string
+  tabs: TabSetTab[]
+  /** When it was saved last (ISO). */
+  savedAt: string
+}
+
+export type TabSetTab = TabSetTerminal | TabSetBrowser
+
+/** A session or shell of a tab set. */
+export interface TabSetTerminal {
+  mode: 'session' | 'shell'
+  accountId: string
+  cwd: string
+  /** The tab's own name; null follows its session, or shows its folder. */
+  title: string | null
+  muted: boolean
+  /** Claude Code arguments that hold for every start (see `lastingArgs`). */
+  args: string[]
+  /** A session goes on with this one while it is there; null starts a new one. Null for shells. */
+  sessionId: string | null
+  /** A shell runs this right after it started, e.g. `npm run dev`; null for none and for sessions. */
+  command: string | null
+  /** On the first tab of a split tab: how its parts share its space, by their index in `TabSet.tabs`. */
+  layout?: PaneNode
+}
+
+/** A page of a tab set, in the app's browser. */
+export interface TabSetBrowser {
+  mode: 'browser'
+  url: string
+  title: string | null
+  layout?: PaneNode
+}
+
+/** What saving a tab set takes: without `id` a new one, otherwise the one it replaces. */
+export interface TabSetInput {
+  id?: string | null
+  name: string
+  tabs: TabSetTab[]
+}
+
+/** How opening a tab set went. */
+export interface TabSetOpenResult {
+  /** The tab to show: the first one that opened (or ran already). */
+  firstId: string | null
+  /** Tabs that didn't open, with why: a folder or account that is gone, a start that failed. */
+  failed: { title: string; reason: string }[]
+}
+
+// ---------------------------------------------------------------------------
 // App / misc
 // ---------------------------------------------------------------------------
 

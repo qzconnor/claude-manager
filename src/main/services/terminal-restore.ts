@@ -291,7 +291,7 @@ export class TerminalRestore {
 }
 
 /** Whether a folder is there, without waiting long for one on a network drive that is gone. */
-async function folderState(dir: string): Promise<'ok' | 'missing' | 'unreachable'> {
+export async function folderState(dir: string): Promise<'ok' | 'missing' | 'unreachable'> {
   let timer: NodeJS.Timeout | undefined
   const timeout = new Promise<'unreachable'>((resolve) => {
     timer = setTimeout(() => resolve('unreachable'), FOLDER_TIMEOUT_MS)

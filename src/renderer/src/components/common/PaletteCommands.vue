@@ -13,6 +13,7 @@ import {
   FolderOpenIcon,
   GlobeIcon,
   HistoryIcon,
+  LayersIcon,
   Maximize2Icon,
   Minimize2Icon,
   PanelRightIcon,
@@ -56,6 +57,7 @@ import { useAccountsStore } from '@/stores/accounts'
 import { useAppStore } from '@/stores/app'
 import { useSessionsStore } from '@/stores/sessions'
 import { useSettingsStore } from '@/stores/settings'
+import { useTabSetsStore } from '@/stores/tab-sets'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import { useUsageStore } from '@/stores/usage'
@@ -76,6 +78,7 @@ const usage = useUsageStore()
 const settings = useSettingsStore()
 const launcher = useLauncher()
 const ui = useUiStore()
+const tabSets = useTabSetsStore()
 const { closeGroup, closeTerminal, copyLastAnswer, restartTerminal, stopTerminal } = useTerminalActions()
 const accountSwitch = useAccountSwitch()
 const recent = useRecentFolders(8)
@@ -203,6 +206,15 @@ const closesBrowser = computed(
           <HistoryIcon />
           Geschlossenen Tab wieder öffnen
           <CommandShortcut class="max-w-[40%] truncate tracking-normal">{{ terminals.recentlyClosed[0].title }}</CommandShortcut>
+        </CommandItem>
+        <CommandItem
+          v-if="terminals.terminals.some((t) => t.mode !== 'login')"
+          value="save-tab-set"
+          filter-text="Offene Tabs als Tab-Set speichern Arbeitsbereich Layout merken"
+          @select="run(() => (ui.tabSetRequest = { mode: 'create' }))"
+        >
+          <LayersIcon />
+          Offene Tabs als Tab-Set speichern…
         </CommandItem>
         <CommandItem value="new-session-folder" @select="run(() => launcher.newSessionInFolder())">
           <FolderOpenIcon />
@@ -441,6 +453,23 @@ const closesBrowser = computed(
           >
             <AccountDot :color="account.color" />
             Neue Session · {{ account.name }}
+          </CommandItem>
+        </CommandGroup>
+      </template>
+
+      <template v-if="tabSets.sets.length">
+        <CommandSeparator />
+        <CommandGroup heading="Tab-Sets">
+          <CommandItem
+            v-for="set in tabSets.sets"
+            :key="set.id"
+            :value="`tab-set-${set.id}`"
+            :filter-text="`Tab-Set öffnen ${set.name}`"
+            @select="run(() => tabSets.open(set.id))"
+          >
+            <LayersIcon />
+            <span class="min-w-0 truncate">Tab-Set „{{ set.name }}“ öffnen</span>
+            <CommandShortcut class="tracking-normal">{{ set.tabs.length === 1 ? '1 Tab' : `${set.tabs.length} Tabs` }}</CommandShortcut>
           </CommandItem>
         </CommandGroup>
       </template>

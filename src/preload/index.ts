@@ -154,6 +154,13 @@ const api: ManagerApi = {
     onChanged: (cb) => subscribe(IpcEvent.workspacesChanged, cb),
     onMoved: (cb) => subscribe(IpcEvent.workspacesMoved, cb),
   },
+  tabSets: {
+    list: () => invoke(IpcInvoke.tabSetsList),
+    save: (input) => invoke(IpcInvoke.tabSetsSave, input),
+    remove: (id) => invoke(IpcInvoke.tabSetsRemove, id),
+    open: (id) => invoke(IpcInvoke.tabSetsOpen, id),
+    onChanged: (cb) => subscribe(IpcEvent.tabSetsChanged, cb),
+  },
   themes: {
     list: () => invoke(IpcInvoke.themesList),
     create: (theme) => invoke(IpcInvoke.themesCreate, theme),

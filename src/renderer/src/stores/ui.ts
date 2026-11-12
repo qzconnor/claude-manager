@@ -35,6 +35,9 @@ export type WorkspaceRequest =
   | { mode: 'adopt'; path: string }
   | { mode: 'edit'; path: string }
 
+/** What `TabSetDialog` asks for: the open tabs saved as a new set, or the set `id` changed. */
+export type TabSetRequest = { mode: 'create' } | { mode: 'edit'; id: string }
+
 /** What `ThemeEditorDialog` edits: a theme of the user (`id`), or a new one that starts with the colors of `from`. */
 export type ThemeEditorRequest = { mode: 'edit'; id: string } | { mode: 'create'; from: ThemeContent }
 
@@ -81,6 +84,7 @@ export const useUiStore = defineStore('ui', () => {
   /** Asks for a worktree name before a session starts in one (`WorktreeDialog`); `cwd` null asks for the folder too. */
   const worktreeRequest = ref<{ accountId: string; cwd: string | null } | null>(null)
   const themeEditorRequest = ref<ThemeEditorRequest | null>(null)
+  const tabSetRequest = ref<TabSetRequest | null>(null)
   /**
    * Left and right edge (viewport px) of the selected tab in the title bar, as far as it is visible.
    * The page below opens its top border there, so the tab merges into it.
@@ -144,6 +148,7 @@ export const useUiStore = defineStore('ui', () => {
     sessionRenameRequest,
     tabRenameRequest,
     themeEditorRequest,
+    tabSetRequest,
     selectedTabEdges,
     hoveredTab,
     draggingTab,

@@ -12,6 +12,7 @@ import type { NotificationService } from './services/notification-service'
 import type { SessionHandoff } from './services/session-handoff'
 import type { SessionService } from './services/session-service'
 import type { SettingsService } from './services/settings-service'
+import type { TabSetService } from './services/tab-set-service'
 import type { TerminalRestore } from './services/terminal-restore'
 import type { TerminalService } from './services/terminal-service'
 import type { ThemeService } from './services/theme-service'
@@ -53,6 +54,7 @@ export interface AppContext {
   updates: UpdateService
   /** Folders whose projects share a system prompt (`cm_prompts.md`). */
   workspaces: WorkspaceService
+  tabSets: TabSetService
   /** The user's own themes, files in the folder `themes` of the app's data. */
   themes: ThemeService
   /** Claude Code's trust in folders, asked in the app before a session starts. */
