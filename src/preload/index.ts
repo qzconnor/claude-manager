@@ -124,6 +124,7 @@ const api: ManagerApi = {
     get: (accountId, sessionId, limit) => invoke(IpcInvoke.sessionsGet, accountId, sessionId, limit),
     toolCall: (accountId, sessionId, toolUseId) => invoke(IpcInvoke.sessionsToolCall, accountId, sessionId, toolUseId),
     search: (query) => invoke(IpcInvoke.sessionsSearch, query),
+    editedBy: (path) => invoke(IpcInvoke.sessionsEditedBy, path),
     continueWith: (accountId, sessionId, targetAccountId) =>
       invoke(IpcInvoke.sessionsContinueWith, accountId, sessionId, targetAccountId),
     remove: (sessions) => invoke(IpcInvoke.sessionsRemove, sessions),

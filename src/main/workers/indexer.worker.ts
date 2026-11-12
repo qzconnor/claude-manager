@@ -11,6 +11,7 @@ import { parentPort, workerData } from 'node:worker_threads'
 import { MAX_STATS_DAYS } from '@shared/defaults'
 import { readJson, writeJsonAtomic } from '../lib/json-file'
 import { ThrottledSave } from '../lib/throttled-save'
+import { editedAt } from './edited-files'
 import { dropOldUsage, firstStatsDay } from './index-cache'
 import { readAppended } from './read-appended'
 import {
@@ -19,11 +20,12 @@ import {
   readToolCall,
   scanResult,
   scanTranscript,
+  type EditedFile,
   type ParsedSummary,
   type TranscriptScan,
   type UsageEntry,
 } from './transcript-parser'
-import type { IndexerRequest, IndexerResponse, IndexedSession, TokenStatsResult, TokenTuple } from './indexer-protocol'
+import type { FileEditHit, IndexerRequest, IndexerResponse, IndexedSession, TokenStatsResult, TokenTuple } from './indexer-protocol'
 import { SearchIndex } from './search-index'
 
 interface CacheEntry {
@@ -31,6 +33,9 @@ interface CacheEntry {
   mtimeMs: number
   summary: ParsedSummary | null
   usage: UsageEntry[]
+  /** The files a session changed (see `ParseResult`); none for a subagent's transcript. */
+  files?: EditedFile[]
+  edits?: EditedFile[]
 }
 
 interface CacheFile {
@@ -41,7 +46,8 @@ interface CacheFile {
 // 3: `<synthetic>` replies no longer count as messages; summaries are parsed again once.
 // 4: summaries know the worktree a session worked in.
 // 5: summaries know the folder `/cd` moved a session to.
-const CACHE_VERSION = 5
+// 6: sessions know the files they changed.
+const CACHE_VERSION = 6
 const { cacheFile, searchCacheFile } = workerData as { cacheFile: string; searchCacheFile: string }
 let cache: Record<string, CacheEntry> = {}
 let cacheLoaded: Promise<void> | null = null
@@ -192,32 +198,48 @@ async function indexFileNow(file: TranscriptFile, key: string): Promise<Indexed>
     mtimeMs: st.mtimeMs,
     summary: file.isSession ? parsed.summary : null,
     usage: parsed.usage,
+    ...(parsed.files.length ? { files: parsed.files } : {}),
+    ...(parsed.edits.length ? { edits: parsed.edits } : {}),
   }
   cache[file.path] = entry
   scheduleSave()
   return { entry, size: st.size, mtimeMs: st.mtimeMs }
 }
 
-async function scanSessions(projectsDir: string): Promise<IndexedSession[]> {
+/** The sessions of a projects folder as they are now, each with what its index knows. */
+async function* indexedSessions(projectsDir: string): AsyncGenerator<{ session: IndexedSession; entry: CacheEntry }> {
   await ensureCache()
-  const files = await listTranscripts(projectsDir, false)
-  const sessions: IndexedSession[] = []
-  for (const file of files) {
+  for (const file of await listTranscripts(projectsDir, false)) {
     const result = await indexFile(file)
     const summary = result?.entry.summary
     if (!result || !summary) continue
     // Sessions without a single message (e.g. opened and closed immediately) are noise.
     if (summary.messageCount === 0) continue
-    sessions.push({
+    const session: IndexedSession = {
       ...summary,
       projectKey: file.projectKey,
       filePath: file.path,
       sizeBytes: result.size,
       fileUpdatedAt: new Date(result.mtimeMs).toISOString(),
-    })
+    }
+    yield { session, entry: result.entry }
   }
   pruneCache()
+}
+
+async function scanSessions(projectsDir: string): Promise<IndexedSession[]> {
+  const sessions: IndexedSession[] = []
+  for await (const { session } of indexedSessions(projectsDir)) sessions.push(session)
   return sessions
+}
+
+async function editedBy(projectsDir: string, path: string): Promise<FileEditHit[]> {
+  const hits: FileEditHit[] = []
+  for await (const { session, entry } of indexedSessions(projectsDir)) {
+    const at = editedAt(entry, path)
+    if (at !== null) hits.push({ session, at: at || session.updatedAt || session.fileUpdatedAt })
+  }
+  return hits
 }
 
 async function tokenStats(projectsDir: string, days: number): Promise<TokenStatsResult> {
@@ -317,6 +339,8 @@ async function handle(request: IndexerRequest): Promise<unknown> {
       return readToolCall(await readFile(request.filePath), request.toolUseId)
     case 'searchTranscripts':
       return searchIndex.search(request.projectsDir, request.query, request.limit)
+    case 'editedBy':
+      return editedBy(request.projectsDir, request.path)
     case 'ping':
       return true
   }

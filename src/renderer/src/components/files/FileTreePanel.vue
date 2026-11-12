@@ -95,6 +95,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { useUiStore } from '@/stores/ui'
 import FileContentResults from './FileContentResults.vue'
 import FileNameDialog from './FileNameDialog.vue'
+import FileSessionsMenu from './FileSessionsMenu.vue'
 import FileTreeFilters from './FileTreeFilters.vue'
 
 /**
@@ -1214,6 +1215,7 @@ const iconButton =
           <GitCompareIcon />
           Änderungen zeigen
         </ContextMenuItem>
+        <FileSessionsMenu v-if="!menuTarget.dir && menuTarget.path" :path="abs(menuTarget.path)" />
         <ContextMenuItem v-if="!menuTarget.dir" @select="openFile(menuTarget.path)">
           <ExternalLinkIcon />
           Mit Standardprogramm öffnen

@@ -363,7 +363,170 @@ describe('parseTranscript', () => {
         continuedIn: null,
       },
       usage: [],
+      files: [],
+      edits: [],
     })
+  })
+})
+
+describe('the files a session changed', () => {
+  const backup = (realParentDir: string | undefined, backupTime: string, version = 1) => ({
+    backupFileName: version > 1 ? `abc@v${version}` : null,
+    version,
+    backupTime,
+    ...(realParentDir ? { realParentDir } : {}),
+  })
+  const snapshot = (files: Record<string, unknown>) => ({
+    type: 'file-history-snapshot',
+    messageId: 'm',
+    snapshot: { messageId: 'm', trackedFileBackups: files, timestamp: '2026-11-05T23:59:00.000Z' },
+    isSnapshotUpdate: false,
+  })
+  const delta = (trackingPath: string, b: unknown, timestamp = '2026-11-06T09:00:00.000Z') => ({
+    type: 'file-history-delta',
+    messageId: 'm',
+    snapshotMessageId: 'm',
+    trackingPath,
+    backup: b,
+    timestamp,
+  })
+
+  it('reads them from the snapshots and the lines of newer versions, each with its latest change', () => {
+    const buf = jsonl(
+      user('Fix it', '2026-11-05T22:59:00.000Z'),
+      snapshot({
+        'src/auth.ts': backup('/home/dev/app/src', '2026-11-05T23:00:00.000Z'),
+        '/tmp/notes.md': backup('/tmp', '2026-11-05T23:01:00.000Z'),
+      }),
+      // A later snapshot starts anew: the files before still count.
+      snapshot({ 'src/auth.ts': backup('/home/dev/app/src', '2026-11-05T23:30:00.000Z', 2) }),
+      delta('README.md', backup('/home/dev/app', '2026-11-06T09:00:00.000Z')),
+      // An older time doesn't replace a newer one.
+      delta('src/auth.ts', backup('/home/dev/app/src', '2026-11-05T22:00:00.000Z')),
+      assistant('msg_01', [text('Done.')], '2026-11-05T23:02:00.000Z'),
+    )
+    const result = parseTranscript(buf, SESSION, true)
+    expect(Object.fromEntries(result.files)).toEqual({
+      '/home/dev/app/src/auth.ts': '2026-11-05T23:30:00.000Z',
+      '/tmp/notes.md': '2026-11-05T23:01:00.000Z',
+      '/home/dev/app/README.md': '2026-11-06T09:00:00.000Z',
+    })
+    // The backups' times are not the conversation's.
+    expect(result.summary.updatedAt).toBe('2026-11-05T23:02:00.000Z')
+    expect(result.summary.messageCount).toBe(2)
+  })
+
+  it('joins Windows paths as such, and keeps the path as given where the folder was reached over a link', () => {
+    const buf = jsonl(
+      user('Fix it', '2026-11-05T22:59:00.000Z', { cwd: 'F:\\Projekte\\app' }),
+      delta('src\\a.ts', backup('F:\\Projekte\\app\\src', '2026-11-06T09:00:00.000Z')),
+      delta('D:\\link\\b.ts', backup('E:\\real', '2026-11-06T09:01:00.000Z')),
+    )
+    expect(parseTranscript(buf, SESSION, true).files.map(([path]) => path)).toEqual([
+      'F:\\Projekte\\app\\src\\a.ts',
+      'E:\\real\\b.ts',
+      'D:\\link\\b.ts',
+    ])
+  })
+
+  it('takes a path relative to the session folder without the real folder, and skips broken lines', () => {
+    const buf = jsonl(
+      user('Fix it', '2026-11-05T22:59:00.000Z'),
+      delta('lib/x.ts', backup(undefined, '2026-11-06T09:00:00.000Z')),
+      delta('', backup('/home/dev/app', '2026-11-06T09:00:00.000Z')),
+      delta('lib/y.ts', null),
+      { type: 'file-history-snapshot', messageId: 'm' },
+      snapshot({ 'lib/z.ts': 'not a backup' }),
+    )
+    expect(parseTranscript(buf, SESSION, true).files).toEqual([['/home/dev/app/lib/x.ts', '2026-11-06T09:00:00.000Z']])
+  })
+
+  it('follows a session moved with /cd for relative paths', () => {
+    const buf = jsonl(
+      user('Fix it', '2026-11-05T22:59:00.000Z'),
+      { type: 'relocated', relocatedCwd: '/home/dev/other' },
+      delta('lib/x.ts', backup(undefined, '2026-11-06T09:00:00.000Z')),
+    )
+    expect(parseTranscript(buf, SESSION, true).files.map(([path]) => path)).toEqual(['/home/dev/other/lib/x.ts'])
+  })
+
+  it('reads them on as the transcript grows, not from subagents, and keeps at most 5000', () => {
+    const scan = newTranscriptScan(true)
+    scanTranscript(scan, jsonl(user('Fix it', '2026-11-05T22:59:00.000Z'), delta('a.ts', backup('/w', '2026-11-06T09:00:00.000Z'))))
+    scanTranscript(scan, jsonl(delta('b.ts', backup('/w', '2026-11-06T09:01:00.000Z'))))
+    expect(scanResult(scan, SESSION).files.map(([path]) => path)).toEqual(['/w/a.ts', '/w/b.ts'])
+
+    const sub = newTranscriptScan(false)
+    scanTranscript(sub, jsonl(delta('a.ts', backup('/w', '2026-11-06T09:00:00.000Z'))))
+    expect(scanResult(sub, SESSION).files).toEqual([])
+
+    const many = newTranscriptScan(true)
+    const files = Object.fromEntries(Array.from({ length: 5003 }, (_, i) => [`f${i}.ts`, backup('/w', '2026-11-06T09:00:00.000Z')]))
+    scanTranscript(many, jsonl(snapshot(files)))
+    scanTranscript(many, jsonl(delta('f0.ts', backup('/w', '2026-11-07T09:00:00.000Z'))))
+    const kept = scanResult(many, SESSION).files
+    expect(kept).toHaveLength(5000)
+    // One known already still gets its later change.
+    expect(kept[0]).toEqual(['/w/f0.ts', '2026-11-07T09:00:00.000Z'])
+  })
+
+  it("notes the files of Claude's calls that change them, at the time of the call", () => {
+    const buf = jsonl(
+      user('Fix it', '2026-11-05T22:59:00.000Z'),
+      assistant(
+        'msg_01',
+        [
+          toolUse('toolu_01', 'Edit', { file_path: '/home/dev/app/src/a.ts', old_string: 'x', new_string: 'y' }),
+          toolUse('toolu_02', 'Write', { file_path: 'notes/b.md', content: '' }),
+          toolUse('toolu_03', 'Read', { file_path: '/home/dev/app/c.ts' }),
+        ],
+        '2026-11-05T23:00:00.000Z',
+      ),
+      assistant(
+        'msg_02',
+        [
+          toolUse('toolu_04', 'MultiEdit', { file_path: '/home/dev/app/src/./a.ts', edits: [] }),
+          toolUse('toolu_05', 'NotebookEdit', { notebook_path: '/home/dev/app/n.ipynb' }),
+          toolUse('toolu_06', 'Edit', { file_path: 42 }),
+          toolUse('toolu_07', 'constructor', { file_path: '/home/dev/app/proto.ts' }),
+          { type: 'server_tool_use', id: 'srvtoolu_01', name: 'Edit', input: { file_path: '/home/dev/app/server.ts' } },
+          { type: 'tool_use', id: 'toolu_08', name: 'Edit' },
+          null as unknown as Entry,
+        ],
+        '2026-11-05T23:05:00.000Z',
+        { cwd: '/home/dev/other' },
+      ),
+      // An older call doesn't replace a newer one.
+      assistant('msg_03', [toolUse('toolu_09', 'Edit', { file_path: '/home/dev/app/src/a.ts' })], '2026-11-05T22:00:00.000Z'),
+    )
+    expect(Object.fromEntries(parseTranscript(buf, SESSION, true).edits)).toEqual({
+      '/home/dev/app/src/a.ts': '2026-11-05T23:05:00.000Z',
+      '/home/dev/app/notes/b.md': '2026-11-05T23:00:00.000Z',
+      '/home/dev/app/n.ipynb': '2026-11-05T23:05:00.000Z',
+    })
+  })
+
+  it('takes a relative path of a call from the folder Claude worked in then, also under Windows', () => {
+    const buf = jsonl(
+      user('Fix it', '2026-11-05T22:59:00.000Z', { cwd: 'F:\\Projekte\\app' }),
+      assistant('msg_01', [toolUse('toolu_01', 'Edit', { file_path: 'src\\a.ts' })], '2026-11-05T23:00:00.000Z', { cwd: 'F:\\Projekte\\app' }),
+      assistant('msg_02', [toolUse('toolu_02', 'Edit', { file_path: 'b.ts' })], '2026-11-05T23:01:00.000Z', { cwd: 'F:\\Projekte\\app\\lib' }),
+      // Without its own folder the session's.
+      assistant('msg_03', [toolUse('toolu_03', 'Write', { file_path: 'c.ts' })], '2026-11-05T23:02:00.000Z', { cwd: undefined }),
+    )
+    expect(parseTranscript(buf, SESSION, true).edits.map(([path]) => path)).toEqual([
+      'F:\\Projekte\\app\\src\\a.ts',
+      'F:\\Projekte\\app\\lib\\b.ts',
+      'F:\\Projekte\\app\\c.ts',
+    ])
+    // Subagents' transcripts don't count.
+    expect(parseTranscript(buf, SESSION, false).edits).toEqual([])
+  })
+
+  it('leaves the file history out of what else reads the transcript', () => {
+    const seen: Entry[] = []
+    forEachEntry(jsonl(delta('a.ts', backup('/w', '2026-11-06T09:00:00.000Z')), user('Hi', '2026-11-05T22:59:00.000Z')), (e) => seen.push(e))
+    expect(seen.map((e) => e.type)).toEqual(['user'])
   })
 })
 

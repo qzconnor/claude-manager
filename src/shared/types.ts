@@ -669,6 +669,13 @@ export interface SessionSearchHit {
   matches: number
 }
 
+/** A session that changed a file with Claude's Edit or Write. */
+export interface SessionFileEdit {
+  session: SessionSummary
+  /** When it changed the file last. */
+  changedAt: string
+}
+
 export interface TranscriptToolCall {
   /** `tool_use` id: loads the complete call with `sessions.toolCall`. */
   id: string | null

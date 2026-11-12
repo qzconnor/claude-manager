@@ -8,6 +8,8 @@ export type IndexerRequest =
   | { method: 'readToolCall'; filePath: string; toolUseId: string }
   /** An empty query only brings the search index up to date. */
   | { method: 'searchTranscripts'; projectsDir: string; query: string; limit: number }
+  /** The sessions that changed a file (absolute path) with Claude's Edit or Write. */
+  | { method: 'editedBy'; projectsDir: string; path: string }
   /** Answered between two files: whether the worker is still alive while a request takes long. */
   | { method: 'ping' }
 
@@ -20,6 +22,12 @@ export interface IndexedSession extends ParsedSummary {
   filePath: string
   sizeBytes: number
   fileUpdatedAt: string
+}
+
+/** A session that changed a file, and when it changed it last. */
+export interface FileEditHit {
+  session: IndexedSession
+  at: string
 }
 
 /** [input, output, cacheCreation, cacheRead, messages] */

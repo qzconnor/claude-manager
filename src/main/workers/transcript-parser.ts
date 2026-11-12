@@ -2,6 +2,7 @@
  * Parsing of Claude Code transcript files (`<configDir>/projects/<project>/<session>.jsonl`).
  * Pure functions — used by the indexer worker thread (`toolSummary` also by the main process).
  */
+import { posix, win32 } from 'node:path'
 import { folderKey, inFolder } from '@shared/folders'
 import { unwrapPasted } from '@shared/pasted'
 import type { SessionWorktree, TranscriptMessage, TranscriptToolCall, TranscriptToolDetail } from '@shared/types'
@@ -25,9 +26,19 @@ export interface ParsedSummary {
 /** [key, localDay, model, input, output, cacheCreation, cacheRead] */
 export type UsageEntry = [string, string, string, number, number, number, number]
 
+/** A file the session changed with Claude's Edit or Write: its path and when it changed last. */
+export type EditedFile = [path: string, at: string]
+
 export interface ParseResult {
   summary: ParsedSummary
   usage: UsageEntry[]
+  /**
+   * The files of the file history, at the time Claude Code backed them up last: before a change, and
+   * again at the start of a later turn once someone else changed them.
+   */
+  files: EditedFile[]
+  /** The files of Claude's Edit, Write and NotebookEdit calls, at the time of the call. */
+  edits: EditedFile[]
 }
 
 const NEWLINE = 0x0a
@@ -42,6 +53,11 @@ const SKIP_PREFIXES = [
   '{"type":"queue-operation"',
   '{"type":"cost-state"',
 ].map((p) => Buffer.from(p, 'latin1'))
+/**
+ * What the summary skips: the same but the file history, where Claude Code notes the files a session
+ * changes (to rewind them). Its lines are few, each turn that changes files writes some.
+ */
+const SCAN_SKIP_PREFIXES = SKIP_PREFIXES.filter((p) => !p.equals(Buffer.from('{"type":"file-history', 'latin1')))
 
 function hasPrefix(buf: Buffer, start: number, end: number, prefix: Buffer): boolean {
   if (end - start < prefix.length) return false
@@ -49,7 +65,11 @@ function hasPrefix(buf: Buffer, start: number, end: number, prefix: Buffer): boo
 }
 
 /** Calls `onEntry` for every JSON line that isn't on the skip list. */
-export function forEachEntry(buf: Buffer, onEntry: (entry: Record<string, unknown>) => void): void {
+export function forEachEntry(
+  buf: Buffer,
+  onEntry: (entry: Record<string, unknown>) => void,
+  skip: readonly Buffer[] = SKIP_PREFIXES,
+): void {
   let start = 0
   const length = buf.length
   while (start < length) {
@@ -57,7 +77,7 @@ export function forEachEntry(buf: Buffer, onEntry: (entry: Record<string, unknow
     if (end === -1) end = length
     let lineEnd = end
     if (lineEnd > start && buf[lineEnd - 1] === 0x0d) lineEnd--
-    if (lineEnd - start > 1 && !SKIP_PREFIXES.some((p) => hasPrefix(buf, start, lineEnd, p))) {
+    if (lineEnd - start > 1 && !skip.some((p) => hasPrefix(buf, start, lineEnd, p))) {
       try {
         const entry = JSON.parse(buf.toString('utf8', start, lineEnd)) as unknown
         if (entry && typeof entry === 'object') onEntry(entry as Record<string, unknown>)
@@ -182,6 +202,10 @@ export interface TranscriptScan {
   assistantIds: Set<string>
   usageKeys: Set<string>
   usage: UsageEntry[]
+  /** The files of the file history (`ParseResult.files`), by path. */
+  files: Map<string, string>
+  /** The files of Claude's calls that change files (`ParseResult.edits`), by path. */
+  edits: Map<string, string>
 }
 
 export function newTranscriptScan(withSummary: boolean): TranscriptScan {
@@ -206,12 +230,92 @@ export function newTranscriptScan(withSummary: boolean): TranscriptScan {
     assistantIds: new Set(),
     usageKeys: new Set(),
     usage: [],
+    files: new Map(),
+    edits: new Map(),
   }
+}
+
+/** At most this many files of a session are kept (a session that formats a whole repository). */
+const MAX_EDITED_FILES = 5000
+
+/**
+ * Where a file of the file history is: Claude Code notes the real folder it is in, and the path as it
+ * was given (relative to the session's folder, or absolute). An absolute one counts too, the folder may
+ * have been reached over a link; a relative one only without the real folder (older versions). Windows
+ * paths are joined as such also elsewhere (the tests).
+ */
+function trackedPaths(tracked: string, realParentDir: string | null, cwd: string | null): string[] {
+  const p = pathsOf(realParentDir ?? cwd ?? tracked)
+  const paths: string[] = []
+  if (realParentDir) paths.push(p.join(realParentDir, p.basename(tracked)))
+  if (p.isAbsolute(tracked)) paths.push(p.normalize(tracked))
+  else if (!realParentDir && cwd) paths.push(p.join(cwd, tracked))
+  return paths
+}
+
+/** Windows paths are joined as such also elsewhere (the tests). */
+function pathsOf(sample: string): typeof win32 {
+  return /^[a-zA-Z]:[\\/]|^\\\\|\\/.test(sample) ? win32 : posix
+}
+
+/** Notes that the session changed `path` at `at`, the latest time of each file, as many as `MAX_EDITED_FILES`. */
+function note(files: Map<string, string>, path: string, at: string): void {
+  const before = files.get(path)
+  if (before === undefined && files.size >= MAX_EDITED_FILES) return
+  if (before === undefined || at > before) files.set(path, at)
+}
+
+/** A file the session changed, from its backup in the file history (`backupTime`). */
+function noteFile(scan: TranscriptScan, tracked: string | null, backup: unknown): void {
+  if (!tracked || !backup || typeof backup !== 'object') return
+  const b = backup as Record<string, unknown>
+  const at = str(b.backupTime) ?? ''
+  for (const path of trackedPaths(tracked, str(b.realParentDir), scan.relocatedCwd ?? scan.cwd)) note(scan.files, path, at)
+}
+
+/** Claude's calls that change a file, with the input naming it. */
+const EDIT_TOOLS = new Map([
+  ['Edit', 'file_path'],
+  ['MultiEdit', 'file_path'],
+  ['Write', 'file_path'],
+  ['NotebookEdit', 'notebook_path'],
+])
+
+/** The files an answer of Claude changes; a relative path (Claude Code asks for absolute ones) from the folder it worked in. */
+function scanEdits(scan: TranscriptScan, e: Record<string, unknown>, content: unknown, at: string | null): void {
+  if (!at || !Array.isArray(content)) return
+  for (const block of content as unknown[]) {
+    if (!block || typeof block !== 'object') continue
+    const { type, name, input } = block as { type?: unknown; name?: unknown; input?: unknown }
+    const key = type === 'tool_use' && typeof name === 'string' ? EDIT_TOOLS.get(name) : undefined
+    const target = key && input && typeof input === 'object' ? str((input as Record<string, unknown>)[key]) : null
+    if (!target) continue
+    const cwd = str(e.cwd) ?? scan.relocatedCwd ?? scan.cwd
+    const p = pathsOf(cwd ?? target)
+    if (p.isAbsolute(target)) note(scan.edits, p.normalize(target), at)
+    else if (cwd) note(scan.edits, p.join(cwd, target), at)
+  }
+}
+
+/**
+ * The file history: a snapshot with the files backed up so far (not always all of them, it starts anew
+ * now and then), and since newer versions a line for each file backed up.
+ */
+function scanFileHistory(scan: TranscriptScan, e: Record<string, unknown>): void {
+  if (e.type === 'file-history-delta') return noteFile(scan, str(e.trackingPath), e.backup)
+  const backups = (e.snapshot as { trackedFileBackups?: unknown } | undefined)?.trackedFileBackups
+  if (!backups || typeof backups !== 'object') return
+  for (const [tracked, backup] of Object.entries(backups as Record<string, unknown>)) noteFile(scan, tracked, backup)
 }
 
 function scanEntry(scan: TranscriptScan, e: Record<string, unknown>): void {
   const { withSummary } = scan
   const type = e.type
+  // Its times are those of backups, not of the conversation.
+  if (type === 'file-history-snapshot' || type === 'file-history-delta') {
+    if (withSummary) scanFileHistory(scan, e)
+    return
+  }
   const timestamp = str(e.timestamp)
   if (timestamp) {
     if (!scan.createdAt) scan.createdAt = timestamp
@@ -258,10 +362,11 @@ function scanEntry(scan: TranscriptScan, e: Record<string, unknown>): void {
     }
     case 'assistant': {
       const message = e.message as
-        | { id?: unknown; model?: unknown; usage?: Record<string, unknown> }
+        | { id?: unknown; model?: unknown; content?: unknown; usage?: Record<string, unknown> }
         | undefined
       const messageId = str(message?.id)
       const messageModel = str(message?.model)
+      if (withSummary) scanEdits(scan, e, message?.content, timestamp)
       // `<synthetic>` replies come from Claude Code itself (API errors, "No response requested."); the
       // conversation view and the search leave them out, so the message count does too.
       if (withSummary && !e.isSidechain && messageId && messageModel !== '<synthetic>' && !scan.assistantIds.has(messageId)) {
@@ -296,7 +401,7 @@ function scanEntry(scan: TranscriptScan, e: Record<string, unknown>): void {
  */
 export function scanTranscript(scan: TranscriptScan, buf: Buffer): number {
   const end = buf.lastIndexOf(NEWLINE) + 1
-  forEachEntry(buf.subarray(0, end), (e) => scanEntry(scan, e))
+  forEachEntry(buf.subarray(0, end), (e) => scanEntry(scan, e), SCAN_SKIP_PREFIXES)
   return end
 }
 
@@ -331,13 +436,15 @@ export function scanResult(scan: TranscriptScan, sessionId: string): ParseResult
       continuedIn: scan.continuedIn,
     },
     usage: [...scan.usage],
+    files: [...scan.files],
+    edits: [...scan.edits],
   }
 }
 
 /** The whole transcript at once, a last line without its newline included. */
 export function parseTranscript(buf: Buffer, sessionId: string, withSummary: boolean): ParseResult {
   const scan = newTranscriptScan(withSummary)
-  forEachEntry(buf, (e) => scanEntry(scan, e))
+  forEachEntry(buf, (e) => scanEntry(scan, e), SCAN_SKIP_PREFIXES)
   return scanResult(scan, sessionId)
 }
 

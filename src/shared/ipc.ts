@@ -40,6 +40,7 @@ import type {
   SessionGroup,
   SessionRef,
   SessionRemoveResult,
+  SessionFileEdit,
   SessionSearchHit,
   SettingsImportResult,
   TerminalAttach,
@@ -128,6 +129,7 @@ export const IpcInvoke = {
   sessionsGet: 'sessions:get',
   sessionsToolCall: 'sessions:tool-call',
   sessionsSearch: 'sessions:search',
+  sessionsEditedBy: 'sessions:edited-by',
   sessionsContinueWith: 'sessions:continue-with',
   sessionsRemove: 'sessions:remove',
   sessionsRename: 'sessions:rename',
@@ -470,6 +472,8 @@ export interface ManagerApi {
      * An empty query only brings the search index up to date, e.g. while the search opens.
      */
     search(query: string): Promise<SessionSearchHit[]>
+    /** The sessions of all accounts that changed the file at `path`, the latest change first. */
+    editedBy(path: string): Promise<SessionFileEdit[]>
     /** Opens the session in a new tab that runs with `targetAccountId`'s limits; null when its folder isn't trusted. */
     continueWith(accountId: string, sessionId: string, targetAccountId: string): Promise<TerminalInfo | null>
     /**

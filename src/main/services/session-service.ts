@@ -5,6 +5,7 @@ import type {
   SessionDetail,
   SessionGroup,
   SessionRef,
+  SessionFileEdit,
   SessionRemoveResult,
   SessionSearchHit,
   SessionSummary,
@@ -15,7 +16,7 @@ import { folderKey, windowsPath } from '@shared/folders'
 import { liveSessionIds, sessionFiles } from '../lib/session-files'
 import { moveSession, moveSessions } from '../lib/session-move'
 import { TypedEmitter } from '../lib/typed-emitter'
-import type { ConversationResult, IndexedSession, TranscriptSearchHit } from '../workers/indexer-protocol'
+import type { ConversationResult, FileEditHit, IndexedSession, TranscriptSearchHit } from '../workers/indexer-protocol'
 import type { AccountService } from './account-service'
 import type { IndexerClient } from './indexer-client'
 import type { SessionNames } from './session-names'
@@ -27,6 +28,8 @@ type Events = { changed: [accountId: string] }
 const MAX_CONVERSATION_MESSAGES = 100_000
 /** Hits per account; a search with more is too vague to go through all of them. */
 const MAX_SEARCH_HITS = 200
+/** Sessions that changed a file the menu lists; older ones hardly matter any more. */
+const MAX_FILE_EDITS = 50
 const TOOL_USE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 /** Files moved to the recycle bin at the same time. */
 const TRASH_CONCURRENCY = 6
@@ -136,6 +139,30 @@ export class SessionService extends TypedEmitter<Events> {
       }),
     )
     return groups.flat()
+  }
+
+  /** The sessions of all accounts that changed the file at `path`, the latest change first. */
+  async editedBy(path: string): Promise<SessionFileEdit[]> {
+    // Accounts may keep their sessions in the same folder: it is asked once.
+    const dirs = new Map<string, string>()
+    for (const account of this.accounts.list()) {
+      const dir = this.accounts.paths(account.id).projectsDir
+      if (!dirs.has(dir)) dirs.set(dir, account.id)
+    }
+    const groups = await Promise.all(
+      [...dirs].map(async ([projectsDir, accountId]) => {
+        try {
+          const hits = await this.indexer.request<FileEditHit[]>({ method: 'editedBy', projectsDir, path })
+          return hits.map((hit): SessionFileEdit => ({ session: this.toSummary(accountId, hit.session), changedAt: hit.at }))
+        } catch {
+          return []
+        }
+      }),
+    )
+    return groups
+      .flat()
+      .sort((a, b) => b.changedAt.localeCompare(a.changedAt))
+      .slice(0, MAX_FILE_EDITS)
   }
 
   /** Complete input and output of one tool call, loaded when it is expanded in the transcript. */
