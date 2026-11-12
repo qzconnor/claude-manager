@@ -4,6 +4,7 @@ import {
   accountKindLabel,
   formatBytes,
   formatClock,
+  formatCost,
   formatCountdown,
   formatDateTime,
   formatNumber,
@@ -218,6 +219,24 @@ describe('formatTokens', () => {
     const plain = (text: string) => text.replace(/\s/g, ' ')
     expect(plain(formatTokens(1_500_000))).toBe('1,5 Mio.')
     expect(plain(formatTokens(2_340_000_000))).toBe('2,3 Mrd.')
+  })
+})
+
+describe('formatCost', () => {
+  const plain = (text: string) => text.replace(/\s/g, ' ')
+
+  it('writes dollars with cents, from 100 $ whole', () => {
+    expect(plain(formatCost(0))).toBe('0,00 $')
+    expect(plain(formatCost(0.005))).toBe('0,01 $')
+    expect(plain(formatCost(12.345))).toBe('12,35 $')
+    expect(plain(formatCost(99.99))).toBe('99,99 $')
+    expect(plain(formatCost(100))).toBe('100 $')
+    expect(plain(formatCost(1234.5))).toBe('1.235 $')
+  })
+
+  it('shows that there is a cost below a cent', () => {
+    expect(plain(formatCost(0.0049))).toBe('< 0,01 $')
+    expect(plain(formatCost(0.000_001))).toBe('< 0,01 $')
   })
 })
 

@@ -10,6 +10,7 @@ vi.mock('electron', () => ({ app: { getPath: () => '', getVersion: () => '0.0.0'
 import { writeJsonAtomic } from '../lib/json-file'
 import type { AccountCredentials } from './account-service'
 import { dueNow, nextReset, UsageService, type LiveRecord } from './usage-service'
+import type { TokenStatsResult } from '../workers/indexer-protocol'
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
@@ -673,6 +674,47 @@ describe('UsageService against the usage API', () => {
       fetchMock.mockImplementation(async () => answer(500))
       await advance(5 * MINUTE)
       expect(service.history('a').fiveHour).toEqual([[T, 80, T + 2 * MINUTE]])
+    })
+  })
+})
+
+describe('UsageService.stats', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('names the tokens and costs of the index and fills in the days without usage', async () => {
+    vi.useFakeTimers({ now: new Date(2026, 10, 12, 10), toFake: ['Date'] })
+    const result: TokenStatsResult = {
+      days: [['2026-11-11', [1, 2, 3, 4, 5, 0.5]]],
+      models: [['claude-opus-4-6', [1, 2, 3, 4, 5, 0.5]]],
+      folders: [['F:/a', 'F--a', [1, 2, 3, 4, 5, 0.5], 1]],
+      sessions: [
+        { projectKey: 'F--a', sessionId: 's1', path: 'F:/a', title: 'Titel', model: 'claude-opus-4-6', tokens: [1, 2, 3, 4, 5, 0.5] },
+      ],
+      sessionCount: 1,
+      unpriced: 3,
+    }
+    const request = vi.fn(async () => result)
+    const accounts = { paths: () => ({ projectsDir: 'P' }) }
+    const service = new UsageService(accounts as never, {} as never, { request } as never, '', 'test')
+    const counts = { input: 1, output: 2, cacheCreation: 3, cacheRead: 4, messages: 5, cost: 0.5 }
+    const none = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, messages: 0, cost: 0 }
+
+    const stats = await service.stats('a', 3)
+    expect(request).toHaveBeenCalledWith({ method: 'tokenStats', projectsDir: 'P', days: 3 })
+    expect(stats).toEqual({
+      accountId: 'a',
+      days: [
+        { date: '2026-11-10', ...none },
+        { date: '2026-11-11', ...counts },
+        { date: '2026-11-12', ...none },
+      ],
+      models: [{ model: 'claude-opus-4-6', ...counts }],
+      folders: [{ path: 'F:/a', projectKey: 'F--a', sessionCount: 1, ...counts }],
+      sessions: [{ projectKey: 'F--a', sessionId: 's1', path: 'F:/a', title: 'Titel', model: 'claude-opus-4-6', ...counts }],
+      totals: counts,
+      sessionCount: 1,
+      unpriced: 3,
+      computedAt: new Date(2026, 10, 12, 10).toISOString(),
     })
   })
 })

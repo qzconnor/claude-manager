@@ -181,10 +181,10 @@ describe('parseTranscript', () => {
   it('counts the tokens of every request once, by local day', () => {
     // 23:00 UTC is already the next day in Berlin.
     expect(parseTranscript(session, SESSION, true).usage).toEqual([
-      ['msg_01:req_msg_01', '2026-11-06', MODEL, 10, 20, 300, 4000],
-      ['msg_02:req_msg_02', '2026-11-06', MODEL, 10, 20, 300, 4000],
+      ['msg_01:req_msg_01', '2026-11-06', MODEL, 10, 20, 300, 4000, 0, 0],
+      ['msg_02:req_msg_02', '2026-11-06', MODEL, 10, 20, 300, 4000, 0, 0],
       // Subagents cost tokens as well.
-      ['msg_03:req_msg_03', '2026-11-06', 'claude-haiku-4-5', 10, 20, 300, 4000],
+      ['msg_03:req_msg_03', '2026-11-06', 'claude-haiku-4-5', 10, 20, 300, 4000, 0, 0],
     ])
   })
 
@@ -204,9 +204,28 @@ describe('parseTranscript', () => {
       assistant('msg_05', [text('No response requested.')], '2026-11-06T10:00:04.000Z', {}, { model: '<synthetic>' }),
     )
     expect(parseTranscript(buf, SESSION, false).usage).toEqual([
-      ['msg_01:req_a', '2026-11-06', MODEL, 10, 20, 300, 4000],
-      ['msg_01:req_b', '2026-11-06', MODEL, 10, 20, 300, 4000],
-      ['msg_02:', '2026-11-06', 'unknown', 0, 5, 0, 0],
+      ['msg_01:req_a', '2026-11-06', MODEL, 10, 20, 300, 4000, 0, 0],
+      ['msg_01:req_b', '2026-11-06', MODEL, 10, 20, 300, 4000, 0, 0],
+      ['msg_02:', '2026-11-06', 'unknown', 0, 5, 0, 0, 0, 0],
+    ])
+  })
+
+  it('notes the cache writes for an hour and fast mode, for the costs', () => {
+    const usage = {
+      input_tokens: 1,
+      output_tokens: 2,
+      cache_creation_input_tokens: 700,
+      cache_read_input_tokens: 4,
+      cache_creation: { ephemeral_5m_input_tokens: 200, ephemeral_1h_input_tokens: 500 },
+      speed: 'fast',
+    }
+    const buf = jsonl(
+      assistant('msg_01', [text('a')], '2026-11-06T10:00:00.000Z', {}, { usage }),
+      assistant('msg_02', [text('b')], '2026-11-06T10:00:01.000Z', {}, { usage: { ...usage, cache_creation: null, speed: 'standard' } }),
+    )
+    expect(parseTranscript(buf, SESSION, false).usage).toEqual([
+      ['msg_01:req_msg_01', '2026-11-06', MODEL, 1, 2, 700, 4, 500, 1],
+      ['msg_02:req_msg_02', '2026-11-06', MODEL, 1, 2, 700, 4, 0, 0],
     ])
   })
 

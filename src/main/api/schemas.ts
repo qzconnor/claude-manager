@@ -120,7 +120,17 @@ export const schemas: Record<string, Schema> = {
     breakdown: arrayOf(object({ key: str, label: str, percent: num })),
     nextRefreshAt: nullable(dateTime),
   }),
-  TokenCounts: object({ input: int, output: int, cacheCreation: int, cacheRead: int, messages: int }),
+  TokenCounts: object({
+    input: int,
+    output: int,
+    cacheCreation: int,
+    cacheRead: int,
+    messages: int,
+    cost: {
+      ...num,
+      description: 'US-Dollar zu API-Preisen, ohne Antworten von Modellen ohne bekannten Preis. Mit einem Abo zahlt man sie nicht.',
+    },
+  }),
   AccountTokenStats: object({
     accountId: str,
     days: arrayOf({
@@ -138,10 +148,26 @@ export const schemas: Record<string, Schema> = {
           }),
         ],
       }),
-      description: 'Nach Ordner, der größte Verbrauch zuerst (Tokens nach API-Preisen gewichtet)',
+      description: 'Nach Ordner, die höchsten Kosten zuerst, bei gleichen Kosten die meisten Tokens (nach API-Preisen gewichtet)',
+    },
+    sessions: {
+      ...arrayOf({
+        allOf: [
+          ref('TokenCounts'),
+          object({
+            sessionId: str,
+            projectKey: str,
+            path: { ...nullable(str), description: 'Ordner, in dem die Session lief' },
+            title: nullable(str),
+            model: { ...nullable(str), description: 'Modell der letzten Antwort' },
+          }),
+        ],
+      }),
+      description: 'Die teuersten 20 Sessions, mit ihren Subagents',
     },
     totals: ref('TokenCounts'),
     sessionCount: int,
+    unpriced: { ...int, description: 'Antworten von Modellen ohne bekannten Preis, in keinen Kosten enthalten' },
     computedAt: dateTime,
   }),
   SessionWorktree: object({

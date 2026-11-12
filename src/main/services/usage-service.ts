@@ -169,6 +169,7 @@ export class UsageService extends TypedEmitter<Events> {
       cacheCreation: t[2],
       cacheRead: t[3],
       messages: t[4],
+      cost: t[5],
     })
     const byDay = new Map(result.days.map(([day, t]) => [day, toCounts(t)]))
     const dayList: DailyTokenStats[] = []
@@ -178,7 +179,7 @@ export class UsageService extends TypedEmitter<Events> {
     for (let i = 0; i < span; i++) {
       const pad = (n: number) => String(n).padStart(2, '0')
       const key = `${cursor.getFullYear()}-${pad(cursor.getMonth() + 1)}-${pad(cursor.getDate())}`
-      dayList.push({ date: key, ...(byDay.get(key) ?? { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, messages: 0 }) })
+      dayList.push({ date: key, ...(byDay.get(key) ?? { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, messages: 0, cost: 0 }) })
       cursor.setDate(cursor.getDate() + 1)
     }
     const totals = dayList.reduce<TokenCounts>(
@@ -188,8 +189,9 @@ export class UsageService extends TypedEmitter<Events> {
         cacheCreation: acc.cacheCreation + d.cacheCreation,
         cacheRead: acc.cacheRead + d.cacheRead,
         messages: acc.messages + d.messages,
+        cost: acc.cost + d.cost,
       }),
-      { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, messages: 0 },
+      { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, messages: 0, cost: 0 },
     )
     return {
       accountId,
@@ -198,8 +200,10 @@ export class UsageService extends TypedEmitter<Events> {
       folders: mergeFolderStats(
         result.folders.map(([path, projectKey, t, sessionCount]) => ({ path, projectKey, sessionCount, ...toCounts(t) })),
       ),
+      sessions: result.sessions.map(({ tokens, ...session }) => ({ ...session, ...toCounts(tokens) })),
       totals,
       sessionCount: result.sessionCount,
+      unpriced: result.unpriced,
       computedAt: new Date().toISOString(),
     }
   }

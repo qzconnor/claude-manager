@@ -879,6 +879,11 @@ export interface TokenCounts {
   cacheCreation: number
   cacheRead: number
   messages: number
+  /**
+   * What the answers cost in US dollars at the prices of Anthropic's API (see `answerCost`), without
+   * those of models the app has no price for. With a subscription nobody pays it.
+   */
+  cost: number
 }
 
 export interface DailyTokenStats extends TokenCounts {
@@ -899,14 +904,30 @@ export interface FolderTokenStats extends TokenCounts {
   sessionCount: number
 }
 
+/** One session with the usage of its subagents. */
+export interface SessionTokenStats extends TokenCounts {
+  sessionId: string
+  /** Claude Code's project folder name. */
+  projectKey: string
+  /** The folder it ran in, null when its transcript doesn't record it (any more). */
+  path: string | null
+  title: string | null
+  /** The model of its last answer. */
+  model: string | null
+}
+
 export interface AccountTokenStats {
   accountId: string
   days: DailyTokenStats[]
   models: ModelTokenStats[]
-  /** Largest first (by `weightedTokens`). */
+  /** Most expensive first, at the same cost largest (by `weightedTokens`). */
   folders: FolderTokenStats[]
+  /** The most expensive sessions, at most 20. */
+  sessions: SessionTokenStats[]
   totals: TokenCounts
   sessionCount: number
+  /** Answers of models without a known price: no `cost` includes them. */
+  unpriced: number
   computedAt: string
 }
 

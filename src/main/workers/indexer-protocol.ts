@@ -37,8 +37,18 @@ export interface FileEditHit {
   at: string
 }
 
-/** [input, output, cacheCreation, cacheRead, messages] */
-export type TokenTuple = [number, number, number, number, number]
+/** The cost in US dollars at the API's prices, without the answers of models the app has no price for. */
+export type TokenTuple = [input: number, output: number, cacheCreation: number, cacheRead: number, messages: number, cost: number]
+
+/** One session with its subagents; the folder, title and model as its own transcript records them. */
+export interface SessionTokenRow {
+  projectKey: string
+  sessionId: string
+  path: string | null
+  title: string | null
+  model: string | null
+  tokens: TokenTuple
+}
 
 /** Aggregates as tuples (see `TokenTuple`). */
 export interface TokenStatsResult {
@@ -49,7 +59,11 @@ export interface TokenStatsResult {
    * number of sessions. A worktree session counts for the folder it was started in.
    */
   folders: [string | null, string, TokenTuple, number][]
+  /** The most expensive sessions (see `TOP_SESSIONS`). */
+  sessions: SessionTokenRow[]
   sessionCount: number
+  /** Answers of models without a known price, which no cost includes. */
+  unpriced: number
 }
 
 /** Newest sessions first. */

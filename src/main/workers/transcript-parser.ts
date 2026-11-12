@@ -23,8 +23,19 @@ export interface ParsedSummary {
   continuedIn: string | null
 }
 
-/** [key, localDay, model, input, output, cacheCreation, cacheRead] */
-export type UsageEntry = [string, string, string, number, number, number, number]
+/** The tokens of one request; `cacheCreation` counts all cache writes, `cacheCreation1h` those for an hour. */
+export type UsageEntry = [
+  key: string,
+  localDay: string,
+  model: string,
+  input: number,
+  output: number,
+  cacheCreation: number,
+  cacheRead: number,
+  cacheCreation1h: number,
+  /** 1 when Claude answered in fast mode. */
+  fast: 0 | 1,
+]
 
 /** A file the session changed with Claude's Edit or Write: its path and when it changed last. */
 export type EditedFile = [path: string, at: string]
@@ -389,6 +400,8 @@ function scanEntry(scan: TranscriptScan, e: Record<string, unknown>): void {
           num(u.output_tokens),
           num(u.cache_creation_input_tokens),
           num(u.cache_read_input_tokens),
+          num((u.cache_creation as Record<string, unknown> | undefined)?.ephemeral_1h_input_tokens),
+          u.speed === 'fast' ? 1 : 0,
         ])
       }
       break

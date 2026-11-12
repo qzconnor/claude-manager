@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { dropOldUsage, firstStatsDay } from './index-cache'
 import type { UsageEntry } from './transcript-parser'
 
-const usage = (day: string): UsageEntry => [`msg-${day}`, day, 'claude-opus', 1, 2, 3, 4]
+const usage = (day: string): UsageEntry => [`msg-${day}`, day, 'claude-opus', 1, 2, 3, 4, 0, 0]
 
 describe('firstStatsDay', () => {
   it('counts today as the first of the days', () => {

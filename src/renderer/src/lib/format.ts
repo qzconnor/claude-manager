@@ -10,6 +10,8 @@ const weekdayTime = new Intl.DateTimeFormat('de', { weekday: 'short', hour: '2-d
 const compact = new Intl.NumberFormat('de', { notation: 'compact', maximumFractionDigits: 1 })
 const integer = new Intl.NumberFormat('de')
 const oneDecimal = new Intl.NumberFormat('de', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+const dollars = new Intl.NumberFormat('de', { style: 'currency', currency: 'USD' })
+const wholeDollars = new Intl.NumberFormat('de', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 })
 
 /** Midnight of the day `ms` falls on, in local time. */
 function startOfDay(ms: number): number {
@@ -128,6 +130,12 @@ export function formatTokens(value: number): string {
 
 export function formatNumber(value: number): string {
   return integer.format(value)
+}
+
+/** US dollars, the German way: with cents below 100 $, less than a cent as "< 0,01 $". */
+export function formatCost(usd: number): string {
+  if (usd > 0 && usd < 0.005) return `< ${dollars.format(0.01)}`
+  return (usd >= 100 ? wholeDollars : dollars).format(usd)
 }
 
 /** Sizes with German digits; a value that rounds up to the next unit is shown in it (1,0 MB, not 1024 KB). */

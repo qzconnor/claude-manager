@@ -26,8 +26,9 @@ import {
   type TranscriptScan,
   type UsageEntry,
 } from './transcript-parser'
-import type { FileEditHit, IndexerRequest, IndexerResponse, IndexedSession, TokenStatsResult, TokenTuple } from './indexer-protocol'
+import type { FileEditHit, IndexerRequest, IndexerResponse, IndexedSession, TokenStatsResult } from './indexer-protocol'
 import { SearchIndex } from './search-index'
+import { aggregateTokenStats, type UsageSource } from './token-stats'
 
 interface CacheEntry {
   size: number
@@ -48,7 +49,8 @@ interface CacheFile {
 // 4: summaries know the worktree a session worked in.
 // 5: summaries know the folder `/cd` moved a session to.
 // 6: sessions know the files they changed.
-const CACHE_VERSION = 6
+// 7: usage knows the cache writes for an hour and fast mode, for the costs.
+const CACHE_VERSION = 7
 const { cacheFile, searchCacheFile } = workerData as { cacheFile: string; searchCacheFile: string }
 let cache: Record<string, CacheEntry> = {}
 let cacheLoaded: Promise<void> | null = null
@@ -245,65 +247,17 @@ async function editedBy(projectsDir: string, path: string): Promise<FileEditHit[
 
 async function tokenStats(projectsDir: string, days: number): Promise<TokenStatsResult> {
   await ensureCache()
-  const files = await listTranscripts(projectsDir, true)
-  const sinceDay = firstStatsDay(new Date(), days)
-
-  const seen = new Set<string>()
-  const byDay = new Map<string, TokenTuple>()
-  const byModel = new Map<string, TokenTuple>()
-  /** By session (`projectKey` + id), subagents included; the folder is looked up afterwards. */
-  const bySession = new Map<string, { projectKey: string; sessionId: string; tokens: TokenTuple }>()
-
-  for (const file of files) {
+  const sources: UsageSource[] = []
+  for (const file of await listTranscripts(projectsDir, true)) {
     const result = await indexFile(file)
-    if (!result) continue
-    const sessionKey = `${file.projectKey}\n${file.sessionId}`
-    for (const [key, day, model, input, output, cacheCreation, cacheRead] of result.entry.usage) {
-      if (day < sinceDay || seen.has(key)) continue
-      seen.add(key)
-      let session = bySession.get(sessionKey)
-      if (!session) {
-        session = { projectKey: file.projectKey, sessionId: file.sessionId, tokens: [0, 0, 0, 0, 0] }
-        bySession.set(sessionKey, session)
-      }
-      for (const acc of [getOrAdd(byDay, day), getOrAdd(byModel, model), session.tokens]) {
-        acc[0] += input
-        acc[1] += output
-        acc[2] += cacheCreation
-        acc[3] += cacheRead
-        acc[4] += 1
-      }
-    }
+    if (result) sources.push({ projectKey: file.projectKey, sessionId: file.sessionId, usage: result.entry.usage })
   }
-
   // The session's own transcript tells the folder, also for the usage of its subagents.
-  const byFolder = new Map<string, { path: string | null; projectKey: string; tokens: TokenTuple; sessions: number }>()
-  for (const { projectKey, sessionId, tokens } of bySession.values()) {
-    const summary = cache[join(projectsDir, projectKey, `${sessionId}.jsonl`)]?.summary
-    const path = summary?.worktree?.originalCwd ?? summary?.cwd ?? null
-    const key = path ?? `#${projectKey}`
-    const folder = byFolder.get(key) ?? { path, projectKey, tokens: [0, 0, 0, 0, 0], sessions: 0 }
-    for (let i = 0; i < tokens.length; i++) folder.tokens[i]! += tokens[i]!
-    folder.sessions += 1
-    byFolder.set(key, folder)
-  }
-
+  const stats = aggregateTokenStats(sources, firstStatsDay(new Date(), days), (projectKey, sessionId) => {
+    return cache[join(projectsDir, projectKey, `${sessionId}.jsonl`)]?.summary
+  })
   pruneCache()
-  return {
-    days: [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)),
-    models: [...byModel.entries()].sort(([, a], [, b]) => b[1] + b[0] - (a[1] + a[0])),
-    folders: [...byFolder.values()].map((f) => [f.path, f.projectKey, f.tokens, f.sessions]),
-    sessionCount: new Set([...bySession.values()].map((s) => s.sessionId)).size,
-  }
-}
-
-function getOrAdd(map: Map<string, TokenTuple>, key: string): TokenTuple {
-  let acc = map.get(key)
-  if (!acc) {
-    acc = [0, 0, 0, 0, 0]
-    map.set(key, acc)
-  }
-  return acc
+  return stats
 }
 
 /** Drops cache entries of files that no longer exist (checked lazily, at most once a minute). */

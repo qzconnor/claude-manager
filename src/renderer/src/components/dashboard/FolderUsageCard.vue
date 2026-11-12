@@ -9,12 +9,12 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { formatNumber, formatTokens } from '@/lib/format'
+import { formatCost, formatNumber, formatTokens } from '@/lib/format'
 import { describeFolder } from '@/lib/session-tree'
 import { useAppStore } from '@/stores/app'
 import { useUiStore } from '@/stores/ui'
 
-/** Which folders the usage of the period went to, the largest first; a click shows the folder's sessions. */
+/** Which folders the usage of the period went to, the most expensive first; a click shows the folder's sessions. */
 const props = defineProps<{ stats: AccountTokenStats | null; loading: boolean; days: number }>()
 
 const FIRST = 8
@@ -24,13 +24,16 @@ const ui = useUiStore()
 const router = useRouter()
 const all = ref(false)
 
-const total = computed(() => props.stats?.folders.reduce((sum, f) => sum + weightedTokens(f), 0) ?? 0)
+/** The share goes by the costs; without any (only models without a price) by the weighted tokens. */
+const byCost = computed(() => (props.stats?.totals.cost ?? 0) > 0)
+const amount = (folder: FolderTokenStats) => (byCost.value ? folder.cost : weightedTokens(folder))
+const total = computed(() => props.stats?.folders.reduce((sum, f) => sum + amount(f), 0) ?? 0)
 const rows = computed(() => {
   const folders = props.stats?.folders ?? []
   return (all.value ? folders : folders.slice(0, FIRST)).map((folder) => ({
     folder,
     ...describeFolder(folder.path, folder.projectKey, app.info?.homeDir),
-    share: total.value > 0 ? weightedTokens(folder) / total.value : 0,
+    share: total.value > 0 ? amount(folder) / total.value : 0,
   }))
 })
 const hidden = computed(() => Math.max(0, (props.stats?.folders.length ?? 0) - FIRST))
@@ -68,9 +71,13 @@ function show(folder: FolderTokenStats) {
               <InfoIcon />
             </Button>
           </TooltipTrigger>
-          <TooltipContent class="max-w-72">
-            Der Anteil gewichtet die Tokens wie die API-Preise: Output zählt fünffach, Cache-Write 1,25-fach,
-            Cache-Read ein Zehntel von Input. Unterschiede zwischen den Modellen bleiben außen vor.
+          <TooltipContent v-if="byCost || !stats" class="max-w-72">
+            Der Anteil richtet sich nach den Kosten zu den Preisen der API, je nach Modell. Antworten von Modellen
+            ohne bekannten Preis zählen dabei nicht mit.
+          </TooltipContent>
+          <TooltipContent v-else class="max-w-72">
+            Ohne bekannte Preise gewichtet der Anteil die Tokens wie die API: Output zählt fünffach, Cache-Write
+            1,25-fach, Cache-Read ein Zehntel von Input.
           </TooltipContent>
         </Tooltip>
       </CardAction>
@@ -84,7 +91,7 @@ function show(folder: FolderTokenStats) {
             <TableRow>
               <TableHead>Ordner</TableHead>
               <TableHead class="w-[28%]">Anteil</TableHead>
-              <TableHead class="w-24 text-right">Output</TableHead>
+              <TableHead class="w-24 text-right">Kosten</TableHead>
               <TableHead class="w-24 text-right">Antworten</TableHead>
               <TableHead class="w-20 text-right">Sessions</TableHead>
             </TableRow>
@@ -113,7 +120,7 @@ function show(folder: FolderTokenStats) {
                   <span class="w-11 shrink-0 text-right text-xs tabular-nums">{{ percent(row.share) }}</span>
                 </div>
               </TableCell>
-              <TableCell class="text-right tabular-nums">{{ formatTokens(row.folder.output) }}</TableCell>
+              <TableCell class="text-right tabular-nums">{{ formatCost(row.folder.cost) }}</TableCell>
               <TableCell class="text-right tabular-nums">{{ formatNumber(row.folder.messages) }}</TableCell>
               <TableCell class="text-right tabular-nums">{{ formatNumber(row.folder.sessionCount) }}</TableCell>
             </TableRow>
