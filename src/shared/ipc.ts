@@ -32,6 +32,7 @@ import type {
   FileTreeWatch,
   GitBranch,
   GitTreeStatus,
+  ReviewBase,
   WorktreeCheck,
   PaneNode,
   PaneSplit,
@@ -183,6 +184,7 @@ export const IpcInvoke = {
   filesSearchList: 'files:search-list',
   filesWatch: 'files:watch',
   filesDiff: 'files:diff',
+  filesReviewBase: 'files:review-base',
   filesCreate: 'files:create',
   filesRename: 'files:rename',
   filesTrash: 'files:trash',
@@ -609,8 +611,13 @@ export interface ManagerApi {
      * (not for changes in folders it ignores); `repo`: the repository itself (a commit, a checkout).
      */
     onChanged(cb: (root: string, dirs: string[], git: boolean, repo: boolean) => void): Unsubscribe
-    /** The changes of a file (relative to `root`) since the last commit; `full`: with the whole file around them. */
-    diff(root: string, path: string, full: boolean): Promise<FileDiff>
+    /**
+     * The changes of a file (relative to `root`) since the last commit; `full`: with the whole file around
+     * them. With `base` (a commit's hash, see `reviewBase`) its changes since that commit.
+     */
+    diff(root: string, path: string, full: boolean, base?: string | null): Promise<FileDiff>
+    /** Where the work of the folder's branch started, with its commits and changed files since; null without. */
+    reviewBase(root: string): Promise<ReviewBase | null>
     /**
      * Makes an empty file or a folder (`dir`) at `path` of an open tree, with the folders on its way;
      * never over an entry that is there.

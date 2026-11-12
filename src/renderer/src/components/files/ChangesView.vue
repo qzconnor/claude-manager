@@ -1,6 +1,7 @@
 <script lang="ts">
-import type { FileDiff } from '@shared/types'
+import type { FileDiff, ReviewBase } from '@shared/types'
 import type { DiffLine, DiffMode, ParsedDiff } from '@/lib/file-diff'
+import type { ReviewMode } from '@/lib/review-base'
 
 interface Entry {
   diff: FileDiff | null
@@ -32,6 +33,9 @@ interface Kept {
   flipped: string[]
   top: number
   left: number
+  /** Which changes it showed (the diffs are those), and since when the branch's. */
+  mode: ReviewMode
+  review: ReviewBase | null
 }
 const kept = new Map<string, Kept>()
 /** Folders kept, the least recently left dropped first. */
@@ -39,9 +43,20 @@ const MAX_KEPT = 4
 </script>
 
 <script setup lang="ts">
-import { ArrowDownIcon, ChevronsDownUpIcon, ChevronsUpDownIcon, FileDiffIcon, WrapTextIcon, XIcon } from '@lucide/vue'
+import {
+  ArrowDownIcon,
+  ChevronDownIcon,
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
+  FileDiffIcon,
+  GitCommitHorizontalIcon,
+  GitPullRequestIcon,
+  WrapTextIcon,
+  XIcon,
+} from '@lucide/vue'
 import { useElementSize } from '@vueuse/core'
 import { computed, nextTick, onBeforeUnmount, reactive, ref, shallowReactive, watch } from 'vue'
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDiffStyle } from '@/composables/useDiffStyle'
@@ -63,6 +78,8 @@ import {
   type SeenState,
 } from '@/lib/file-diff'
 import { absolutePath, baseName, changedFiles, folderName, gitDecorations, parentPath, treeOrder, untrackedFolders } from '@/lib/file-tree'
+import { formatDateTime, formatRelative } from '@/lib/format'
+import { commitsLabel, reviewLabel, reviewStatus } from '@/lib/review-base'
 import { spanOfComment, type ReviewComment } from '@/lib/review-comments'
 import { hasLanguage, highlightDiff, languageOf, loadLanguage } from '@/lib/syntax'
 import { SEPARATOR, useFileTreeStore } from '@/stores/file-tree'
@@ -77,7 +94,9 @@ import ReviewComposer from './ReviewComposer.vue'
  * pull request: each file with its head (which stays at the top while its lines pass), its lines drawn
  * like those of a single file's changes. A file marked as seen folds, so the next one follows; one that
  * changes after is to be looked at again. It follows the folder live, as Claude goes on working.
- * Lines picked at their numbers get comments for Claude (`useLineComments`).
+ * Lines picked at their numbers get comments for Claude (`useLineComments`). On a branch it shows all
+ * changes since the branch started too, committed or not, with its commits and where to open its pull
+ * request; by itself when nothing is uncommitted but the branch has commits (Claude committed them).
  */
 const props = defineProps<{
   root: string
@@ -93,7 +112,66 @@ const { colors, fontSize, rowHeight, fontFamily } = useDiffStyle()
 const model = useFileTreeModel(() => props.root)
 const rootName = computed(() => folderName(props.root))
 const git = computed(() => model.value.git)
-const decorations = computed(() => gitDecorations(git.value))
+
+// ── Since the branch started ──
+
+const restored = kept.get(props.root)
+kept.delete(props.root)
+/** Where the work of the folder's branch started, with its commits; null without (see `reviewBase`). */
+const review = ref<ReviewBase | null>(restored?.review ?? null)
+const reviewLoaded = ref(!!restored)
+const mode = ref<ReviewMode>(restored?.mode ?? 'head')
+/** It picks its mode itself once: with nothing uncommitted but commits on the branch, those. */
+let picked = !!restored
+const baseMode = computed(() => mode.value === 'base' && review.value !== null)
+/** The commit the diffs compare with; null: the last one (HEAD). */
+const diffBase = computed(() => (baseMode.value ? review.value!.mergeBase : null))
+/** git's state of the folder as the review shows it: the uncommitted changes, or those since the branch started. */
+const shown = computed(() => (baseMode.value ? reviewStatus(git.value, review.value!) : git.value))
+const decorations = computed(() => gitDecorations(shown.value))
+const modes = computed(() => [
+  { value: 'head' as const, label: 'Nicht committet' },
+  { value: 'base' as const, label: review.value ? reviewLabel(review.value) : 'Seit Abzweig' },
+])
+const showCommits = ref(false)
+
+let reviewAsk = 0
+async function loadReview(): Promise<void> {
+  const root = props.root
+  const ask = ++reviewAsk
+  const next = await window.api.files.reviewBase(root).catch(() => null)
+  if (ask !== reviewAsk || root !== props.root) return
+  review.value = next
+  reviewLoaded.value = true
+}
+watch(
+  () => props.root,
+  (_root, before) => {
+    if (before !== undefined) {
+      review.value = null
+      reviewLoaded.value = false
+      mode.value = 'head'
+      picked = false
+      showCommits.value = false
+    }
+    void loadReview()
+  },
+  { immediate: true },
+)
+watch(
+  () => reviewLoaded.value && git.value !== null,
+  (ready) => {
+    if (!ready || picked) return
+    picked = true
+    if (review.value?.commits.length && Object.keys(git.value!.files).length === 0) mode.value = 'base'
+  },
+  { immediate: true },
+)
+
+function openPullRequest() {
+  const url = review.value?.pullRequestUrl
+  if (url) void window.api.app.openExternal(url)
+}
 /** Whether git was asked once: until then no repository may just mean not known yet. */
 const checked = ref(false)
 watch(
@@ -126,7 +204,7 @@ watch(
  */
 const MAX_FILES = 500
 /** All changed files in the order of the tree. */
-const allPaths = computed(() => treeOrder(changedFiles(git.value, model.value.search?.paths)))
+const allPaths = computed(() => treeOrder(changedFiles(shown.value, model.value.search?.paths)))
 /** Those the review shows. */
 const paths = computed(() => (allPaths.value.length > MAX_FILES ? allPaths.value.slice(0, MAX_FILES) : allPaths.value))
 const notShown = computed(() => allPaths.value.length - paths.value.length)
@@ -137,8 +215,6 @@ const newFolders = computed(() => untrackedFolders(git.value).slice(0, 3).join('
 
 const NO_LINES: ParsedDiff = { lines: [], added: 0, removed: 0 }
 
-const restored = kept.get(props.root)
-kept.delete(props.root)
 const entries = shallowReactive(new Map<string, Entry>(restored?.entries))
 const queue = new Set<string>()
 let running = 0
@@ -159,9 +235,12 @@ function pump(): void {
 
 async function load(path: string): Promise<void> {
   const root = props.root
+  const base = diffBase.value
+  /** Asked for another folder or base meanwhile, or the file is no longer shown. */
+  const gone = () => root !== props.root || base !== diffBase.value || !paths.value.includes(path)
   try {
-    const diff = await window.api.files.diff(root, path, false)
-    if (root !== props.root || !paths.value.includes(path)) return
+    const diff = await window.api.files.diff(root, path, false, base)
+    if (gone()) return
     const mode = diffMode(diff, decorations.value.file(path)?.status)
     const hash = diffHash(diff)
     const before = entries.get(path)
@@ -170,8 +249,8 @@ async function load(path: string): Promise<void> {
     const parsed = diffLines(diff, mode)
     const inFile = mode === 'diff' && !!diff.patch && !diff.tooLarge && !!languageOf(path)
     // A file on show already waits for the whole one, so its lines don't flash up without colours.
-    const whole = inFile && before ? await wholeOf(root, path) : null
-    if (root !== props.root || !paths.value.includes(path)) return
+    const whole = inFile && before ? await wholeOf(root, path, base) : null
+    if (gone()) return
     entries.set(path, {
       diff: Object.freeze(diff),
       error: null,
@@ -188,20 +267,20 @@ async function load(path: string): Promise<void> {
     })
     if (!inFile || before) return
     // A new one shows at once, highlighted hunk by hunk, and again in its file once that is there.
-    const later = await wholeOf(root, path)
+    const later = await wholeOf(root, path, base)
     const entry = entries.get(path)
-    if (later && root === props.root && entry?.hash === hash) entries.set(path, { ...entry, whole: later, html: null, htmlFor: -1 })
+    if (later && !gone() && entry?.hash === hash) entries.set(path, { ...entry, whole: later, html: null, htmlFor: -1 })
   } catch (error) {
-    if (root !== props.root) return
+    if (gone()) return
     const message = errorMessage(error).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
     entries.set(path, { diff: null, error: message, mode: null, parsed: NO_LINES, hash: null, columns: 0, digits: 1, whole: null, html: null, htmlFor: -1, offsets: null, wrapWidth: 0 })
   }
 }
 
 /** The diff of the whole file for its highlighting; null without (the changes are highlighted hunk by hunk). */
-async function wholeOf(root: string, path: string): Promise<readonly DiffLine[] | null> {
+async function wholeOf(root: string, path: string, base: string | null): Promise<readonly DiffLine[] | null> {
   try {
-    const all = await window.api.files.diff(root, path, true)
+    const all = await window.api.files.diff(root, path, true, base)
     return all.patch && !all.tooLarge ? Object.freeze(parsePatch(all.patch).lines) : null
   } catch {
     return null
@@ -209,11 +288,16 @@ async function wholeOf(root: string, path: string): Promise<readonly DiffLine[] 
 }
 
 watch(
-  () => [props.root, paths.value.join('\n')],
-  ([root], before) => {
-    if (before && root !== before[0]) {
+  () => [props.root, diffBase.value, paths.value.join('\n')] as const,
+  ([root, base], before) => {
+    if (before && (root !== before[0] || base !== before[1])) {
       entries.clear()
       queue.clear()
+    }
+    // Other changes: from the top, none folded by hand.
+    if (before && root === before[0] && base !== before[1]) {
+      flipped.clear()
+      if (scroller.value) scroller.value.scrollTop = 0
     }
     const now = new Set(paths.value)
     for (const path of entries.keys()) if (!now.has(path)) entries.delete(path)
@@ -250,13 +334,20 @@ watch(
 )
 
 const stale = new Set<string>()
+/** The repository changed (a commit, a checkout, a push): where the branch started is asked again. */
+let reviewStale = false
 let reloadTimer: ReturnType<typeof setTimeout> | null = null
 const offChanged = window.api.files.onChanged((root, dirs, _git, repo) => {
   if (root !== props.root) return
+  if (repo) reviewStale = true
   for (const path of paths.value) if (repo || dirs.includes(parentPath(path))) stale.add(path)
-  if (stale.size === 0 || reloadTimer) return
+  if ((stale.size === 0 && !reviewStale) || reloadTimer) return
   reloadTimer = setTimeout(() => {
     reloadTimer = null
+    if (reviewStale) {
+      reviewStale = false
+      void loadReview()
+    }
     for (const path of stale) queue.add(path)
     stale.clear()
     pump()
@@ -301,8 +392,11 @@ function htmlOf(path: string, entry: Entry): (string | null)[] | null {
 
 // ── Seen, and folded ──
 
+/** Seen marks are kept apart for the changes since the branch started, and start anew when it moves. */
+const seenRoot = computed(() => (diffBase.value ? `${props.root}\u0000${diffBase.value}` : props.root))
+
 function seenState(path: string): SeenState {
-  const mark = fileTree.seenOf(props.root, path)
+  const mark = fileTree.seenOf(seenRoot.value, path)
   if (!mark) return 'no'
   const hash = entries.get(path)?.hash
   return !hash || hash === mark ? 'yes' : 'changed'
@@ -326,7 +420,7 @@ function toggleAll() {
 function toggleSeen(path: string) {
   const hash = entries.get(path)?.hash ?? null
   flipped.delete(path)
-  fileTree.setSeen(props.root, path, seenState(path) === 'yes' ? null : hash)
+  fileTree.setSeen(seenRoot.value, path, seenState(path) === 'yes' ? null : hash)
   // Folded with its head at or above the top: the head goes to the top, the next file right below.
   void nextTick(() => {
     const block = layout.value.blocks.find((b) => b.path === path)
@@ -394,7 +488,7 @@ function noteOf(entry: Entry | undefined): string | null {
       return 'Die Datei gibt es nicht mehr.'
     case 'unchanged': {
       const note = unchangedNote(entry.diff?.patch)
-      return note ? `${note}.` : 'Keine Änderungen mehr seit dem letzten Commit.'
+      return note ? `${note}.` : diffBase.value ? 'Keine Änderungen seit dem Abzweig.' : 'Keine Änderungen mehr seit dem letzten Commit.'
     }
     default:
       return entry.parsed.lines.length === 0 ? 'Die Datei ist leer.' : null
@@ -487,6 +581,8 @@ onBeforeUnmount(() => {
     flipped: [...flipped],
     top: scroller.value?.scrollTop ?? 0,
     left: scroller.value?.scrollLeft ?? 0,
+    mode: mode.value,
+    review: review.value,
   })
   for (const root of kept.keys()) if (kept.size > MAX_KEPT) kept.delete(root)
 })
@@ -590,6 +686,10 @@ const totals = computed(() => {
   return { added, removed }
 })
 const loading = computed(() => paths.value.some((path) => !entries.has(path)))
+const emptyText = computed(() => {
+  if (!git.value) return 'Kein Git-Repository.'
+  return baseMode.value ? `Keine Änderungen seit dem Abzweig von ${review.value!.base}.` : 'Keine Änderungen seit dem letzten Commit.'
+})
 
 const absolute = (path: string) => absolutePath(props.root, path, SEPARATOR)
 
@@ -643,7 +743,7 @@ const iconButton =
       <span class="shrink-0 font-medium">Alle Änderungen</span>
       <span class="min-w-0 truncate text-muted-foreground" v-tooltip="root">{{ rootName }}</span>
       <span v-if="paths.length" class="shrink-0 text-muted-foreground tabular-nums">
-        · {{ seenCount }} von {{ paths.length }} gesehen<template v-if="git?.truncated || notShown"> · nicht alle</template>
+        · {{ seenCount }} von {{ paths.length }} gesehen<template v-if="shown?.truncated || notShown"> · nicht alle</template>
       </span>
       <span class="flex-1" />
       <span v-if="totals.added || totals.removed" class="shrink-0 font-mono text-[11px] tabular-nums">
@@ -693,6 +793,47 @@ const iconButton =
       </Tooltip>
     </header>
 
+    <!-- On a branch: the uncommitted changes or all since it started, its commits, its pull request. -->
+    <div v-if="review" class="flex h-[34px] shrink-0 items-center gap-1.5 overflow-hidden border-b px-1.5 text-xs">
+      <SegmentedControl v-model="mode" :options="modes" size="sm" aria-label="Welche Änderungen" class="min-w-0 shrink" />
+      <button
+        v-if="baseMode"
+        type="button"
+        :aria-expanded="showCommits"
+        class="flex h-[24px] shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+        @click="showCommits = !showCommits"
+      >
+        <GitCommitHorizontalIcon class="size-[14px]" />
+        <span class="tabular-nums">{{ commitsLabel(review.commits.length, review.commitsTruncated) }}</span>
+        <ChevronDownIcon class="size-[14px] transition-transform" :class="showCommits && 'rotate-180'" />
+      </button>
+      <span class="flex-1" />
+      <button
+        v-if="review.pullRequestUrl"
+        type="button"
+        class="flex h-[24px] shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+        v-tooltip="`Pull Request von ${review.branch} nach ${review.base} im Browser anlegen`"
+        @click="openPullRequest"
+      >
+        <GitPullRequestIcon class="size-[14px]" />
+        PR öffnen
+      </button>
+    </div>
+    <ol
+      v-if="baseMode && review && showCommits"
+      aria-label="Commits seit dem Abzweig"
+      class="max-h-[168px] shrink-0 overflow-y-auto border-b py-1 text-xs"
+    >
+      <li v-for="commit in review.commits" :key="commit.sha" class="flex h-[24px] items-center gap-2 px-3">
+        <code class="shrink-0 font-mono text-[11px] text-muted-foreground" v-tooltip="commit.sha">{{ commit.short }}</code>
+        <span class="min-w-0 flex-1 truncate" v-tooltip="commit.subject">{{ commit.subject }}</span>
+        <span class="shrink-0 truncate text-muted-foreground" v-tooltip="formatDateTime(commit.date)">{{ commit.author }} · {{ formatRelative(commit.date) }}</span>
+      </li>
+      <li v-if="review.commitsTruncated" class="flex h-[24px] items-center px-3 text-muted-foreground">
+        Ältere Commits sind nicht aufgeführt.
+      </li>
+    </ol>
+
     <!-- Too many files: only the first ones, and what is probably the reason. -->
     <div v-if="notShown > 0" role="status" class="shrink-0 border-b px-3 py-1.5 text-xs text-muted-foreground">
       Nur die ersten {{ MAX_FILES }} von {{ allPaths.length.toLocaleString('de-DE') }} geänderten Dateien.
@@ -703,7 +844,7 @@ const iconButton =
     </div>
     <div v-else-if="paths.length === 0" class="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center text-xs text-muted-foreground">
       <FileDiffIcon class="size-[24px]" />
-      <span class="font-medium text-foreground">{{ git ? 'Keine Änderungen seit dem letzten Commit.' : 'Kein Git-Repository.' }}</span>
+      <span class="font-medium text-foreground">{{ emptyText }}</span>
     </div>
     <div
       v-else

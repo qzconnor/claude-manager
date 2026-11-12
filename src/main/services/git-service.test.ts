@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GitBranch } from '@shared/types'
-import { claudeWorktrees, GitService, repoWebUrl } from './git-service'
+import { claudeWorktrees, GitService, pullRequestUrl, repoWebUrl } from './git-service'
 
 const HASH = '0123456789abcdef0123456789abcdef01234567'
 
@@ -309,5 +309,33 @@ describe('claudeWorktrees', () => {
       'worktree F:/Code/other',
     ].join('\n')
     expect(claudeWorktrees(porcelain)).toEqual(['login-fix'])
+  })
+})
+
+describe('pullRequestUrl', () => {
+  it('opens a pull request of the branch on its host', () => {
+    expect(pullRequestUrl('https://github.com/me/app', 'master', 'feat/app-review')).toBe(
+      'https://github.com/me/app/compare/master...feat/app-review?expand=1',
+    )
+    expect(pullRequestUrl('https://github.example.com/me/app', 'main', 'fix/ä#1')).toBe(
+      'https://github.example.com/me/app/compare/main...fix/%C3%A4%231?expand=1',
+    )
+    expect(pullRequestUrl('https://gitlab.com/group/sub/app', 'main', 'feat/x')).toBe(
+      'https://gitlab.com/group/sub/app/-/merge_requests/new?merge_request%5Bsource_branch%5D=feat%2Fx&merge_request%5Btarget_branch%5D=main',
+    )
+    expect(pullRequestUrl('https://gitlab.example.com/app', 'main', 'x')).toBe(
+      'https://gitlab.example.com/app/-/merge_requests/new?merge_request%5Bsource_branch%5D=x&merge_request%5Btarget_branch%5D=main',
+    )
+    expect(pullRequestUrl('https://bitbucket.org/team/app', 'main', 'feat/x')).toBe(
+      'https://bitbucket.org/team/app/pull-requests/new?source=feat%2Fx&dest=main',
+    )
+    expect(pullRequestUrl('https://dev.azure.com/org/project/_git/app', 'main', 'feat/x')).toBe(
+      'https://dev.azure.com/org/project/_git/app/pullrequestcreate?sourceRef=feat%2Fx&targetRef=main',
+    )
+  })
+
+  it('knows no other host', () => {
+    expect(pullRequestUrl('https://git.example.com/me/app', 'main', 'feat/x')).toBeNull()
+    expect(pullRequestUrl('not a url', 'main', 'feat/x')).toBeNull()
   })
 })

@@ -290,6 +290,26 @@ export function repoWebUrl(remote: string): string | null {
 }
 
 /**
+ * The page that opens a pull request (merge request) of `source` into `target` on the host of `web`
+ * (`repoWebUrl`): GitHub, GitLab, Bitbucket and Azure DevOps, also self-hosted ones named after them.
+ * Null for another host.
+ */
+export function pullRequestUrl(web: string, target: string, source: string): string | null {
+  const host = /^https?:\/\/([^/:]+)/i.exec(web)?.[1]?.toLowerCase() ?? ''
+  const ref = (name: string) => name.split('/').map(encodeURIComponent).join('/')
+  const query = encodeURIComponent
+  if (host.includes('github')) return `${web}/compare/${ref(target)}...${ref(source)}?expand=1`
+  if (host.includes('gitlab')) {
+    return `${web}/-/merge_requests/new?merge_request%5Bsource_branch%5D=${query(source)}&merge_request%5Btarget_branch%5D=${query(target)}`
+  }
+  if (host.includes('bitbucket')) return `${web}/pull-requests/new?source=${query(source)}&dest=${query(target)}`
+  if (host === 'dev.azure.com' || host.endsWith('.visualstudio.com')) {
+    return `${web}/pullrequestcreate?sourceRef=${query(source)}&targetRef=${query(target)}`
+  }
+  return null
+}
+
+/**
  * Only the git directory of a linked worktree (`<repository>/.git/worktrees/<name>`) has a `commondir` file:
  * it leads to the repository's own git directory, whose folder is the main checkout. A bare repository has
  * no checkout of its own; then its folder stands in. Submodules have no `commondir` either.

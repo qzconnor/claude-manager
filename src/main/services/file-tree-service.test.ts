@@ -3,7 +3,19 @@ import { chmod, mkdtemp, mkdir, readdir, readFile, rm, stat, symlink, unlink, ut
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { FileTreeService, filterGuard, gitStateChange, hunkPatch, isTreePath, MAX_GREP_MATCHES, parseGitStatus, parseGrep } from './file-tree-service'
+import {
+  FileTreeService,
+  filterGuard,
+  gitStateChange,
+  hunkPatch,
+  isCommitHash,
+  isTreePath,
+  MAX_GREP_MATCHES,
+  parseCommits,
+  parseGitStatus,
+  parseGrep,
+  parseReviewFiles,
+} from './file-tree-service'
 
 describe('isTreePath', () => {
   it('takes paths inside the root, joined with /', () => {
@@ -508,6 +520,254 @@ describe('FileTreeService with git', () => {
     // Deleted: only before.
     await rm(join(repo, 'logo.PNG'))
     expect(await service.diff(repo, 'logo.PNG', false)).toMatchObject({ missing: true, image: { before: url(red), after: null } })
+  })
+
+  describe('a review of the branch', () => {
+    /** A repository with a pushed `main` and the branch `feat` off it, pushed too, with work of its own. */
+    async function branched(): Promise<string> {
+      const remote = join(dir, 'remote.git')
+      await mkdir(remote)
+      git(remote, 'init', '-q', '--bare')
+      const repo = join(dir, 'repo')
+      await mkdir(join(repo, 'sub'), { recursive: true })
+      git(repo, 'init', '-q')
+      await writeFile(join(repo, 'a.txt'), 'one\nold\nthree\n')
+      await writeFile(join(repo, 'b.txt'), 'kept\n'.repeat(10))
+      await writeFile(join(repo, 'sub', 's.txt'), 's\n')
+      git(repo, 'add', '-A')
+      git(repo, 'commit', '-qm', 'init')
+      git(repo, 'remote', 'add', 'origin', remote)
+      git(repo, 'push', '-q', '-u', 'origin', 'main')
+      git(repo, 'checkout', '-q', '-b', 'feat')
+      await writeFile(join(repo, 'a.txt'), 'one\nnew\nthree\n')
+      git(repo, 'commit', '-qam', 'first')
+      await writeFile(join(repo, 'c.txt'), 'c\n')
+      git(repo, 'add', 'c.txt')
+      git(repo, 'commit', '-qm', 'second')
+      git(repo, 'mv', 'b.txt', 'd.txt')
+      git(repo, 'commit', '-qm', 'third: Größe')
+      git(repo, 'push', '-q', '-u', 'origin', 'feat')
+      // The main branch goes on meanwhile: its new file is none of the branch's.
+      git(repo, 'checkout', '-q', 'main')
+      await writeFile(join(repo, 'x.txt'), 'x\n')
+      git(repo, 'add', 'x.txt')
+      git(repo, 'commit', '-qm', 'elsewhere')
+      git(repo, 'push', '-q')
+      git(repo, 'checkout', '-q', 'feat')
+      // Not committed yet: a change and a file git doesn't know.
+      await writeFile(join(repo, 'c.txt'), 'c\nmore\n')
+      await writeFile(join(repo, 'e.txt'), 'e\n')
+      return repo
+    }
+
+    it('shows the commits and files since the branch left the main branch, and where to open its pull request', async () => {
+      const repo = await branched()
+      git(repo, 'remote', 'set-url', 'origin', 'git@github.com:me/app.git')
+      const review = await service.reviewBase(repo)
+      expect(review).toMatchObject({ base: 'origin/main', branch: 'feat', commitsTruncated: false, truncated: false })
+      expect(review!.mergeBase).toBe(git(repo, 'rev-parse', 'main~1').trim())
+      expect(review!.commits.map((c) => c.subject)).toEqual(['third: Größe', 'second', 'first'])
+      expect(review!.commits[0]).toMatchObject({ author: 'Test', short: git(repo, 'rev-parse', '--short', 'HEAD').trim() })
+      expect(review!.commits[0]!.sha).toBe(git(repo, 'rev-parse', 'HEAD').trim())
+      expect(review!.commits[0]!.date).toMatch(/^\d{4}-\d\d-\d\dT/)
+      expect(review!.files).toEqual({
+        'a.txt': { status: 'modified', staged: false, added: 1, removed: 1 },
+        // Committed and changed since: both together.
+        'c.txt': { status: 'added', staged: false, added: 2, removed: 0 },
+        'd.txt': { status: 'renamed', staged: false, added: 0, removed: 0 },
+      })
+      expect(review!.pullRequestUrl).toBe('https://github.com/me/app/compare/main...feat?expand=1')
+
+      // The diffs against where it started.
+      const a = await service.diff(repo, 'a.txt', false, review!.mergeBase)
+      expect(a.patch).toMatch(/^-old$/m)
+      expect(a.patch).toMatch(/^\+new$/m)
+      expect((await service.diff(repo, 'a.txt', false)).patch).toBe('')
+      const c = await service.diff(repo, 'c.txt', false, review!.mergeBase)
+      expect(c.patch).toContain('new file mode')
+      expect(c.patch).toMatch(/^\+more$/m)
+      const d = await service.diff(repo, 'd.txt', false, review!.mergeBase)
+      expect(d.patch).toContain('rename from b.txt')
+      expect(d.text).toBe('kept\n'.repeat(10))
+      // Only a commit's hash: nothing git could take for an option or another revision.
+      for (const base of ['HEAD', '--output=x', 'main', `${review!.mergeBase} x`]) {
+        await expect(service.diff(repo, 'a.txt', false, base)).rejects.toThrow('Ungültiger Commit.')
+      }
+    }, 30_000)
+
+    it('names the files of a subfolder relative to it, and follows the main branch the remote names', async () => {
+      const repo = await branched()
+      const sub = join(repo, 'sub')
+      await writeFile(join(sub, 's.txt'), 's\nchanged\n')
+      git(repo, 'commit', '-qam', 'sub')
+      expect((await service.reviewBase(sub))?.files).toEqual({ 's.txt': { status: 'modified', staged: false, added: 1, removed: 0 } })
+      // A remote without a host the app knows: no pull request.
+      expect((await service.reviewBase(sub))?.pullRequestUrl).toBeNull()
+
+      git(repo, 'branch', '-q', 'develop', 'feat~1')
+      git(repo, 'push', '-q', 'origin', 'develop')
+      git(repo, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/develop')
+      const review = await service.reviewBase(repo)
+      expect(review).toMatchObject({ base: 'origin/develop' })
+      expect(review!.commits.map((c) => c.subject)).toEqual(['sub'])
+    }, 30_000)
+
+    it('on the main branch shows what isn’t pushed yet, without a pull request', async () => {
+      const repo = await branched()
+      git(repo, 'stash', '-q', '-u')
+      git(repo, 'checkout', '-q', 'main')
+      expect(await service.reviewBase(repo)).toBeNull()
+      await writeFile(join(repo, 'x.txt'), 'x\ny\n')
+      git(repo, 'remote', 'set-url', 'origin', 'https://github.com/me/app.git')
+      git(repo, 'commit', '-qam', 'local')
+      const review = await service.reviewBase(repo)
+      expect(review).toMatchObject({ base: 'origin/main', branch: 'main', pullRequestUrl: null })
+      expect(review!.commits.map((c) => c.subject)).toEqual(['local'])
+      // Detached: the commits, no branch to open a pull request of.
+      git(repo, 'checkout', '-q', '--detach')
+      expect(await service.reviewBase(repo)).toMatchObject({ base: 'origin/main', branch: null, pullRequestUrl: null })
+    }, 30_000)
+
+    it('starts from the main branch of the branch’s own remote, a pull request only within it', async () => {
+      const repo = await branched()
+      // The branch goes to another remote that has a main branch of its own.
+      const gitlab = join(dir, 'gitlab.git')
+      await mkdir(gitlab)
+      git(gitlab, 'init', '-q', '--bare')
+      git(repo, 'remote', 'add', 'lab', gitlab)
+      git(repo, 'push', '-q', 'lab', 'main~1:refs/heads/main')
+      git(repo, 'push', '-q', '-u', 'lab', 'feat')
+      git(repo, 'remote', 'set-url', 'lab', 'https://gitlab.example.com/me/app.git')
+      git(repo, 'remote', 'set-url', 'origin', 'https://github.com/me/app.git')
+      expect(await service.reviewBase(repo)).toMatchObject({
+        base: 'lab/main',
+        pullRequestUrl:
+          'https://gitlab.example.com/me/app/-/merge_requests/new?merge_request%5Bsource_branch%5D=feat&merge_request%5Btarget_branch%5D=main',
+      })
+      // A fork without the main branch: compared with origin's, no pull request across the two.
+      git(repo, 'update-ref', '-d', 'refs/remotes/lab/main')
+      expect(await service.reviewBase(repo)).toMatchObject({ base: 'origin/main', branch: 'feat', pullRequestUrl: null })
+    }, 30_000)
+
+    it('compares images and UTF-16 files with where the branch started', async () => {
+      const red = Buffer.from('\x89PNG\r\n\x1a\nred', 'latin1')
+      const blue = Buffer.from('\x89PNG\r\n\x1a\nblue', 'latin1')
+      const url = (bytes: Buffer) => `data:image/png;base64,${bytes.toString('base64')}`
+      const repo = join(dir, 'repo')
+      await mkdir(repo)
+      git(repo, 'init', '-q')
+      await writeFile(join(repo, 'logo.png'), red)
+      await writeFile(join(repo, 'out.txt'), utf16('Größe\r\nalt\r\n'))
+      git(repo, 'add', '-A')
+      git(repo, 'commit', '-qm', 'init')
+      git(repo, 'checkout', '-q', '-b', 'feat')
+      await writeFile(join(repo, 'logo.png'), blue)
+      await writeFile(join(repo, 'out.txt'), utf16('Größe\r\nneu\r\n'))
+      git(repo, 'commit', '-qam', 'work')
+      const base = (await service.reviewBase(repo))!.mergeBase
+      expect((await service.diff(repo, 'logo.png', false, base)).image).toEqual({ before: url(red), after: url(blue) })
+      expect((await service.diff(repo, 'logo.png', false)).image).toEqual({ before: null, after: url(blue) })
+      const text = await service.diff(repo, 'out.txt', false, base)
+      expect(text.binary).toBe(false)
+      expect(text.patch).toContain(' Größe\r\n-alt\r\n+neu\r\n')
+    }, 30_000)
+
+    it('sends the latest 200 commits and says there are more', async () => {
+      const repo = join(dir, 'repo')
+      await mkdir(repo)
+      git(repo, 'init', '-q')
+      await writeFile(join(repo, 'a.txt'), 'a\n')
+      git(repo, 'add', '-A')
+      git(repo, 'commit', '-qm', 'init')
+      // 201 commits at once, faster than one `git commit` each.
+      const commit = (n: number) =>
+        `commit refs/heads/feat\ncommitter Test <test@example.com> ${1_700_000_000 + n} +0000\ndata ${`c${n}`.length}\nc${n}\n` +
+        `${n === 1 ? 'from refs/heads/main\n' : ''}M 644 inline a.txt\ndata ${`${n}\n`.length}\n${n}\n\n`
+      execFileSync('git', ['fast-import', '--quiet'], { cwd: repo, input: Array.from({ length: 201 }, (_, i) => commit(i + 1)).join('') })
+      git(repo, 'checkout', '-q', 'feat')
+      const review = await service.reviewBase(repo)
+      expect(review!.commits).toHaveLength(200)
+      expect(review!.commits[0]!.subject).toBe('c201')
+      expect(review!.commitsTruncated).toBe(true)
+      git(repo, 'reset', '-q', '--hard', 'HEAD~1')
+      expect(await service.reviewBase(repo)).toMatchObject({ commitsTruncated: false })
+    }, 30_000)
+
+    it('is null without a main branch, without commits since and outside a repository', async () => {
+      const plain = join(dir, 'plain')
+      await mkdir(plain)
+      expect(await service.reviewBase(plain)).toBeNull()
+      const repo = join(dir, 'repo')
+      await mkdir(repo)
+      git(repo, 'init', '-q')
+      expect(await service.reviewBase(repo)).toBeNull()
+      await writeFile(join(repo, 'a.txt'), 'a\n')
+      git(repo, 'add', '-A')
+      git(repo, 'commit', '-qm', 'init')
+      // A local main branch only, checked out: nothing since.
+      expect(await service.reviewBase(repo)).toBeNull()
+      git(repo, 'checkout', '-q', '-b', 'feat')
+      await writeFile(join(repo, 'a.txt'), 'b\n')
+      git(repo, 'commit', '-qam', 'work')
+      expect(await service.reviewBase(repo)).toMatchObject({
+        base: 'main',
+        branch: 'feat',
+        pullRequestUrl: null,
+        files: { 'a.txt': { status: 'modified' } },
+      })
+      git(repo, 'branch', '-q', '-m', 'main', 'trunk')
+      expect(await service.reviewBase(repo)).toBeNull()
+    }, 30_000)
+  })
+})
+
+describe('parseReviewFiles', () => {
+  it('reads changed, renamed and copied files with their lines, relative to the folder', () => {
+    const nameStatus = [
+      ...['M', 'sub/a.txt', 'A', 'sub/new file.txt', 'D', 'sub/gone.txt'],
+      ...['R087', 'old.txt', 'sub/moved.txt', 'C100', 'sub/a.txt', 'sub/copy.txt'],
+      ...['T', 'sub/link', 'M', 'other/x.txt', ''],
+    ].join('\0')
+    const numstat = ['3\t1\tsub/a.txt', '-\t-\tsub/new file.txt', '0\t4\tsub/gone.txt', '1\t1\t', 'old.txt', 'sub/moved.txt', '2\t2\tother/x.txt', ''].join(
+      '\0',
+    )
+    expect(parseReviewFiles(nameStatus, numstat, 'sub/')).toEqual({
+      files: {
+        'a.txt': { status: 'modified', staged: false, added: 3, removed: 1 },
+        'new file.txt': { status: 'added', staged: false, added: null, removed: null },
+        'gone.txt': { status: 'deleted', staged: false, added: 0, removed: 4 },
+        'moved.txt': { status: 'renamed', staged: false, added: 1, removed: 1 },
+        'copy.txt': { status: 'added', staged: false, added: null, removed: null },
+        link: { status: 'modified', staged: false, added: null, removed: null },
+      },
+      truncated: false,
+    })
+    expect(parseReviewFiles('U\0a.txt\0', '', '').files).toEqual({ 'a.txt': { status: 'conflict', staged: false, added: null, removed: null } })
+    expect(parseReviewFiles('', '', '')).toEqual({ files: {}, truncated: false })
+  })
+})
+
+describe('parseCommits', () => {
+  it('reads hash, subject, author and date of each commit', () => {
+    const sha = 'a'.repeat(40)
+    const out = `${sha}\x1faaaaaaa\x1ffix: a | b\x1fJane Doe\x1f2026-11-12T10:00:00+01:00\x1e\n${'b'.repeat(40)}\x1fbbbbbbb\x1f\x1fX\x1f2026-11-11T09:00:00Z\x1e\n`
+    expect(parseCommits(out)).toEqual([
+      { sha, short: 'aaaaaaa', subject: 'fix: a | b', author: 'Jane Doe', date: '2026-11-12T10:00:00+01:00' },
+      { sha: 'b'.repeat(40), short: 'bbbbbbb', subject: '', author: 'X', date: '2026-11-11T09:00:00Z' },
+    ])
+    expect(parseCommits('')).toEqual([])
+    expect(parseCommits('not a commit\x1fx\x1e')).toEqual([])
+  })
+})
+
+describe('isCommitHash', () => {
+  it('takes a commit’s hash, nothing else', () => {
+    expect(isCommitHash('0123abc')).toBe(true)
+    expect(isCommitHash('a'.repeat(40))).toBe(true)
+    expect(isCommitHash('a'.repeat(64))).toBe(true)
+    for (const value of ['012345', 'a'.repeat(65), 'HEAD', 'ABCDEF0', '-0123abc', '0123abc~1', '0123abc\n', null, 7]) {
+      expect(isCommitHash(value)).toBe(false)
+    }
   })
 })
 

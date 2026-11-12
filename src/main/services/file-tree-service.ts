@@ -19,10 +19,13 @@ import type {
   GitFileState,
   GitFileStatus,
   GitTreeStatus,
+  ReviewBase,
+  ReviewCommit,
 } from '@shared/types'
 import type { FileActivity } from '../lib/hook-events'
 import { decodeText, decodeUtf16, isUtf16 } from '../lib/text-encoding'
 import { TypedEmitter } from '../lib/typed-emitter'
+import { pullRequestUrl, repoWebUrl } from './git-service'
 import type { Trash } from './theme-service'
 
 /**
@@ -86,6 +89,10 @@ const FULL_CONTEXT = 1_000_000
 const FRESH_COMMIT_S = 120
 /** The most files of a commit that light up. */
 const MAX_COMMIT_FILES = 200
+/** Commits of a review (`reviewBase`) beyond these are left out. */
+const MAX_REVIEW_COMMITS = 200
+/** A commit for `parseCommits`: hash, short hash, subject, author, date, apart by unit and record separators. */
+const COMMIT_FORMAT = '%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1e'
 /** A shell command running longer than this (ms) no longer counts: what changes then isn't taken for its writes. */
 const MAX_SHELL_MS = 10 * 60_000
 /** Changes this long after a shell command ended are still its own (ms): the watcher reports a little late. */
@@ -359,7 +366,7 @@ export class FileTreeService extends TypedEmitter<Events> {
       await this.gitOrFail(root, ['restore', '--source=HEAD', '--staged', '--worktree', '--', topPathspec(top)], failed, env)
       return
     }
-    const from = await this.renamedFrom(root, top, env)
+    const from = await this.renamedFrom(root, top, env, 'HEAD')
     await this.gitOrFail(root, ['rm', '--cached', '-q', '--ignore-unmatch', '--', topPathspec(top)], failed, env)
     if (await exists(file)) await this.trashItem(file)
     if (from) await this.gitOrFail(root, ['restore', '--source=HEAD', '--staged', '--worktree', '--', topPathspec(from)], failed, env)
@@ -455,28 +462,106 @@ export class FileTreeService extends TypedEmitter<Events> {
   }
 
   /**
+   * Where the work of the folder's branch started (see `ReviewBase`): the main branch of its remote
+   * (`<remote>/HEAD`, else `main` or `master` there, else a local one); on the main branch itself so
+   * the commits not pushed yet. Null outside a repository, without such a branch and without commits since.
+   */
+  async reviewBase(root: string): Promise<ReviewBase | null> {
+    const prefix = await this.prefix(root)
+    if (prefix === null) return null
+    const env = await this.guard(root)
+    const line = async (args: string[]) => (await runGit(root, ['--no-optional-locks', ...args]))?.trim() || null
+    const head = await line(['symbolic-ref', '--quiet', 'HEAD'])
+    const branch = head?.startsWith('refs/heads/') ? head.slice('refs/heads/'.length) : null
+    const [remote, upstream] = await Promise.all([
+      branch ? line(['config', '--get', `branch.${branch}.remote`]) : null,
+      branch ? line(['rev-parse', '--symbolic-full-name', '@{upstream}']) : null,
+    ])
+    const remotes = [...new Set([remote, 'origin'].filter((name): name is string => !!name && name !== '.'))]
+    const named = await Promise.all(remotes.map((name) => line(['symbolic-ref', '--quiet', `refs/remotes/${name}/HEAD`])))
+    const candidates = [
+      ...named.filter((ref): ref is string => ref !== null),
+      ...remotes.flatMap((name) => [`refs/remotes/${name}/main`, `refs/remotes/${name}/master`]),
+      'refs/heads/main',
+      'refs/heads/master',
+    ]
+    const refs = await runGit(root, ['--no-optional-locks', 'for-each-ref', '--format=%(refname)', ...candidates])
+    const existing = new Set(refs?.split('\n').map((ref) => ref.trim()) ?? [])
+    const base = candidates.find((ref) => existing.has(ref))
+    if (!base) return null
+    const mergeBase = await line(['merge-base', 'HEAD', base])
+    if (!mergeBase) return null
+
+    /** The folder's changes since then, committed or not, renames as such. */
+    const diff = (format: string) =>
+      runGit(
+        root,
+        ['--no-optional-locks', 'diff', '--no-relative', '--find-renames', '--no-textconv', '--no-ext-diff', format, '-z', mergeBase, '--', '.'],
+        env,
+      )
+    const [log, nameStatus, numstat] = await Promise.all([
+      runGit(root, [
+        '--no-optional-locks',
+        'log',
+        '--no-show-signature',
+        `--max-count=${MAX_REVIEW_COMMITS + 1}`,
+        `--format=${COMMIT_FORMAT}`,
+        `${mergeBase}..HEAD`,
+      ]),
+      diff('--name-status'),
+      diff('--numstat'),
+    ])
+    const commits = parseCommits(log ?? '')
+    if (commits.length === 0) return null
+    const { files, truncated } = parseReviewFiles(nameStatus ?? '', numstat ?? '', prefix)
+
+    let pullRequest: string | null = null
+    const baseRemote = remotes.find((name) => base.startsWith(`refs/remotes/${name}/`))
+    if (branch && baseRemote && baseRemote === remote && upstream?.startsWith(`refs/remotes/${remote}/`)) {
+      const source = upstream.slice(`refs/remotes/${remote}/`.length)
+      const target = base.slice(`refs/remotes/${remote}/`.length)
+      const url = source !== target ? await line(['ls-remote', '--get-url', remote]) : null
+      const web = url ? repoWebUrl(url) : null
+      pullRequest = web ? pullRequestUrl(web, target, source) : null
+    }
+    return {
+      base: shortRef(base),
+      mergeBase,
+      branch,
+      commits: commits.slice(0, MAX_REVIEW_COMMITS),
+      commitsTruncated: commits.length > MAX_REVIEW_COMMITS,
+      files,
+      truncated,
+      pullRequestUrl: pullRequest,
+    }
+  }
+
+  /**
    * A file's changes since the last commit (`path` relative to `root`): staged and unstaged together,
    * as `git diff HEAD` shows them. Without changes, or outside a repository, the file as it is; so too
-   * when only its name or mode changed (the patch has no hunk then).
+   * when only its name or mode changed (the patch has no hunk then). With `base` (a commit's hash) the
+   * changes since that commit instead, as a review of the branch shows them (`reviewBase`).
    */
-  async diff(root: string, path: string, full: boolean): Promise<FileDiff> {
+  async diff(root: string, path: string, full: boolean, base: string | null = null): Promise<FileDiff> {
+    if (base !== null && !isCommitHash(base)) throw new Error('Ungültiger Commit.')
+    const rev = base ?? 'HEAD'
     if (!isTreePath(path) || path === '') throw new Error('Diese Datei liegt nicht im Ordner.')
     const file = join(root, ...path.split('/'))
     const result: FileDiff = { patch: '', text: null, repo: false, binary: false, tooLarge: false, missing: false }
     const info = await stat(file).catch(() => null)
-    if (info?.isDirectory()) return this.submoduleDiff(root, path, full)
+    if (info?.isDirectory()) return this.submoduleDiff(root, path, full, rev)
     if (info && !info.isFile()) throw new Error('Das ist keine Datei.')
     result.missing = info === null
     const prefix = await this.prefix(root)
     if (prefix !== null) {
-      const patch = await this.patch(root, `${prefix}${path}`, full)
+      const patch = await this.patch(root, `${prefix}${path}`, full, rev)
       if (patch !== null) {
         result.repo = true
         if (patch.length > MAX_PATCH_CHARS) result.tooLarge = true
         else {
           result.patch = patch
           result.binary = /^Binary files /m.test(patch)
-          const utf16 = result.binary && info ? await this.utf16Patch(root, `${prefix}${path}`, patch, file, full) : null
+          const utf16 = result.binary && info ? await this.utf16Patch(root, `${prefix}${path}`, patch, file, full, rev) : null
           if (utf16 !== null && utf16.length <= MAX_PATCH_CHARS) {
             result.patch = utf16
             result.binary = false
@@ -489,7 +574,7 @@ export class FileTreeService extends TypedEmitter<Events> {
       // Changed since the last commit (patch): as it was, under its old name when `git mv` moved it.
       const from = /^rename from (.+)$/m.exec(result.patch)?.[1] ?? `${prefix ?? ''}${path}`
       const [before, after] = await Promise.all([
-        result.patch ? runGitBuffer(root, ['--no-optional-locks', 'cat-file', 'blob', `HEAD:${from}`]) : null,
+        result.patch ? runGitBuffer(root, ['--no-optional-locks', 'cat-file', 'blob', `${rev}:${from}`]) : null,
         info && info.size <= MAX_IMAGE_BYTES ? readFile(file).catch(() => null) : null,
       ])
       const url = (bytes: Buffer | null) => (bytes && bytes.length <= MAX_IMAGE_BYTES ? `data:${type};base64,${bytes.toString('base64')}` : null)
@@ -516,11 +601,11 @@ export class FileTreeService extends TypedEmitter<Events> {
    * (`patch`): both sides decoded and compared by git as UTF-8 (`--no-index`), under the head of git's
    * patch. Null when neither side is UTF-16, or for a side git can't give.
    */
-  private async utf16Patch(root: string, top: string, patch: string, file: string, full: boolean): Promise<string | null> {
+  private async utf16Patch(root: string, top: string, patch: string, file: string, full: boolean, rev: string): Promise<string | null> {
     // Renamed with `git mv`: the old side is at the old path (git quotes unusual names; then there is none).
     const from = /^rename from (.+)$/m.exec(patch)?.[1] ?? top
     const [before, now] = await Promise.all([
-      runGitBuffer(root, ['--no-optional-locks', 'cat-file', 'blob', `HEAD:${from}`]),
+      runGitBuffer(root, ['--no-optional-locks', 'cat-file', 'blob', `${rev}:${from}`]),
       readFile(file).catch(() => null),
     ])
     if (!before || !now || (!isUtf16(before) && !isUtf16(now))) return null
@@ -721,19 +806,19 @@ export class FileTreeService extends TypedEmitter<Events> {
   }
 
   /** A submodule, a folder git keeps as a commit: which commit it is at now, as `git diff` says it. */
-  private async submoduleDiff(root: string, path: string, full: boolean): Promise<FileDiff> {
+  private async submoduleDiff(root: string, path: string, full: boolean, rev: string): Promise<FileDiff> {
     const prefix = await this.prefix(root)
-    const patch = prefix === null ? null : await this.patch(root, `${prefix}${path}`, full)
+    const patch = prefix === null ? null : await this.patch(root, `${prefix}${path}`, full, rev)
     if (!patch || !/^[-+ ]Subproject commit /m.test(patch)) throw new Error('Das ist keine Datei.')
     return { patch, text: null, repo: true, binary: false, tooLarge: false, missing: false }
   }
 
   /**
-   * `git diff HEAD` of the file at `top` (from the top of the repository); null when git failed. A file
-   * `git mv` moved is compared with the one it was instead of shown as new. Before the first commit
-   * there is nothing to compare with: no changes (''), the tree shows the file as new.
+   * `git diff <rev>` (HEAD, or a commit's hash) of the file at `top` (from the top of the repository);
+   * null when git failed. A file `git mv` moved is compared with the one it was instead of shown as new.
+   * Before the first commit there is nothing to compare with: no changes (''), the tree shows the file as new.
    */
-  private async patch(root: string, top: string, full: boolean): Promise<string | null> {
+  private async patch(root: string, top: string, full: boolean, rev: string): Promise<string | null> {
     const env = await this.guard(root)
     const diff = (paths: string[], renames: boolean) =>
       runGitText(
@@ -746,7 +831,7 @@ export class FileTreeService extends TypedEmitter<Events> {
           '--no-textconv',
           renames ? '--find-renames' : '--no-renames',
           `--unified=${full ? FULL_CONTEXT : DIFF_CONTEXT}`,
-          'HEAD',
+          rev,
           '--',
           ...paths.map(topPathspec),
         ],
@@ -755,7 +840,7 @@ export class FileTreeService extends TypedEmitter<Events> {
     const patch = await diff([top], false)
     if (patch === null) return (await runGit(root, ['rev-parse', '--verify', '--quiet', 'HEAD'])) === null ? '' : null
     if (!/^new file mode /m.test(patch)) return patch
-    const from = await this.renamedFrom(root, top, env)
+    const from = await this.renamedFrom(root, top, env, rev)
     if (from === null) return patch
     const renamed = await diff([from, top], true)
     // Changed too much since: git sees a deleted and a new file, both in the patch. Then as new.
@@ -763,9 +848,12 @@ export class FileTreeService extends TypedEmitter<Events> {
     return renamed
   }
 
-  /** Where the file at `top` was at HEAD, if a rename of it is staged (`git mv`); null else. */
-  private async renamedFrom(root: string, top: string, env: Record<string, string>): Promise<string | null> {
-    const out = await runGit(root, ['--no-optional-locks', 'diff', '--cached', '--no-relative', '--find-renames', '--name-status', '-z', 'HEAD'], env)
+  /**
+   * Where the file at `top` was at `rev` (HEAD, or an older commit), if it was renamed since: staged
+   * with `git mv`, or committed; null else.
+   */
+  private async renamedFrom(root: string, top: string, env: Record<string, string>, rev: string): Promise<string | null> {
+    const out = await runGit(root, ['--no-optional-locks', 'diff', '--cached', '--no-relative', '--find-renames', '--name-status', '-z', rev], env)
     // `R<score>`, the old and the new path; `M`, `A`, `D` … with one path.
     const tokens = out?.split('\0') ?? []
     for (let i = 0; i < tokens.length; i++) {
@@ -1454,6 +1542,76 @@ export function parseGitStatus(status: string, numstat: string, prefix: string):
     file.removed = match[2] === '-' ? null : Number(match[2])
   }
   return result
+}
+
+/** A commit's full or abbreviated hash, and nothing git could read as an option or another revision. */
+export function isCommitHash(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{7,64}$/.test(value)
+}
+
+/** A ref as git shows it (`refs/remotes/origin/main` → `origin/main`). */
+function shortRef(ref: string): string {
+  return ref.replace(/^refs\/(heads|remotes)\//, '')
+}
+
+/** `git log --format=COMMIT_FORMAT`, the latest first. */
+export function parseCommits(out: string): ReviewCommit[] {
+  const commits: ReviewCommit[] = []
+  for (const record of out.split('\x1e')) {
+    const [sha, short, subject, author, date] = record.replace(/^\s+/, '').split('\x1f')
+    if (!sha || !/^[0-9a-f]{40,64}$/.test(sha)) continue
+    commits.push({ sha, short: short ?? sha.slice(0, 7), subject: subject ?? '', author: author ?? '', date: date?.trim() ?? '' })
+  }
+  return commits
+}
+
+/**
+ * `git diff --name-status -z` and `--numstat -z` of a folder against an older commit, with the paths
+ * relative to the folder (`prefix`, as in `parseGitStatus`). A renamed file is under its new name.
+ */
+export function parseReviewFiles(
+  nameStatus: string,
+  numstat: string,
+  prefix: string,
+): { files: Record<string, GitFileState>; truncated: boolean } {
+  const files: Record<string, GitFileState> = {}
+  let truncated = false
+  let count = 0
+  const local = (path: string) => (path.startsWith(prefix) && path !== prefix ? path.slice(prefix.length) : null)
+  // `M`, `A`, `D` … and the path; `R<score>` and `C<score>` with the old and the new path.
+  const tokens = nameStatus.split('\0')
+  for (let i = 0; i < tokens.length; i++) {
+    const code = tokens[i]![0]
+    if (!code) continue
+    const two = code === 'R' || code === 'C'
+    const path = tokens[two ? i + 2 : i + 1]
+    i += two ? 2 : 1
+    const rel = path === undefined ? null : local(path)
+    if (rel === null) continue
+    if (count++ >= MAX_STATUS_PATHS) {
+      truncated = true
+      continue
+    }
+    const status: GitFileStatus =
+      code === 'R' ? 'renamed' : code === 'A' || code === 'C' ? 'added' : code === 'D' ? 'deleted' : code === 'U' ? 'conflict' : 'modified'
+    files[rel] = { status, staged: false, added: null, removed: null }
+  }
+  const lines = numstat.split('\0')
+  for (let i = 0; i < lines.length; i++) {
+    const match = /^(-|\d+)\t(-|\d+)\t(.*)$/.exec(lines[i]!)
+    if (!match) continue
+    let path = match[3]!
+    if (path === '') {
+      path = lines[i + 2] ?? ''
+      i += 2
+    }
+    const rel = local(path)
+    const file = rel === null ? undefined : files[rel]
+    if (!file) continue
+    file.added = match[1] === '-' ? null : Number(match[1])
+    file.removed = match[2] === '-' ? null : Number(match[2])
+  }
+  return { files, truncated }
 }
 
 /** The first `count` space-separated fields of a status line and the path after them, which may contain spaces. */

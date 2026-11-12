@@ -28,7 +28,7 @@ import type { AppContext } from './context'
 import { listFontFamilies } from './lib/fonts'
 import type { KeptImage } from './lib/kept-images'
 import { SESSION_ID_RE } from './lib/session-files'
-import { isTreePath } from './services/file-tree-service'
+import { isCommitHash, isTreePath } from './services/file-tree-service'
 import { browserDownloads } from './window/browser-downloads'
 import { clearBrowserData, loadFavicon } from './window/browser-guests'
 import { browserLogins } from './window/browser-logins'
@@ -623,10 +623,13 @@ export function registerIpc(ctx: AppContext): void {
   handle(IpcInvoke.filesStatus, (_e, root: unknown) => ctx.files.status(requirePath(root, 'root')))
   handle(IpcInvoke.filesSearchList, (_e, root: unknown) => ctx.files.searchList(requirePath(root, 'root')))
   handle(IpcInvoke.filesWatch, (_e, trees: unknown) => ctx.files.watch(treesOf(trees)))
-  handle(IpcInvoke.filesDiff, (_e, root: unknown, path: unknown, full: unknown) => {
+  handle(IpcInvoke.filesReviewBase, (_e, root: unknown) => ctx.files.reviewBase(requirePath(root, 'root')))
+  handle(IpcInvoke.filesDiff, (_e, root: unknown, path: unknown, full: unknown, base: unknown) => {
     // A file of the tree: relative to its folder, never above it.
     if (!isTreeDir(path) || path === '') throw new Error('Ungültiger Parameter: path')
-    return ctx.files.diff(requirePath(root, 'root'), path, full === true)
+    // A commit's hash, nothing git could take for an option.
+    if (base !== null && base !== undefined && !isCommitHash(base)) throw new Error('Ungültiger Parameter: base')
+    return ctx.files.diff(requirePath(root, 'root'), path, full === true, base ?? null)
   })
   // Entries of an open tree; the service keeps them in it and checks new names.
   handle(IpcInvoke.filesCreate, (_e, root: unknown, path: unknown, dir: unknown) =>

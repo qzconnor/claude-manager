@@ -1303,6 +1303,39 @@ export interface GitFileState {
   removed: number | null
 }
 
+/** A commit of a review (see `ReviewBase`). */
+export interface ReviewCommit {
+  sha: string
+  short: string
+  subject: string
+  author: string
+  /** ISO date of the commit's author. */
+  date: string
+}
+
+/**
+ * Where the work of a folder's branch started: its changes since then, committed or not, as a review
+ * of the whole branch shows them.
+ */
+export interface ReviewBase {
+  /** The branch compared with, as git names it (`origin/main`); on the main branch its upstream. */
+  base: string
+  /** The commit the branch started from (`git merge-base`). */
+  mergeBase: string
+  /** The checked-out branch; null with a detached HEAD. */
+  branch: string | null
+  /** Commits since, the latest first. */
+  commits: ReviewCommit[]
+  /** There were more commits than were sent. */
+  commitsTruncated: boolean
+  /** The folder's files changed since, by their path relative to it; files git doesn't know yet aren't in it. */
+  files: Record<string, GitFileState>
+  /** More files than were sent. */
+  truncated: boolean
+  /** Where to open a pull request of the branch; null on an unknown host, on the main branch and before it is pushed. */
+  pullRequestUrl: string | null
+}
+
 /** Git's view of a tree's folder: the branch and the changed and ignored files in it. */
 export interface GitTreeStatus {
   /** The checked-out branch; null with a detached HEAD. */
