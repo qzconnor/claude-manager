@@ -1,5 +1,5 @@
 import { SYSTEM_ACCOUNT_ID } from './defaults'
-import type { Account, AccountIdentity, AccountKind } from './types'
+import type { Account, AccountIdentity, AccountKind, AppSettings, DeepPartial, SettingChange } from './types'
 
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -36,6 +36,26 @@ export function mergeKnown<T>(base: T, patch: unknown): T {
     }
   }
   return out as T
+}
+
+/**
+ * The settings patch that sets each changed setting (`path` like `terminal.padding.top`) to its new
+ * value, or with `side` 'from' back to the old one, e.g. to undo an import.
+ */
+export function settingsPatch(changes: readonly SettingChange[], side: 'from' | 'to' = 'to'): DeepPartial<AppSettings> {
+  const patch: Record<string, unknown> = {}
+  for (const change of changes) {
+    const keys = change.path.split('.')
+    const last = keys.pop()
+    if (!last) continue
+    let node = patch
+    for (const key of keys) {
+      if (!isPlainObject(node[key])) node[key] = {}
+      node = node[key] as Record<string, unknown>
+    }
+    node[last] = structuredClone(change[side])
+  }
+  return patch as DeepPartial<AppSettings>
 }
 
 /** Characters of a secret that stay hidden at least; with fewer, prefix and end would give it away. */

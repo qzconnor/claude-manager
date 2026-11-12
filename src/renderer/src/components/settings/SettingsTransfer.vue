@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { FileInputIcon, FileOutputIcon } from '@lucide/vue'
-import { ref, toRaw } from 'vue'
+import { ref, shallowRef } from 'vue'
 import { toast } from 'vue-sonner'
+import type { SettingsImportPreview } from '@shared/types'
+import SettingsImportDialog from '@/components/settings/SettingsImportDialog.vue'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { attempt } from '@/lib/errors'
 import { useSettingsStore } from '@/stores/settings'
-import { useUiStore } from '@/stores/ui'
 
 /** Export and import of the settings, e.g. to take them to another computer. Accounts stay out. */
 const settings = useSettingsStore()
-const ui = useUiStore()
 const busy = ref(false)
+const preview = shallowRef<SettingsImportPreview | null>(null)
+const previewOpen = ref(false)
 
 async function run(action: () => Promise<void>, title: string) {
   if (busy.value) return
@@ -30,34 +32,22 @@ function exportSettings() {
   }, 'Export fehlgeschlagen')
 }
 
+/** Shows what the file would change; the dialog takes over what the user picks. */
 function importSettings() {
-  const previous = structuredClone(toRaw(settings.settings))
   void run(async () => {
-    const result = await settings.importFromFile()
-    if (!result) return
-    // What runs and what Claude may do without asking only comes along once the user agrees.
-    let heldTaken = false
-    if (result.held) {
-      heldTaken = await ui.confirm({
-        title: 'Auch diese Einstellungen übernehmen?',
-        description:
-          'Sie bestimmen, welches Programm startet und was Claude ohne Nachfrage darf. Übernimm sie nur aus einer Datei, der du vertraust; ohne sie bleiben deine bisherigen Werte.',
-        code: result.held.changes.map((change) => `${change.label}: ${change.value}`).join('\n'),
-        confirmText: 'Übernehmen',
-        cancelText: 'Weglassen',
-        warning: true,
+    const next = await settings.previewImport()
+    if (!next) return
+    if (next.changes.length === 0) {
+      const missing = next.skipped.join(', ')
+      toast.info('Nichts zu übernehmen', {
+        description: missing
+          ? `Nicht übernommen, weil es das auf diesem Computer nicht gibt: ${missing}`
+          : 'Die Datei hat dieselben Einstellungen wie jetzt.',
       })
-      if (heldTaken) await settings.update(result.held.patch)
+      return
     }
-    const left = result.held && !heldTaken ? `Weggelassen: ${result.held.changes.map((change) => change.label).join(', ')}` : null
-    const missing = result.skipped.length ? `Nicht übernommen, weil es das auf diesem Computer nicht gibt: ${result.skipped.join(', ')}` : null
-    toast.success('Einstellungen importiert', {
-      description: [missing, left].filter(Boolean).join('. ') || undefined,
-      action: {
-        label: 'Rückgängig',
-        onClick: () => void attempt(() => settings.update(previous), 'Rückgängig fehlgeschlagen'),
-      },
-    })
+    preview.value = next
+    previewOpen.value = true
   }, 'Import fehlgeschlagen')
 }
 </script>
@@ -70,7 +60,7 @@ function importSettings() {
         Importieren
       </Button>
     </TooltipTrigger>
-    <TooltipContent>Einstellungen aus einer Datei übernehmen</TooltipContent>
+    <TooltipContent>Zeigt, was eine Datei ändern würde, und übernimmt, was du auswählst</TooltipContent>
   </Tooltip>
   <Tooltip>
     <TooltipTrigger as-child>
@@ -81,4 +71,5 @@ function importSettings() {
     </TooltipTrigger>
     <TooltipContent>Einstellungen in einer Datei sichern, ohne Accounts</TooltipContent>
   </Tooltip>
+  <SettingsImportDialog v-model:open="previewOpen" :preview="preview" />
 </template>

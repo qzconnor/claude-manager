@@ -1184,23 +1184,35 @@ export interface AppSettings {
   api: ApiSettings
 }
 
-/** Outcome of importing settings from a file. */
-export interface SettingsImportResult {
-  settings: AppSettings
+/**
+ * What the settings of a file would change, read before anything is taken over: the user picks the
+ * changes, which then come as an ordinary update.
+ */
+export interface SettingsImportPreview {
+  /** The file's name, without its folder. */
+  fileName: string
+  /** The version of the app that exported the file, and when; null for a plain settings.json. */
+  appVersion: string | null
+  exportedAt: string | null
+  /** Each setting the file changes, in the order of the settings. Settings it lacks or keeps as they are aren't in it. */
+  changes: SettingChange[]
   /** Settings of the file left as they were: paths that don't exist on this computer. */
   skipped: string[]
-  /**
-   * Settings of the file that decide what runs or what Claude may do without asking (the program,
-   * its options, the shells, the API …): not taken over until the user confirms them, then with
-   * `patch`. Null when the file changes none of them.
-   */
-  held: HeldSettings | null
 }
 
-export interface HeldSettings {
-  patch: DeepPartial<AppSettings>
-  /** Each held setting with the value from the file, for the question. */
-  changes: { label: string; value: string }[]
+/** One setting an import would change. */
+export interface SettingChange {
+  /** Section and key, e.g. `terminal.fontSize` or `terminal.padding.top`. */
+  path: string
+  /** The value now, and the one from the file cleaned up like any change. */
+  from: unknown
+  to: unknown
+  /**
+   * The setting decides what runs or what Claude may do without asking (the program, its options,
+   * the shells, the API …). A file from someone else could run anything with it, so it is only taken
+   * over when the user picks it.
+   */
+  sensitive: boolean
 }
 
 export type DeepPartial<T> = {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { BellRingIcon } from '@lucide/vue'
 import { computed, ref } from 'vue'
-import type { AppSettings, DeepPartial, NotificationSettings, NotifyWhen } from '@shared/types'
+import type { AppSettings, DeepPartial, NotificationSettings } from '@shared/types'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/switch'
 import { useSetting } from '@/composables/useSetting'
 import { attempt } from '@/lib/errors'
 import { isWindows } from '@/lib/platform'
+import { WHEN } from '@/lib/setting-choices'
 import type { SettingsResetKeys } from '@/lib/settings-reset'
 import NumberControl from './NumberControl.vue'
 import SettingField from './SettingField.vue'
@@ -45,10 +46,6 @@ const unreadDot = notificationSetting('unreadDot')
 const off = computed(() => !enabled.value)
 const toastName = isWindows ? 'Windows-Benachrichtigung' : 'Systembenachrichtigung'
 
-const WHEN: { value: NotifyWhen; label: string }[] = [
-  { value: 'background', label: 'Fenster im Hintergrund' },
-  { value: 'hidden', label: 'Tab nicht sichtbar' },
-]
 const whenDescription = computed(() =>
   when.value === 'background'
     ? 'Nur, solange du in einem anderen Programm bist oder das Fenster minimiert ist. Den Punkt am Tab gibt es immer.'

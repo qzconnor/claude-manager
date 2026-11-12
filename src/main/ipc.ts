@@ -261,7 +261,7 @@ export function registerIpc(ctx: AppContext): void {
     await ctx.settings.exportTo(filePath, app.getVersion())
     return filePath
   })
-  handle(IpcInvoke.settingsImport, async (event) => {
+  handle(IpcInvoke.settingsImportPreview, async (event) => {
     const { canceled, filePaths } = await dialog.showOpenDialog(senderWindow(event), {
       title: 'Einstellungen importieren',
       defaultPath: app.getPath('documents'),
@@ -269,7 +269,7 @@ export function registerIpc(ctx: AppContext): void {
       filters: SETTINGS_FILE_FILTERS,
     })
     const file = filePaths[0]
-    return canceled || !file ? null : ctx.settings.importFrom(file)
+    return canceled || !file ? null : ctx.settings.previewImport(file)
   })
   ctx.settings.on('changed', (settings) => broadcast(IpcEvent.settingsChanged, settings))
 

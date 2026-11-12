@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { CircleCheckIcon, CircleXIcon, RefreshCwIcon } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
-import type { CloseOnExit } from '@shared/types'
 import AccountSelect from '@/components/common/AccountSelect.vue'
 import DirectoryInput from '@/components/common/DirectoryInput.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -15,6 +14,7 @@ import { formatArgs, parseArgs } from '@/lib/args'
 import { attempt } from '@/lib/errors'
 import { shortenPath } from '@/lib/format'
 import { isLinux, isWindows } from '@/lib/platform'
+import { CLOSE_ON_EXIT } from '@/lib/setting-choices'
 import { useAppStore } from '@/stores/app'
 import NumberControl from './NumberControl.vue'
 import SettingField from './SettingField.vue'
@@ -90,12 +90,6 @@ const launchAtLoginHint = computed(() => {
 
 /** Linux needs a file that starts the installation: an AppImage or the executable of a package. */
 const canLaunchAtLogin = computed(() => !app.info || (app.info.packaged && (!isLinux || app.info.linuxPackage !== null)))
-
-const CLOSE_ON_EXIT: { value: CloseOnExit; label: string }[] = [
-  { value: 'graceful', label: 'Ohne Fehler' },
-  { value: 'always', label: 'Immer' },
-  { value: 'never', label: 'Nie' },
-]
 
 const checking = ref(false)
 

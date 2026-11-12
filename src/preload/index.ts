@@ -47,7 +47,7 @@ const api: ManagerApi = {
     update: (patch) => invoke(IpcInvoke.settingsUpdate, patch),
     reset: (section) => invoke(IpcInvoke.settingsReset, section),
     export: () => invoke(IpcInvoke.settingsExport),
-    import: () => invoke(IpcInvoke.settingsImport),
+    previewImport: () => invoke(IpcInvoke.settingsImportPreview),
     onChanged: (cb) => subscribe(IpcEvent.settingsChanged, cb),
   },
   accounts: {

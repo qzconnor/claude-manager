@@ -47,7 +47,7 @@ import type {
   SessionFileChange,
   SessionFileEdit,
   SessionSearchHit,
-  SettingsImportResult,
+  SettingsImportPreview,
   TerminalAttach,
   TerminalCreateOptions,
   FolderMovedEvent,
@@ -87,7 +87,7 @@ export const IpcInvoke = {
   settingsUpdate: 'settings:update',
   settingsReset: 'settings:reset',
   settingsExport: 'settings:export',
-  settingsImport: 'settings:import',
+  settingsImportPreview: 'settings:import-preview',
 
   accountsList: 'accounts:list',
   accountsCreate: 'accounts:create',
@@ -343,8 +343,8 @@ export interface ManagerApi {
     reset(section?: keyof AppSettings): Promise<AppSettings>
     /** Saves the settings to a file the user picks, without accounts. The path, or null when cancelled. */
     export(): Promise<string | null>
-    /** Takes over the settings of a file the user picks; null when cancelled. */
-    import(): Promise<SettingsImportResult | null>
+    /** Reads what the settings of a file the user picks would change, without taking them over; null when cancelled. */
+    previewImport(): Promise<SettingsImportPreview | null>
     onChanged(cb: (settings: AppSettings) => void): Unsubscribe
   }
   accounts: {

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { CursorStyle, DiffColors, LogoColor, PanelBackground, ScreenReaderMode, TerminalPadding, TerminalRenderer, TerminalSettings, UnicodeMode } from '@shared/types'
+import type { TerminalPadding, TerminalSettings } from '@shared/types'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useSetting } from '@/composables/useSetting'
 import { emojiFont, isWindows, supportsMaterial } from '@/lib/platform'
+import { CURSORS, DIFF_COLORS, LOGO_COLORS, PANEL_BACKGROUNDS, RENDERERS, SCREEN_READER, UNICODE_VERSIONS } from '@/lib/setting-choices'
 import { THEMES } from '@shared/themes/builtin'
 import { customThemeStem } from '@shared/themes/file'
 import { useThemesStore } from '@/stores/themes'
@@ -59,37 +60,6 @@ const logoColor = t('logoColor')
 const modernConpty = t('modernConpty')
 
 const WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900]
-const CURSORS: { value: CursorStyle; label: string }[] = [
-  { value: 'bar', label: 'Balken' },
-  { value: 'block', label: 'Block' },
-  { value: 'underline', label: 'Unterstrich' },
-]
-const RENDERERS: { value: TerminalRenderer; label: string }[] = [
-  { value: 'webgl', label: 'WebGL' },
-  { value: 'dom', label: 'DOM' },
-]
-const UNICODE_VERSIONS: { value: UnicodeMode; label: string }[] = [
-  { value: 'graphemes', label: 'Unicode 15' },
-  { value: 'unicode11', label: 'Unicode 11' },
-]
-const SCREEN_READER: { value: ScreenReaderMode; label: string }[] = [
-  { value: 'auto', label: 'Automatisch' },
-  { value: 'on', label: 'An' },
-  { value: 'off', label: 'Aus' },
-]
-const PANEL_BACKGROUNDS: { value: PanelBackground; label: string }[] = [
-  { value: 'theme', label: 'Theme' },
-  { value: 'terminal', label: 'Terminal' },
-  { value: 'original', label: 'Original' },
-]
-const DIFF_COLORS: { value: DiffColors; label: string }[] = [
-  { value: 'theme', label: 'Theme' },
-  { value: 'original', label: 'Original' },
-]
-const LOGO_COLORS: { value: LogoColor; label: string }[] = [
-  { value: 'theme', label: 'Akzentfarbe' },
-  { value: 'original', label: 'Original' },
-]
 const FOLLOW_APP = '__app__'
 
 const themes = useThemesStore()

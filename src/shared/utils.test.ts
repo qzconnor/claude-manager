@@ -11,6 +11,7 @@ import {
   mergeKnown,
   sameData,
   searchTerms,
+  settingsPatch,
   standardTwin,
 } from './utils'
 
@@ -108,6 +109,39 @@ describe('mergeKnown', () => {
 
   it('keeps a nested object when the patch sets it to null', () => {
     expect(mergeKnown(base(), { nested: null }).nested).toEqual(base().nested)
+  })
+})
+
+describe('settingsPatch', () => {
+  const changes = [
+    { path: 'terminal.fontSize', from: 14, to: 16, sensitive: false },
+    { path: 'terminal.padding.top', from: 12, to: 4, sensitive: false },
+    { path: 'terminal.padding.left', from: 12, to: 8, sensitive: false },
+    { path: 'claude.defaultArgs', from: [], to: ['--verbose'], sensitive: true },
+  ]
+
+  it('sets each changed setting to its new value', () => {
+    expect(settingsPatch(changes)).toEqual({
+      terminal: { fontSize: 16, padding: { top: 4, left: 8 } },
+      claude: { defaultArgs: ['--verbose'] },
+    })
+  })
+
+  it('puts them back with the old values', () => {
+    expect(settingsPatch(changes, 'from')).toEqual({
+      terminal: { fontSize: 14, padding: { top: 12, left: 12 } },
+      claude: { defaultArgs: [] },
+    })
+  })
+
+  it('copies the values, so changing the patch leaves the changes alone', () => {
+    const patch = settingsPatch(changes)
+    patch.claude!.defaultArgs!.push('--debug')
+    expect(changes[3].to).toEqual(['--verbose'])
+  })
+
+  it('is empty without changes', () => {
+    expect(settingsPatch([])).toEqual({})
   })
 })
 
