@@ -88,6 +88,7 @@ import { pastedPaths } from '@/lib/shell-quote'
 import { terminalBus } from '@/lib/terminal-bus'
 import { childPath, type NameKind, type NameRequest } from '@/lib/tree-names'
 import { separatorValue } from '@/lib/separator-keys'
+import { isMenuKey, openMenuBelow } from '@/lib/tab-keys'
 import { cn } from '@/lib/utils'
 import { DEFAULT_TREE_WIDTH, MAX_TREE_WIDTH, MIN_TREE_WIDTH, SEPARATOR, useFileTreeStore, type TreeTarget } from '@/stores/file-tree'
 import { useSettingsStore } from '@/stores/settings'
@@ -547,6 +548,14 @@ function onDragStart(event: DragEvent, row: TreeRow) {
 }
 
 function onListKeydown(event: KeyboardEvent) {
+  // The menu key and Shift+F10: the menu of the selected entry, below it. The key's own event goes to the
+  // tree, and its menu would be the one of the folder.
+  if (isMenuKey(event) && scroller.value) {
+    event.preventDefault()
+    const row = selected.value ? scroller.value.querySelector<HTMLElement>(`[data-path="${CSS.escape(selected.value)}"]`) : null
+    openMenuBelow(row ?? scroller.value)
+    return
+  }
   if (event.ctrlKey || event.metaKey || event.altKey) return
   const list = entries.value
   const index = list.findIndex((row) => row.path === selected.value)
