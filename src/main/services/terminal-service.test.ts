@@ -1,15 +1,129 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { MAX_SPLIT_DEPTH, paneIds, splitDepth } from '@shared/panes'
+import type { TerminalInfo } from '@shared/types'
+import type { HookEvent } from '../lib/hook-events'
+import { projectKey } from '../lib/session-files'
 import type { AccountService } from './account-service'
 import type { ClaudeCli } from './claude-cli'
 import type { SettingsService } from './settings-service'
-import { currentWorktree, hasSecret, movedTo, TerminalService } from './terminal-service'
+import { currentWorktree, hasSecret, movedTo, TerminalService, type TurnEnd } from './terminal-service'
 import type { WorkspaceTrust } from './workspace-trust'
 
 vi.mock('electron', () => ({ app: { getPath: () => '' } }))
+
+/** A process in a pseudo terminal, without one: the tests write its output and end it. */
+class FakePty {
+  readonly pid: number
+  cols: number
+  rows: number
+  private dataListener: (data: string) => void = () => {}
+  private exitListener: (event: { exitCode: number }) => void = () => {}
+
+  constructor(pid: number, options: { cols: number; rows: number }) {
+    this.pid = pid
+    this.cols = options.cols
+    this.rows = options.rows
+  }
+
+  onData(listener: (data: string) => void) {
+    this.dataListener = listener
+    return { dispose: () => {} }
+  }
+
+  onExit(listener: (event: { exitCode: number }) => void) {
+    this.exitListener = listener
+    return { dispose: () => {} }
+  }
+
+  write(): void {}
+
+  resize(cols: number, rows: number): void {
+    this.cols = cols
+    this.rows = rows
+  }
+
+  kill(): void {}
+
+  /** The program writes `data` to the terminal. */
+  output(data: string): void {
+    this.dataListener(data)
+  }
+
+  exit(exitCode: number): void {
+    this.exitListener({ exitCode })
+  }
+}
+
+const ptys: FakePty[] = []
+let nextPid = 40_000
+// The service loads node-pty with `require` on its first terminal, which `vi.mock` doesn't reach: the
+// fake goes into Node's module cache under node-pty's own path, so no real shell or Claude Code starts.
+const nodeRequire = createRequire(import.meta.url)
+const ptyPath = nodeRequire.resolve('node-pty')
+nodeRequire.cache[ptyPath] = {
+  id: ptyPath,
+  filename: ptyPath,
+  loaded: true,
+  exports: {
+    spawn: (_file: string, _args: unknown, options: { cols: number; rows: number }) => {
+      const pty = new FakePty(nextPid++, options)
+      ptys.push(pty)
+      return pty
+    },
+  },
+} as unknown as NodeJS.Module
+afterAll(() => {
+  delete nodeRequire.cache[ptyPath]
+})
+
+/** Where the account keeps the files a session's tab reads (its live session, transcripts, settings). */
+interface AccountDirs {
+  sessionsDir: string
+  projectsDir: string
+  configDir: string
+}
+
+/**
+ * A service whose terminals start a `FakePty` in `cwd`. Without `dirs` the account has no files: the
+ * tab finds no transcript, and a session's turn can end only by its title, its hooks or the timeout.
+ */
+function serviceWithPty(cwd: string, dirs: AccountDirs | null = null): TerminalService {
+  const account = { id: 'a', name: 'A', defaultCwd: cwd, extraArgs: [] }
+  const accounts = {
+    get: () => account,
+    launchEnv: () => ({ set: {}, unset: [] }),
+    paths: () => {
+      if (!dirs) throw new Error('Konto ohne Dateien')
+      return dirs
+    },
+  }
+  const settings = {
+    get: () => ({
+      claude: { defaultArgs: [], defaultCwd: null, hideSecretsFromCommands: false },
+      terminal: { modernConpty: false },
+      general: { closeOnExit: 'never' },
+    }),
+  }
+  const cli = { baseEnv: () => ({}), command: (args: string[]) => ({ file: 'claude', args, display: 'claude' }) }
+  return new TerminalService(accounts as unknown as AccountService, cli as unknown as ClaudeCli, settings as unknown as SettingsService, {} as WorkspaceTrust)
+}
+
+/** The process of the terminal started last. */
+const lastPty = (): FakePty => ptys[ptys.length - 1]!
+
+/** Window titles Claude Code sets (OSC 0): a spinner in front while it works, `✳` while it waits. */
+const BUSY = '\x1b]0;◐ Claude Code\x07'
+const IDLE = '\x1b]0;✳ Claude Code\x07'
+
+/** Listens to `turnEnded`. */
+type TurnListener = (id: string, turn: TurnEnd) => void
+
+/** Long output in short: each run of one character with its length, e.g. `a×3 b×2`. */
+const runs = (text: string): string => (text.match(/(.)\1*/gs) ?? []).map((run) => `${run[0]}×${run.length}`).join(' ')
 
 let service: TerminalService
 
@@ -218,5 +332,437 @@ describe('looking for a tab’s transcript', () => {
     await writeFile(join(own, `${SESSION}.jsonl`), '')
     vi.setSystemTime(1_000_000 + 32_000)
     expect(await finder.findTabTranscript(projects, record, SESSION)).toBe(join(own, `${SESSION}.jsonl`))
+  })
+})
+
+// A view (the window, also after a reload, or an API client) attaches and replays what the terminal kept.
+describe('the output a terminal keeps for its views', () => {
+  const MAX_BUFFER_CHARS = 2_000_000
+  let own: TerminalService
+  let id: string
+  let pty: FakePty
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    own = serviceWithPty(tmpdir())
+    id = own.create({ accountId: 'a', mode: 'shell', cols: 100, rows: 30 }).id
+    pty = lastPty()
+  })
+  afterEach(() => {
+    own.disposeAll()
+    vi.useRealTimers()
+  })
+
+  /** One piece of output, on its way to the views (and into the buffer) before the next one comes. */
+  const output = (data: string) => {
+    pty.output(data)
+    vi.advanceTimersByTime(10)
+  }
+
+  it('coalesces output for a moment and numbers it by its place in the stream', () => {
+    const data = vi.fn()
+    own.on('data', data)
+    pty.output('ab')
+    pty.output('cd')
+    expect(data).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(10)
+    expect(data).toHaveBeenCalledOnce()
+    expect(data).toHaveBeenCalledWith(id, 'abcd', 0)
+    output('ef')
+    expect(data).toHaveBeenLastCalledWith(id, 'ef', 4)
+    expect(own.buffer(id)).toEqual({ data: 'abcdef', end: 6 })
+  })
+
+  it('drops the oldest pieces once it keeps more than the limit, the stream offset goes on', () => {
+    output('a'.repeat(1_200_000))
+    output('b'.repeat(MAX_BUFFER_CHARS - 1_200_000))
+    // Exactly at the limit nothing goes.
+    expect(runs(own.buffer(id).data)).toBe('a×1200000 b×800000')
+    output('c')
+    // Whole pieces go, never part of one.
+    const { data, end } = own.buffer(id)
+    expect(runs(data)).toBe('b×800000 c×1')
+    expect(end).toBe(MAX_BUFFER_CHARS + 1)
+    // A view that subscribed before it fetched the buffer places the next piece right after it.
+    const live = vi.fn()
+    own.on('data', live)
+    output('d')
+    expect(live).toHaveBeenCalledWith(id, 'd', end)
+  })
+
+  it('keeps the latest piece even when it alone is over the limit', () => {
+    output('a'.repeat(10))
+    output('b'.repeat(MAX_BUFFER_CHARS + 5))
+    expect(own.buffer(id)).toMatchObject({ end: MAX_BUFFER_CHARS + 15 })
+    expect(runs(own.buffer(id).data)).toBe(`b×${MAX_BUFFER_CHARS + 5}`)
+  })
+
+  it('gives a view that attaches after a trim the terminal modes set in the dropped output', () => {
+    output('\x1b[?2004h' + 'a'.repeat(1_200_000))
+    output('b'.repeat(900_000))
+    // The raw buffer has lost bracketed paste: pasted lines would run one by one.
+    expect(own.buffer(id).data.startsWith('b')).toBe(true)
+    const view = own.attach(id)
+    expect(view.data.slice(0, 10)).toBe('\x1b[?2004hbb')
+    expect(view.data.length).toBe(8 + 900_000)
+    expect(view.end).toBe(8 + 1_200_000 + 900_000)
+  })
+
+  it('completes an escape sequence the trim cut in two', () => {
+    output('a'.repeat(1_200_000) + '\x1b[?10')
+    output('49h' + 'b'.repeat(900_000))
+    expect(own.buffer(id).data.slice(0, 5)).toBe('49hbb')
+    // The view gets the alternate screen whole, not "49h" as text.
+    expect(own.attach(id).data.slice(0, 10)).toBe('\x1b[?1049hbb')
+  })
+
+  it('tells a view whether an earlier one already answered the queries in the output', () => {
+    // A program asks for the device attributes; the first view answers.
+    output('\x1b[c')
+    // An API client reading the buffer answers nothing.
+    own.buffer(id)
+    expect(own.attach(id)).toEqual({ data: '\x1b[c', end: 3, answered: false, cols: 100, rows: 30 })
+    // The window reloaded: answering again would reach the program as typed input.
+    expect(own.attach(id)).toMatchObject({ answered: true })
+  })
+
+  it('replays at the size the output was last written for', () => {
+    own.resize(id, 90, 20)
+    output('x')
+    expect(own.attach(id)).toMatchObject({ cols: 90, rows: 20 })
+  })
+
+  it('sends what is still waiting before it tells that the process ended', () => {
+    const events: string[] = []
+    own.on('data', (_id, data) => events.push(`data ${data}`))
+    own.on('exit', (_id, exitCode) => events.push(`exit ${exitCode}`))
+    pty.output('Tschüss')
+    pty.exit(0)
+    expect(events).toEqual(['data Tschüss', 'exit 0'])
+    expect(own.buffer(id).data).toBe('Tschüss')
+  })
+})
+
+// Claude Code's window title shows whether it works; once it turns idle the turn ended (or waits).
+describe('the end of a turn, told by the title', () => {
+  let own: TerminalService
+  let id: string
+  let pty: FakePty
+  let ended: Mock<TurnListener>
+
+  beforeEach(() => {
+    vi.useFakeTimers({ now: 1_000_000 })
+    own = serviceWithPty(tmpdir())
+    // A shell tab knows no session of the Claude Code in it: its turn can only be done.
+    id = own.create({ accountId: 'a', mode: 'shell' }).id
+    pty = lastPty()
+    ended = vi.fn<TurnListener>()
+    own.on('turnEnded', ended)
+  })
+  afterEach(() => {
+    own.disposeAll()
+    vi.useRealTimers()
+  })
+
+  it('reports a turn once, a moment after the title turns idle, with how long Claude worked', async () => {
+    pty.output(BUSY)
+    expect(own.get(id).busy).toBe(true)
+    await vi.advanceTimersByTimeAsync(4000)
+    pty.output(IDLE)
+    expect(own.get(id).busy).toBe(false)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(ended).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(ended).toHaveBeenCalledOnce()
+    expect(ended).toHaveBeenCalledWith(id, { kind: 'done', tool: null, detail: null, busyMs: 4000 })
+    // The same title again is no news.
+    pty.output(IDLE)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(ended).toHaveBeenCalledOnce()
+  })
+
+  it('counts a turn that goes on before its end was clear as one, timed from its start', async () => {
+    pty.output(BUSY)
+    await vi.advanceTimersByTimeAsync(1000)
+    pty.output(IDLE)
+    await vi.advanceTimersByTimeAsync(100)
+    // Back at work (the next tool) and idle again before the first end was looked up.
+    pty.output(BUSY)
+    await vi.advanceTimersByTimeAsync(100)
+    pty.output(IDLE)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(ended).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(ended).toHaveBeenCalledOnce()
+    expect(ended).toHaveBeenCalledWith(id, expect.objectContaining({ kind: 'done', busyMs: 1200 }))
+  })
+
+  it('follows only Claude Code’s titles, also when one comes in two pieces', () => {
+    pty.output('\x1b]0;◐ Cla')
+    expect(own.get(id).busy).toBe(false)
+    pty.output('ude Code\x07')
+    expect(own.get(id).busy).toBe(true)
+    pty.output('\x1b]0;PowerShell\x07')
+    expect(own.get(id).busy).toBe(true)
+  })
+
+  it('no longer marks the tab as waiting for the user once Claude works again', () => {
+    own.setAttention(id, 'input')
+    pty.output(BUSY)
+    expect(own.get(id).attention).toBeNull()
+    pty.output(IDLE)
+    // An answer the user hasn't read yet stays unread.
+    own.setAttention(id, 'done')
+    pty.output(BUSY)
+    expect(own.get(id).attention).toBe('done')
+  })
+})
+
+// With the app's hooks Claude Code tells the end of a turn itself; the title and transcript only fill gaps.
+describe('the end of a turn, told by hooks', () => {
+  let own: TerminalService
+  let id: string
+  let pty: FakePty
+  let ended: Mock<TurnListener>
+
+  beforeEach(() => {
+    vi.useFakeTimers({ now: 1_000_000 })
+    // An account without files: no transcript tells anything.
+    own = serviceWithPty(tmpdir())
+    id = own.create({ accountId: 'a' }).id
+    pty = lastPty()
+    ended = vi.fn<TurnListener>()
+    own.on('turnEnded', ended)
+  })
+  afterEach(() => {
+    own.disposeAll()
+    vi.useRealTimers()
+  })
+
+  const hook = (event: HookEvent) => own.applyHook(id, { sessionId: null, event })
+  const stop = (message: string) => hook({ kind: 'stop', message, background: false })
+
+  it('tells the end a Stop hook reports at once and looks up nothing when the title turns idle', async () => {
+    hook({ kind: 'prompt' })
+    pty.output(BUSY)
+    await vi.advanceTimersByTimeAsync(2000)
+    stop('Fertig.')
+    expect(ended).toHaveBeenCalledOnce()
+    expect(ended).toHaveBeenCalledWith(id, { kind: 'done', tool: null, detail: 'Fertig.', busyMs: 2000 })
+    pty.output(IDLE)
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(ended).toHaveBeenCalledOnce()
+  })
+
+  it('times a short turn from its prompt, also when the title never showed it busy', async () => {
+    hook({ kind: 'prompt' })
+    await vi.advanceTimersByTimeAsync(800)
+    stop('Hallo!')
+    expect(ended).toHaveBeenCalledWith(id, expect.objectContaining({ kind: 'done', busyMs: 800 }))
+  })
+
+  it('tells at once that Claude waits for a permission, and once only', async () => {
+    hook({ kind: 'prompt' })
+    pty.output(BUSY)
+    hook({ kind: 'input', tool: 'Bash', detail: 'npm test' })
+    expect(ended).toHaveBeenCalledOnce()
+    expect(ended).toHaveBeenCalledWith(id, { kind: 'input', tool: 'Bash', detail: 'npm test', busyMs: 0 })
+    pty.output(IDLE)
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(ended).toHaveBeenCalledOnce()
+  })
+
+  it('takes an end the hooks report shortly after the title turned idle', async () => {
+    hook({ kind: 'prompt' })
+    pty.output(BUSY)
+    await vi.advanceTimersByTimeAsync(1000)
+    pty.output(IDLE)
+    await vi.advanceTimersByTimeAsync(1000)
+    stop('Fertig.')
+    expect(ended).toHaveBeenCalledOnce()
+    expect(ended).toHaveBeenCalledWith(id, expect.objectContaining({ kind: 'done', detail: 'Fertig.' }))
+    // The lookup the idle title started stopped.
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(ended).toHaveBeenCalledOnce()
+  })
+
+  it('without an end from the hooks counts the turn as done once the transcript stayed unclear', async () => {
+    hook({ kind: 'prompt' })
+    pty.output(BUSY)
+    await vi.advanceTimersByTimeAsync(1000)
+    // The user pressed Esc, which ends no turn, or a hook failed: no Stop comes.
+    pty.output(IDLE)
+    await vi.advanceTimersByTimeAsync(7900)
+    expect(ended).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(300)
+    expect(ended).toHaveBeenCalledOnce()
+    expect(ended).toHaveBeenCalledWith(id, { kind: 'done', tool: null, detail: null, busyMs: 1000 })
+  })
+
+  it('stops showing a tool once Claude stays idle without a hook that ended it', async () => {
+    hook({ kind: 'prompt' })
+    hook({ kind: 'tool', tool: 'Bash', detail: 'npm test', agent: null })
+    pty.output(BUSY)
+    pty.output(IDLE)
+    expect(own.get(id).activity).toMatchObject({ tool: 'Bash' })
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(own.get(id).activity).toBeNull()
+  })
+
+  it('keeps showing the tool that waits for the user', async () => {
+    hook({ kind: 'prompt' })
+    hook({ kind: 'tool', tool: 'Bash', detail: 'npm test', agent: null })
+    pty.output(BUSY)
+    hook({ kind: 'input', tool: 'Bash', detail: 'npm test' })
+    pty.output(IDLE)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(own.get(id).activity).toMatchObject({ tool: 'Bash' })
+  })
+
+  it('tells a limit a hook reported with the hook’s message when the transcript doesn’t name it', async () => {
+    hook({ kind: 'prompt' })
+    hook({ kind: 'failure', error: 'rate_limit', message: 'API Error: 429' })
+    await vi.advanceTimersByTimeAsync(7500)
+    expect(ended).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(ended).toHaveBeenCalledOnce()
+    expect(ended).toHaveBeenCalledWith(id, { kind: 'limit', tool: null, detail: 'API Error: 429', busyMs: 0 })
+  })
+
+  it('sends the tools the hooks report in quick succession as one update', async () => {
+    const changed = vi.fn()
+    own.on('changed', changed)
+    // The first hook shows at once that the session has hooks.
+    hook({ kind: 'prompt' })
+    expect(changed).toHaveBeenCalledOnce()
+    hook({ kind: 'tool', tool: 'Read', detail: 'a.ts', agent: null })
+    hook({ kind: 'tool', tool: 'Grep', detail: 'TODO', agent: null })
+    expect(changed).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(changed).toHaveBeenCalledTimes(2)
+    const [terminals] = changed.mock.lastCall as [TerminalInfo[]]
+    expect(terminals.find((t) => t.id === id)?.activity).toMatchObject({ tool: 'Grep', detail: 'TODO' })
+  })
+})
+
+// Without hooks (or when they tell nothing) the transcript tells why the title turned idle.
+describe('the end of a turn, read in the transcript', () => {
+  const START = Date.parse('2026-03-02T10:00:00.000Z')
+  let root: string
+  let own: TerminalService
+  let id: string
+  let pty: FakePty
+  let transcript: string
+  let ended: Mock<TurnListener>
+
+  beforeEach(async () => {
+    // Only the clock is fake: the service reads real files in between.
+    vi.useFakeTimers({ now: START, toFake: ['Date'] })
+    root = await mkdtemp(join(tmpdir(), 'cm-turn-'))
+    const dirs = { sessionsDir: join(root, 'sessions'), projectsDir: join(root, 'projects'), configDir: root }
+    own = serviceWithPty(root, dirs)
+    const info = own.create({ accountId: 'a' })
+    id = info.id
+    pty = lastPty()
+    const project = join(dirs.projectsDir, projectKey(root))
+    await mkdir(project, { recursive: true })
+    transcript = join(project, `${info.sessionId}.jsonl`)
+    ended = vi.fn<TurnListener>()
+    own.on('turnEnded', ended)
+  })
+  afterEach(async () => {
+    own.disposeAll()
+    vi.useRealTimers()
+    await rm(root, { recursive: true, force: true })
+  })
+
+  /** Real time, in which the service looks at the transcript (every 300 ms). */
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+  const turnEnded = async () => {
+    for (let waited = 0; ended.mock.calls.length === 0 && waited < 3000; waited += 20) await pause(20)
+  }
+
+  /** Transcript entries, written `ms` after the start. */
+  const at = (ms: number) => new Date(START + ms).toISOString()
+  const prompt = (ms: number, text: string) => ({ type: 'user', timestamp: at(ms), message: { role: 'user', content: text } })
+  const answer = (ms: number, content: object[]) => ({
+    type: 'assistant',
+    timestamp: at(ms),
+    message: { role: 'assistant', model: 'claude-opus-5-5', content },
+  })
+  const LIMIT_MESSAGE = 'You’ve hit your session limit · resets 11am'
+  const limit = (ms: number) => ({
+    type: 'assistant',
+    timestamp: at(ms),
+    error: 'rate_limit',
+    quotaLimits: { rateLimitType: 'five_hour', resetsAt: (START + 3_600_000) / 1000 },
+    message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: LIMIT_MESSAGE }] },
+  })
+  const write = (...entries: object[]) => writeFile(transcript, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n')
+
+  it('reports the turn as done once the transcript has its end, with the beginning of the answer', async () => {
+    pty.output(BUSY)
+    await write(
+      prompt(0, 'Lass die Tests laufen'),
+      answer(2000, [{ type: 'text', text: 'Alle Tests laufen.' }]),
+      { type: 'system', subtype: 'turn_duration', timestamp: at(2500) },
+    )
+    vi.setSystemTime(START + 3000)
+    pty.output(IDLE)
+    await turnEnded()
+    expect(ended).toHaveBeenCalledOnce()
+    expect(ended).toHaveBeenCalledWith(id, { kind: 'done', tool: null, detail: 'Alle Tests laufen.', busyMs: 3000 })
+  })
+
+  it('tells that Claude waits for the user once a tool call stayed without result for a while', async () => {
+    pty.output(BUSY)
+    await write(prompt(0, 'Lass die Tests laufen'), answer(1000, [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'npm test' } }]))
+    vi.setSystemTime(START + 1500)
+    pty.output(IDLE)
+    // Its result may still be in Claude Code's buffer: a few looks go by without news.
+    await pause(500)
+    expect(ended).not.toHaveBeenCalled()
+    vi.setSystemTime(START + 1500 + 4500)
+    await turnEnded()
+    expect(ended).toHaveBeenCalledOnce()
+    expect(ended).toHaveBeenCalledWith(id, { kind: 'input', tool: 'Bash', detail: 'npm test', busyMs: 1500 })
+  })
+
+  it('stays quiet when the user stopped the turn', async () => {
+    pty.output(BUSY)
+    await write(
+      prompt(0, 'Lass die Tests laufen'),
+      answer(500, [{ type: 'text', text: 'Ich starte die Tests.' }]),
+      prompt(1000, '[Request interrupted by user]'),
+    )
+    vi.setSystemTime(START + 1000)
+    pty.output(IDLE)
+    await pause(500)
+    // Also past the time after which an unclear turn counts as done: the lookup is over.
+    vi.setSystemTime(START + 1000 + 8000)
+    await pause(500)
+    expect(ended).not.toHaveBeenCalled()
+  })
+
+  it('reports a limit with Claude Code’s message from the transcript', async () => {
+    pty.output(BUSY)
+    await write(prompt(0, 'Lass die Tests laufen'), limit(1000))
+    vi.setSystemTime(START + 1000)
+    pty.output(IDLE)
+    await turnEnded()
+    expect(ended).toHaveBeenCalledOnce()
+    expect(ended).toHaveBeenCalledWith(id, { kind: 'limit', tool: null, detail: LIMIT_MESSAGE, busyMs: 1000 })
+    expect(own.get(id).limit).toMatchObject({ type: 'five_hour', message: LIMIT_MESSAGE })
+  })
+
+  it('tells a limit a hook reported once the transcript has it, for its reset time and message', async () => {
+    own.applyHook(id, { sessionId: null, event: { kind: 'prompt' } })
+    own.applyHook(id, { sessionId: null, event: { kind: 'failure', error: 'rate_limit', message: 'API Error: 429' } })
+    await pause(500)
+    expect(ended).not.toHaveBeenCalled()
+    await write(prompt(0, 'Lass die Tests laufen'), limit(100))
+    await turnEnded()
+    expect(ended).toHaveBeenCalledOnce()
+    expect(ended).toHaveBeenCalledWith(id, { kind: 'limit', tool: null, detail: LIMIT_MESSAGE, busyMs: 0 })
   })
 })
