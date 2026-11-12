@@ -626,6 +626,18 @@ describe('detaching a part of a split tab', () => {
     expect(api.terminals.arrange).toHaveBeenLastCalledWith('s1')
   })
 
+  it('stays in its own tab when main then reports it unchanged, without its split', async () => {
+    const terminals = await load([terminal('s1'), terminal('b1', 'browser'), terminal('s2')], [beside('s1', 'b1')], undefined, 'top')
+    terminals.detach('b1')
+    expect(tabBar(terminals)).toEqual([['s1'], ['b1'], ['s2']])
+    // Main has the same b1: the store keeps its old object, the list from main has a new one.
+    changed([terminal('s1'), terminal('b1', 'browser'), terminal('s2')], [])
+    expect(tabBar(terminals)).toEqual([['s1'], ['b1'], ['s2']])
+    // The groups behind it, which the tabs in groups show, have it in the same place. (The browser tab
+    // is there since b1 was s1's page in their split.)
+    expect(tabsOf(terminals)).toEqual([['s1', 'b1', 's2'], [BROWSER_TAB]])
+  })
+
   it('leaves a terminal alone in its tab as it is', async () => {
     const terminals = await load(sessions('s1', 's2'), [], undefined, 'top')
     terminals.activate('s1')

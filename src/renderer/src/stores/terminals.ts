@@ -556,7 +556,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
    * which leaves the tabs of main), or beside the terminal it shares a split with.
    */
   function placementOf(ws: Workspace, terminal: TerminalInfo, list: TerminalInfo[], before: PaneSplit[], after: PaneSplit[]): Placement {
-    const index = list.indexOf(terminal)
+    // By id: the store keeps the old object of a terminal whose data stayed the same, main's list has a new one.
+    const index = list.findIndex((t) => t.id === terminal.id)
     const following = list[index + 1]
     const inSplits = (all: PaneSplit[], id: string) => all.some((s) => hasPane(s, id))
     const placed = following && groupOfTab(ws, following.id)
