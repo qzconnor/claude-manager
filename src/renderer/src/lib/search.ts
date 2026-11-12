@@ -1,13 +1,21 @@
 import { foldCase } from '@shared/utils'
 
-/** Fields of an item folded into one lower-case text, to test search terms against it. */
-export function searchText(...fields: (string | null | undefined)[]): string {
-  return foldCase(fields.filter(Boolean).join('\n'))
+/**
+ * A whole text in lower case and without accents ("Öffnen" → "offnen"), also where the accents are
+ * characters of their own. In one pass, as lists fold all their items again for every search.
+ */
+function foldText(text: string): string {
+  return foldCase(text).normalize('NFD').replace(/\p{M}+/gu, '').normalize('NFC')
 }
 
-/** Whether every term occurs in a text made with `searchText`. */
+/** Fields of an item folded into one text in lower case and without accents, to test search terms against it. */
+export function searchText(...fields: (string | null | undefined)[]): string {
+  return foldText(fields.filter(Boolean).join('\n'))
+}
+
+/** Whether every term occurs in a text made with `searchText`; accents in the terms don't count either ("offnen" finds "öffnen"). */
 export function containsTerms(text: string, terms: string[]): boolean {
-  return terms.every((term) => text.includes(term))
+  return terms.every((term) => text.includes(foldText(term)))
 }
 
 export interface TextPart {
@@ -49,23 +57,17 @@ export function matchSpans(text: string, terms: string[]): [number, number][] {
   return spans
 }
 
-/** Splits `text` where the terms occur, to highlight them. */
+/** Splits `text` where the terms occur, to highlight them; case and accents don't count, as in `matchSpans`. */
 export function highlightParts(text: string, terms: string[]): TextPart[] {
-  const folded = foldCase(text)
-  if (terms.length === 0 || folded.length !== text.length) return [{ text, match: false }]
-  const marked = new Uint8Array(text.length)
-  for (const term of terms) {
-    for (let at = folded.indexOf(term); at !== -1; at = folded.indexOf(term, at + term.length)) {
-      marked.fill(1, at, at + term.length)
-    }
-  }
+  const spans = matchSpans(text, terms)
+  if (spans.length === 0) return [{ text, match: false }]
   const parts: TextPart[] = []
-  let start = 0
-  for (let i = 1; i <= text.length; i++) {
-    if (i === text.length || marked[i] !== marked[start]) {
-      parts.push({ text: text.slice(start, i), match: marked[start] === 1 })
-      start = i
-    }
+  let at = 0
+  for (const [start, end] of spans) {
+    if (start > at) parts.push({ text: text.slice(at, start), match: false })
+    parts.push({ text: text.slice(start, end), match: true })
+    at = end
   }
+  if (at < text.length) parts.push({ text: text.slice(at), match: false })
   return parts
 }

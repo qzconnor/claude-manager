@@ -33,6 +33,16 @@ describe('containsTerms', () => {
   it('matches anything without terms', () => {
     expect(containsTerms(text, [])).toBe(true)
   })
+
+  it('ignores accents in the text and in the terms, like the command palette', () => {
+    expect(containsTerms(searchText('Ordner öffnen'), searchTerms('offnen'))).toBe(true)
+    expect(containsTerms(searchText('Datei offnen'), searchTerms('ÖFFNEN'))).toBe(true)
+    expect(containsTerms(searchText('Café Crème'), searchTerms('cafe creme'))).toBe(true)
+    // An umlaut written as o and a combining diaeresis, as macOS names files.
+    expect(containsTerms(searchText('Öffnen'), searchTerms('öffnen'))).toBe(true)
+    // ß is a letter of its own, not an ss with an accent.
+    expect(containsTerms(searchText('Browser schliessen'), searchTerms('schließen'))).toBe(false)
+  })
 })
 
 describe('highlightParts', () => {
@@ -67,6 +77,13 @@ describe('highlightParts', () => {
 
   it('returns one unmarked part when nothing matches', () => {
     expect(highlightParts('Hello', ['xyz'])).toEqual([{ text: 'Hello', match: false }])
+  })
+
+  it('marks matches whatever their accents, in the original spelling', () => {
+    expect(highlightParts('Ordner öffnen', searchTerms('offnen'))).toEqual([
+      { text: 'Ordner ', match: false },
+      { text: 'öffnen', match: true },
+    ])
   })
 
   it('keeps positions right after a dotted capital I', () => {
