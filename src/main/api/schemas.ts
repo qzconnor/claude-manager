@@ -85,6 +85,18 @@ export const schemas: Record<string, Schema> = {
       description: 'recent = Tempo der letzten Zeit (5-Stunden-Fenster: 1 Stunde, Woche: 1 Tag), window = Schnitt seit Beginn des Fensters',
     },
   }),
+  UsageReading: {
+    type: 'array',
+    description: '[Zeit, Prozent, Reset des Fensters], Zeiten in Millisekunden seit 1970',
+    prefixItems: [int, { type: 'number', minimum: 0, maximum: 100 }, int],
+    minItems: 3,
+    maxItems: 3,
+  },
+  UsageHistory: object({
+    accountId: str,
+    fiveHour: { ...arrayOf(ref('UsageReading')), description: '5-Stunden-Limit der letzten zwei Tage, älteste zuerst' },
+    sevenDay: { ...arrayOf(ref('UsageReading')), description: 'Wochenlimit der letzten 15 Tage, älteste zuerst' },
+  }),
   ExtraUsage: object({
     enabled: bool,
     usedCredits: nullable(num),

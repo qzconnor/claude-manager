@@ -80,6 +80,10 @@ describe('UsageService and removed accounts', () => {
         version: 2,
         records: { a: { usage: usage('a'), loginKey: null }, gone: { usage: usage('gone'), loginKey: null } },
         samples: { 'a\nfive_hour': [], 'gone\nfive_hour': [] },
+        history: {
+          'a\nfive_hour': [[T - HOUR, 20, T + HOUR], [T - 30 * MINUTE, 'x', T + HOUR], [T, 25, T + HOUR]],
+          'gone\nseven_day': [[T, 1, T + 24 * HOUR]],
+        },
       }),
     )
     let list = [{ id: 'a' }, { id: 'b' }]
@@ -98,7 +102,17 @@ describe('UsageService and removed accounts', () => {
         const saved = JSON.parse(await readFile(file, 'utf8'))
         expect(Object.keys(saved.records)).toEqual(['a'])
         expect(Object.keys(saved.samples)).toEqual(['a\nfive_hour'])
+        expect(Object.keys(saved.history)).toEqual(['a\nfive_hour'])
       })
+      expect(service.history('a')).toEqual({
+        accountId: 'a',
+        fiveHour: [
+          [T - HOUR, 20, T + HOUR],
+          [T, 25, T + HOUR],
+        ],
+        sevenDay: [],
+      })
+      expect(service.history('gone')).toEqual({ accountId: 'gone', fiveHour: [], sevenDay: [] })
       list = [{ id: 'b' }]
       onAccounts()
       await vi.waitFor(async () => expect(JSON.parse(await readFile(file, 'utf8')).records).toEqual({}))
@@ -232,7 +246,11 @@ function setup(logins: Record<string, Login>, minutes = 5) {
 
 const cacheFile = () => join(workDir, 'cache', 'usage.json')
 
-async function readCache(): Promise<{ records: Record<string, { usage: AccountUsage; loginKey: string | null }>; samples: Record<string, unknown> }> {
+async function readCache(): Promise<{
+  records: Record<string, { usage: AccountUsage; loginKey: string | null }>
+  samples: Record<string, unknown>
+  history: Record<string, unknown>
+}> {
   return JSON.parse(await readFile(cacheFile(), 'utf8'))
 }
 
@@ -488,7 +506,9 @@ describe('UsageService against the usage API', () => {
         expect(Object.keys(saved.records).sort()).toEqual(['a', 'b'])
         expect(saved.records.a.loginKey).toBe('login-a')
         expect(Object.keys(saved.samples).some((key) => key.startsWith('a\n'))).toBe(true)
+        expect(Object.keys(saved.history).some((key) => key.startsWith('a\n'))).toBe(true)
       })
+      expect(service.history('a').fiveHour).toHaveLength(1)
 
       // Another login takes over the files of account a (e.g. switched with cswap).
       const pending = deferred<Response>()
@@ -504,7 +524,10 @@ describe('UsageService against the usage API', () => {
         expect(Object.keys(saved.records)).toEqual(['b'])
         expect(Object.keys(saved.samples).filter((key) => key.startsWith('a\n'))).toEqual([])
         expect(Object.keys(saved.samples).some((key) => key.startsWith('b\n'))).toBe(true)
+        expect(Object.keys(saved.history).filter((key) => key.startsWith('a\n'))).toEqual([])
+        expect(Object.keys(saved.history).some((key) => key.startsWith('b\n'))).toBe(true)
       })
+      expect(service.history('a')).toEqual({ accountId: 'a', fiveHour: [], sevenDay: [] })
 
       pending.resolve(answer(200, usagePayload(55)))
       await settle()
@@ -570,6 +593,86 @@ describe('UsageService against the usage API', () => {
       await writeClaudeCache(T + 90_000, 33)
       await advance(30_000)
       expect(usage('a')).toMatchObject({ source: 'claude-cache', fiveHour: { percent: 33 } })
+    })
+  })
+
+  describe('the history of the limits', () => {
+    /** The usage API names these values and resets from now on. */
+    function answerWith(fiveHour: number, fiveHourReset: number, sevenDay: number, sevenDayReset: number) {
+      fetchMock.mockImplementation(async () =>
+        answer(200, {
+          five_hour: { utilization: fiveHour, resets_at: new Date(fiveHourReset).toISOString() },
+          seven_day: { utilization: sevenDay, resets_at: new Date(sevenDayReset).toISOString() },
+        }),
+      )
+    }
+
+    it('keeps a reading of each round, over the reset of the window, and after a restart', async () => {
+      const reset = T + 20 * MINUTE
+      const weekly = T + 3 * 24 * HOUR
+      answerWith(10, reset, 40, weekly)
+      const { service } = setup({ a: { kind: 'oauth', token: 'tok-a', loginKey: 'login-a' } })
+      await service.init()
+      await settle()
+      answerWith(30, reset, 41, weekly)
+      await advance(5 * MINUTE)
+      // The window resets, and the next one begins with a message 25 minutes later.
+      const next = T + 45 * MINUTE + 5 * HOUR
+      answerWith(4, next, 42, weekly)
+      await advance(45 * MINUTE)
+      const roundAt = (n: number) => T + n * 5 * MINUTE
+      const fiveHour = [[T, 10, reset], [roundAt(1), 30, reset], ...[2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => [roundAt(n), 4, next])]
+      expect(service.history('a').fiveHour).toEqual(fiveHour)
+      // The weekly window keeps half-hourly readings: those in between take turns after the first.
+      expect(service.history('a').sevenDay).toEqual([
+        [T, 40, weekly],
+        [roundAt(5), 42, weekly],
+        [roundAt(10), 42, weekly],
+      ])
+
+      // The readings of Claude Code's own cache count too.
+      await mkdir(join(workDir, 'a'), { recursive: true })
+      const fetchedAtMs = roundAt(10) + 2 * MINUTE
+      const utilization = {
+        five_hour: { utilization: 6, resets_at: new Date(next).toISOString() },
+        seven_day: { utilization: 43, resets_at: new Date(weekly).toISOString() },
+      }
+      await writeFile(join(workDir, 'a', '.claude.json'), JSON.stringify({ cachedUsageUtilization: { fetchedAtMs, utilization } }))
+      await advance(3 * MINUTE)
+      expect(service.history('a').fiveHour.at(-1)).toEqual([fetchedAtMs, 6, next])
+
+      // Saved with the next round, and read again after a restart.
+      await advance(2 * MINUTE)
+      const before = service.history('a')
+      await eventually(async () => expect((await readCache()).history['a\nfive_hour']).toEqual(before.fiveHour))
+      service.dispose()
+      const again = setup({ a: { kind: 'oauth', token: 'tok-a', loginKey: 'login-a' } })
+      fetchMock.mockImplementation(() => new Promise<Response>(() => undefined))
+      await again.service.init()
+      await settle()
+      expect(again.service.history('a')).toEqual(before)
+    })
+
+    it('keeps no history of the weekly windows of single models', async () => {
+      fetchMock.mockImplementation(async () =>
+        answer(200, { ...usagePayload(12), seven_day_opus: { utilization: 5, resets_at: new Date(T + 24 * HOUR).toISOString() } }),
+      )
+      const { service, usage } = setup({ a: { kind: 'oauth', token: 'tok-a', loginKey: 'login-a' } })
+      await service.init()
+      await settle()
+      expect(usage('a').scoped).toHaveLength(1)
+      await eventually(async () => expect(Object.keys((await readCache()).history).sort()).toEqual(['a\nfive_hour', 'a\nseven_day']))
+    })
+
+    it('leaves out windows that reset meanwhile', async () => {
+      answerWith(80, T + 2 * MINUTE, 40, T + 24 * HOUR)
+      const { service } = setup({ a: { kind: 'oauth', token: 'tok-a', loginKey: 'login-a' } })
+      await service.init()
+      await settle()
+      // The next round fails: the last answer is all there is, and its five-hour window is over.
+      fetchMock.mockImplementation(async () => answer(500))
+      await advance(5 * MINUTE)
+      expect(service.history('a').fiveHour).toEqual([[T, 80, T + 2 * MINUTE]])
     })
   })
 })

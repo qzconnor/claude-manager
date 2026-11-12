@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { AccountTokenStats, AccountUsage } from '@shared/types'
+import type { AccountTokenStats, AccountUsage, UsageHistory } from '@shared/types'
 import { errorMessage } from '@/lib/errors'
 
 /** Token statistics are kept by account and period: switching back shows the last one at once. */
@@ -20,6 +20,10 @@ export const useUsageStore = defineStore('usage', () => {
   /** The latest request by `statsKey`: an older answer that comes later doesn't count. */
   const statsRequests = new Map<string, number>()
   let statsRequestCount = 0
+  /** How full the limits were over the last days, by account. */
+  const histories = ref<Record<string, UsageHistory>>({})
+  /** The latest request by account: an older answer that comes later doesn't count. */
+  const historyRequests = new Map<string, number>()
 
   const byAccount = computed(() => new Map(usage.value.map((u) => [u.accountId, u])))
 
@@ -65,9 +69,34 @@ export const useUsageStore = defineStore('usage', () => {
     }
   }
 
+  /** Loads how full the limits of the account were over the last days. Doesn't throw: the curve stays as it was. */
+  async function loadHistory(accountId: string): Promise<void> {
+    const request = ++statsRequestCount
+    historyRequests.set(accountId, request)
+    try {
+      const result = await window.api.usage.history(accountId)
+      if (historyRequests.get(accountId) === request) histories.value = { ...histories.value, [accountId]: result }
+    } catch {
+      // Shown again with the next change of the usage.
+    }
+  }
+
   window.api.usage.onChanged((next) => {
     usage.value = next
   })
 
-  return { usage, refreshing, isRefreshing, stats, statsLoading, statsErrors, byAccount, load, refresh, loadStats }
+  return {
+    usage,
+    refreshing,
+    isRefreshing,
+    stats,
+    statsLoading,
+    statsErrors,
+    histories,
+    byAccount,
+    load,
+    refresh,
+    loadStats,
+    loadHistory,
+  }
 })

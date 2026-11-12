@@ -178,6 +178,7 @@ const api: ManagerApi = {
     get: () => invoke(IpcInvoke.usageGet),
     refresh: (accountId) => invoke(IpcInvoke.usageRefresh, accountId),
     stats: (accountId, days) => invoke(IpcInvoke.usageStats, accountId, days),
+    history: (accountId) => invoke(IpcInvoke.usageHistory, accountId),
     onChanged: (cb) => subscribe(IpcEvent.usageChanged, cb),
     onShow: (cb) => subscribe(IpcEvent.usageShow, cb),
   },

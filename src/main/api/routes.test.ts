@@ -115,7 +115,11 @@ function fakeApp(options: { terminals?: TerminalInfo[]; buffer?: { data: string;
       close: vi.fn(),
       buffer: () => options.buffer ?? { data: '', end: 0 },
     },
-    usage: { stats: vi.fn(async () => ({})), refresh: vi.fn(async () => []) },
+    usage: {
+      stats: vi.fn(async () => ({})),
+      history: vi.fn((accountId: string) => ({ accountId, fiveHour: [], sevenDay: [] })),
+      refresh: vi.fn(async () => []),
+    },
     sessions: { get: vi.fn(async () => ({})) },
   }
   return app
@@ -324,6 +328,14 @@ describe('session and usage routes', () => {
       ['system', 7],
     ])
     await expectStatus(call(app, 'GET', '/api/v1/accounts/system/stats?days=400'), 400)
+  })
+
+  it('gives the history of the limits of a known account', async () => {
+    const app = fakeApp()
+    const { result } = await call(app, 'GET', '/api/v1/accounts/system/usage-history')
+    expect(result).toEqual({ accountId: 'system', fiveHour: [], sevenDay: [] })
+    await expectStatus(call(app, 'GET', '/api/v1/accounts/ghost/usage-history'), 404)
+    expect(app.usage.history.mock.calls).toEqual([['system']])
   })
 
   it('refreshes the usage of one known account or all', async () => {

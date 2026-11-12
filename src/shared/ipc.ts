@@ -58,6 +58,7 @@ import type {
   ReleaseNote,
   ReleaseReference,
   UpdateState,
+  UsageHistory,
   WindowState,
 } from './types'
 import type { Shortcut } from './shortcuts'
@@ -168,6 +169,7 @@ export const IpcInvoke = {
   usageGet: 'usage:get',
   usageRefresh: 'usage:refresh',
   usageStats: 'usage:stats',
+  usageHistory: 'usage:history',
 
   artifactsList: 'artifacts:list',
   artifactsRename: 'artifacts:rename',
@@ -582,6 +584,8 @@ export interface ManagerApi {
     get(): Promise<AccountUsage[]>
     refresh(accountId?: string): Promise<AccountUsage[]>
     stats(accountId: string, days?: number): Promise<AccountTokenStats>
+    /** How full the limits of the account were over the last days. */
+    history(accountId: string): Promise<UsageHistory>
     onChanged(cb: (usage: AccountUsage[]) => void): Unsubscribe
     /** A warning about a limit was clicked. */
     onShow(cb: () => void): Unsubscribe

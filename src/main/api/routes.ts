@@ -173,6 +173,23 @@ export const routes: Route[] = [
       return ctx.app.usage.stats(ctx.params.accountId, queryInteger(ctx.query, 'days', 1, MAX_STATS_DAYS) ?? 30)
     },
   },
+  {
+    method: 'GET',
+    path: '/api/v1/accounts/{accountId}/usage-history',
+    doc: {
+      tag: 'Usage',
+      summary: 'Verlauf der Limits',
+      description:
+        'Messwerte des 5-Stunden-Limits der letzten zwei Tage und des Wochenlimits der letzten 15 Tage, wie die App sie abgefragt hat. ' +
+        'Gesammelt wird, solange die App läuft.',
+      pathParams: [accountIdParam],
+      response: { description: 'Verlauf', schema: ref('UsageHistory') },
+    },
+    handler: (ctx) => {
+      requireAccount(ctx, ctx.params.accountId)
+      return ctx.app.usage.history(ctx.params.accountId)
+    },
+  },
 
   // --- sessions --------------------------------------------------------------
   {

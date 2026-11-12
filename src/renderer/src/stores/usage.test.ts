@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AccountTokenStats } from '@shared/types'
+import type { AccountTokenStats, UsageHistory } from '@shared/types'
 import { statsKey, useUsageStore } from './usage'
 
 /** Answers to `usage.stats` that the test gives when it wants, in the order it wants. */
@@ -20,9 +20,18 @@ const api = {
           refreshes.push(() => resolve([]))
         }),
     ),
+    history: vi.fn(
+      (accountId: string) =>
+        new Promise<UsageHistory>((resolve, reject) => {
+          histories.push({ accountId, resolve, reject })
+        }),
+    ),
     onChanged: () => () => {},
   },
 }
+
+/** Answers to `usage.history`, given when the test wants. */
+let histories: { accountId: string; resolve: (history: UsageHistory) => void; reject: (error: Error) => void }[]
 
 /** Answers to `usage.refresh`, given when the test wants. */
 let refreshes: (() => void)[]
@@ -33,6 +42,7 @@ const statsOf = (days: number, messages: number) =>
 beforeEach(() => {
   answers = []
   refreshes = []
+  histories = []
   vi.stubGlobal('window', { api })
   setActivePinia(createPinia())
 })
@@ -96,5 +106,37 @@ describe('usage store: refreshing', () => {
     refreshes.shift()?.()
     await all
     expect(usage.isRefreshing('b')).toBe(false)
+  })
+})
+
+describe('usage store: history of the limits', () => {
+  const historyOf = (accountId: string, percent: number): UsageHistory => ({ accountId, fiveHour: [[1, percent, 2]], sevenDay: [] })
+
+  it('keeps the newer answer for an account, and each account apart', async () => {
+    const usage = useUsageStore()
+    const older = usage.loadHistory('a')
+    const newer = usage.loadHistory('a')
+    const other = usage.loadHistory('b')
+    const [first, second, third] = histories.splice(0)
+    second?.resolve(historyOf('a', 20))
+    await newer
+    first?.resolve(historyOf('a', 10))
+    await older
+    third?.resolve(historyOf('b', 5))
+    await other
+
+    expect(usage.histories.a?.fiveHour).toEqual([[1, 20, 2]])
+    expect(usage.histories.b?.fiveHour).toEqual([[1, 5, 2]])
+  })
+
+  it('keeps the last curve when loading fails', async () => {
+    const usage = useUsageStore()
+    const first = usage.loadHistory('a')
+    histories.shift()?.resolve(historyOf('a', 10))
+    await first
+    const failing = usage.loadHistory('a')
+    histories.shift()?.reject(new Error('gone'))
+    await expect(failing).resolves.toBeUndefined()
+    expect(usage.histories.a?.fiveHour).toEqual([[1, 10, 2]])
   })
 })

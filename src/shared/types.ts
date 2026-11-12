@@ -826,6 +826,18 @@ export interface UsageForecast {
   basis: 'recent' | 'window'
 }
 
+/** A reading of a usage window: when, how full, and when its window resets (times in ms). */
+export type UsageReading = [time: number, percent: number, resetsAt: number]
+
+/** How full the limits of an account were over the last days (see `src/shared/usage-history.ts`). */
+export interface UsageHistory {
+  accountId: string
+  /** The five-hour window of the last two days, oldest first. */
+  fiveHour: UsageReading[]
+  /** The weekly window of the last fifteen days, oldest first. */
+  sevenDay: UsageReading[]
+}
+
 export interface ExtraUsage {
   enabled: boolean
   usedCredits: number | null

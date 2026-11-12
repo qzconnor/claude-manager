@@ -30,6 +30,7 @@ Die API läuft, solange die App läuft. Soll sie immer erreichbar sein, unter *E
 | GET | `/api/v1/accounts` | alle Accounts |
 | GET | `/api/v1/accounts/{accountId}` | ein Account |
 | GET | `/api/v1/accounts/{accountId}/stats?days=30` | Token-Verbrauch pro Tag und Modell |
+| GET | `/api/v1/accounts/{accountId}/usage-history` | Verlauf des 5-Stunden- und des Wochenlimits (2 bzw. 15 Tage) |
 | GET | `/api/v1/usage` | 5-Stunden- und Wochen-Limits aller Accounts |
 | POST | `/api/v1/usage/refresh` | Limits jetzt neu abrufen |
 | GET | `/api/v1/sessions?accountId=` | Sessions, gruppiert nach Account |

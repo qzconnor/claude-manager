@@ -2,8 +2,18 @@ import { join } from 'node:path'
 import { net } from 'electron'
 import { MAX_STATS_DAYS } from '@shared/defaults'
 import { mergeFolderStats } from '@shared/token-stats'
-import type { AccountTokenStats, AccountUsage, DailyTokenStats, TokenCounts, UsageStatus, UsageWindow } from '@shared/types'
+import type {
+  AccountTokenStats,
+  AccountUsage,
+  DailyTokenStats,
+  TokenCounts,
+  UsageHistory,
+  UsageReading,
+  UsageStatus,
+  UsageWindow,
+} from '@shared/types'
 import { addSample, forecastWindow, windowStart, type UsageSample } from '@shared/usage-forecast'
+import { addReading, isUsageReading } from '@shared/usage-history'
 import { readJson, writeJsonAtomic } from '../lib/json-file'
 import { TypedEmitter } from '../lib/typed-emitter'
 import { readGlobalConfig, type AccountCredentials, type AccountService } from './account-service'
@@ -56,6 +66,8 @@ interface CacheFile {
   records: Record<string, { usage: AccountUsage; loginKey: string | null }>
   /** Readings of the windows for the forecast, by `sampleKey`. */
   samples?: Record<string, UsageSample[]>
+  /** Readings of the five-hour and the weekly window over the last days, by `sampleKey`. */
+  history?: Record<string, UsageReading[]>
 }
 
 type Events = { changed: [usage: AccountUsage[]] }
@@ -70,6 +82,8 @@ export class UsageService extends TypedEmitter<Events> {
   private readonly renewals = new Map<string, Renewal>()
   /** Readings of each window of each account, oldest first: the pace for the forecast. */
   private samples = new Map<string, UsageSample[]>()
+  /** Readings of the five-hour and the weekly window of each account over the last days: the curves of the usage page. */
+  private readings = new Map<string, UsageReading[]>()
   private timer: NodeJS.Timeout | null = null
   private localTimer: NodeJS.Timeout | null = null
   /** For the moment the next window resets. */
@@ -98,6 +112,9 @@ export class UsageService extends TypedEmitter<Events> {
       }
       for (const [key, list] of Object.entries(persisted.samples ?? {})) {
         if (Array.isArray(list)) this.samples.set(key, list.filter(isSample))
+      }
+      for (const [key, list] of Object.entries(persisted.history ?? {})) {
+        if (Array.isArray(list)) this.readings.set(key, list.filter(isUsageReading))
       }
     }
     this.forgetRemoved()
@@ -131,6 +148,12 @@ export class UsageService extends TypedEmitter<Events> {
     if (accountId) await this.refreshOne(accountId, true)
     else await this.refreshAll(true)
     return this.getAll()
+  }
+
+  /** How full the five-hour and the weekly limit of the account were over the last days. */
+  history(accountId: string): UsageHistory {
+    const of = (key: string) => structuredClone(this.readings.get(sampleKey(accountId, key)) ?? [])
+    return { accountId, fiveHour: of('five_hour'), sevenDay: of('seven_day') }
   }
 
   async stats(accountId: string, days = 30): Promise<AccountTokenStats> {
@@ -310,8 +333,9 @@ export class UsageService extends TypedEmitter<Events> {
     }
     record.usage.nextRefreshAt = new Date(record.nextAllowedAt).toISOString()
     this.live.set(accountId, record)
-    this.persist()
+    // Computed first: the readings of the answer are saved with it.
     this.recompute()
+    this.persist()
   }
 
   /**
@@ -345,9 +369,10 @@ export class UsageService extends TypedEmitter<Events> {
 
   private persist(): void {
     const records = Object.fromEntries([...this.live].map(([id, r]) => [id, { usage: r.usage, loginKey: r.loginKey }]))
-    const known = new Set(this.accounts.list().map((a) => sampleKey(a.id, '')))
-    const samples = Object.fromEntries([...this.samples].filter(([key]) => known.has(key.slice(0, key.indexOf('\n') + 1))))
-    void writeJsonAtomic(this.cacheFile, { version: 2, records, samples } satisfies CacheFile).catch(() => undefined)
+    const known = new Set(this.accounts.list().map((a) => a.id))
+    const ofKnown = <T>(map: Map<string, T>) => Object.fromEntries([...map].filter(([key]) => known.has(accountOfKey(key))))
+    const file: CacheFile = { version: 2, records, samples: ofKnown(this.samples), history: ofKnown(this.readings) }
+    void writeJsonAtomic(this.cacheFile, file).catch(() => undefined)
   }
 
   /** Forgets what is kept of accounts that were removed, also in the cache file. */
@@ -359,10 +384,12 @@ export class UsageService extends TypedEmitter<Events> {
       this.live.delete(id)
       dropped = true
     }
-    for (const key of [...this.samples.keys()]) {
-      if (known.has(key.slice(0, key.indexOf('\n')))) continue
-      this.samples.delete(key)
-      dropped = true
+    for (const map of [this.samples, this.readings]) {
+      for (const key of [...map.keys()]) {
+        if (known.has(accountOfKey(key))) continue
+        map.delete(key)
+        dropped = true
+      }
     }
     for (const id of [...this.renewals.keys()]) if (!known.has(id)) this.renewals.delete(id)
     for (const id of [...this.loginChangedAt.keys()]) if (!known.has(id)) this.loginChangedAt.delete(id)
@@ -373,13 +400,16 @@ export class UsageService extends TypedEmitter<Events> {
   private dropLogin(accountId: string): void {
     this.live.delete(accountId)
     this.loginChangedAt.set(accountId, Date.now())
-    for (const key of [...this.samples.keys()]) if (key.startsWith(sampleKey(accountId, ''))) this.samples.delete(key)
+    for (const map of [this.samples, this.readings]) {
+      for (const key of [...map.keys()]) if (accountOfKey(key) === accountId) map.delete(key)
+    }
     this.persist()
   }
 
   /**
    * Notes the windows' values as readings (once per time they were fetched) and adds the forecast
-   * from them. Windows without data of their own (no time) are left as they are.
+   * from them, the five-hour and the weekly one also to the history. Windows without data of their
+   * own (no time) are left as they are.
    */
   private withForecasts(accountId: string, usage: AccountUsage): AccountUsage {
     const fetchedAt = usage.fetchedAt ? Date.parse(usage.fetchedAt) : NaN
@@ -391,6 +421,10 @@ export class UsageService extends TypedEmitter<Events> {
       const key = sampleKey(accountId, window.key)
       const samples = addSample(this.samples.get(key) ?? [], [fetchedAt, window.percent], start)
       this.samples.set(key, samples)
+      if (window === usage.fiveHour || window === usage.sevenDay) {
+        const reading: UsageReading = [fetchedAt, window.percent, Date.parse(window.resetsAt!)]
+        this.readings.set(key, addReading(this.readings.get(key) ?? [], reading, window.key))
+      }
       return { ...window, forecast: forecastWindow(window, samples) }
     }
     return {
@@ -523,6 +557,10 @@ export function nextReset(usages: Iterable<AccountUsage>, now: number): number |
 
 function sampleKey(accountId: string, windowKey: string): string {
   return `${accountId}\n${windowKey}`
+}
+
+function accountOfKey(key: string): string {
+  return key.slice(0, key.indexOf('\n'))
 }
 
 function isSample(value: unknown): value is UsageSample {

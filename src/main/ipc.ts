@@ -594,6 +594,7 @@ export function registerIpc(ctx: AppContext): void {
   handle(IpcInvoke.usageStats, (_e, accountId: unknown, days?: unknown) =>
     ctx.usage.stats(requireString(accountId, 'accountId'), typeof days === 'number' ? days : 30),
   )
+  handle(IpcInvoke.usageHistory, (_e, accountId: unknown) => ctx.usage.history(requireString(accountId, 'accountId')))
   ctx.usage.on('changed', (usage) => broadcast(IpcEvent.usageChanged, usage))
 
   // --- artifacts -----------------------------------------------------------
