@@ -1,10 +1,14 @@
 import { watch, type FSWatcher } from 'node:fs'
 import { mkdir, stat } from 'node:fs/promises'
+import { join } from 'node:path'
 import { shell } from 'electron'
 import type {
+  SessionChanges,
+  SessionChangeTexts,
   SessionDetail,
   SessionGroup,
   SessionRef,
+  SessionFileChange,
   SessionFileEdit,
   SessionRemoveResult,
   SessionSearchHit,
@@ -31,6 +35,8 @@ const MAX_SEARCH_HITS = 200
 /** Sessions that changed a file the menu lists; older ones hardly matter any more. */
 const MAX_FILE_EDITS = 50
 const TOOL_USE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
+/** Session and message ids (UUIDs): also part of the path to the file history. */
+const ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 /** Files moved to the recycle bin at the same time. */
 const TRASH_CONCURRENCY = 6
 
@@ -163,6 +169,39 @@ export class SessionService extends TypedEmitter<Events> {
       .flat()
       .sort((a, b) => b.changedAt.localeCompare(a.changedAt))
       .slice(0, MAX_FILE_EDITS)
+  }
+
+  /** What the session changed prompt by prompt, from Claude Code's file history. */
+  async changes(accountId: string, sessionId: string): Promise<SessionChanges> {
+    return this.indexer.request<SessionChanges>({ method: 'sessionChanges', ...(await this.historyOf(accountId, sessionId)) })
+  }
+
+  /** What `/rewind` to the prompt `turnId` would do to the files. */
+  async rewindPreview(accountId: string, sessionId: string, turnId: string): Promise<SessionFileChange[]> {
+    if (!ID_RE.test(turnId)) throw new Error('Ungültige Prompt-ID.')
+    return this.indexer.request<SessionFileChange[]>({ method: 'rewindPreview', ...(await this.historyOf(accountId, sessionId)), turnId })
+  }
+
+  /** Both versions of a file that a change of a prompt (`turn`) or `/rewind` to it (`rewind`) compares. */
+  async changeTexts(accountId: string, sessionId: string, turnId: string, path: string, kind: 'turn' | 'rewind'): Promise<SessionChangeTexts> {
+    if (!ID_RE.test(turnId)) throw new Error('Ungültige Prompt-ID.')
+    return this.indexer.request<SessionChangeTexts>({
+      method: 'changeTexts',
+      ...(await this.historyOf(accountId, sessionId)),
+      turnId,
+      path,
+      kind,
+    })
+  }
+
+  /** The transcript of a session, its folder of Claude Code's file history and the folder it works in. */
+  private async historyOf(accountId: string, sessionId: string): Promise<{ filePath: string; historyDir: string; cwd: string | null }> {
+    if (!ID_RE.test(sessionId)) throw new Error('Ungültige Session-ID.')
+    const [group] = await this.list(accountId)
+    const summary = group?.sessions.find((s) => s.id === sessionId)
+    const filePath = this.filePaths.get(`${accountId}:${sessionId}`)
+    if (!summary || !filePath) throw new Error('Session nicht gefunden.')
+    return { filePath, historyDir: join(this.accounts.paths(accountId).configDir, 'file-history', sessionId), cwd: summary.cwd }
   }
 
   /** Complete input and output of one tool call, loaded when it is expanded in the transcript. */

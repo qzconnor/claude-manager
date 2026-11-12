@@ -10,6 +10,13 @@ export type IndexerRequest =
   | { method: 'searchTranscripts'; projectsDir: string; query: string; limit: number }
   /** The sessions that changed a file (absolute path) with Claude's Edit or Write. */
   | { method: 'editedBy'; projectsDir: string; path: string }
+  /**
+   * What a session changed prompt by prompt (`historyDir`: its folder of Claude Code's file history,
+   * `cwd`: its folder, for the paths of older versions).
+   */
+  | { method: 'sessionChanges'; filePath: string; historyDir: string; cwd: string | null }
+  | { method: 'rewindPreview'; filePath: string; historyDir: string; cwd: string | null; turnId: string }
+  | { method: 'changeTexts'; filePath: string; historyDir: string; cwd: string | null; turnId: string; path: string; kind: 'turn' | 'rewind' }
   /** Answered between two files: whether the worker is still alive while a request takes long. */
   | { method: 'ping' }
 

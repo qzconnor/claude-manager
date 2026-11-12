@@ -669,6 +669,53 @@ export interface SessionSearchHit {
   matches: number
 }
 
+/** What became of a file: there since, changed, or gone. */
+export type FileChangeKind = 'added' | 'modified' | 'deleted'
+
+/**
+ * Why lines aren't counted: a binary file, one too big to compare, or a version of it that Claude Code
+ * no longer keeps (it drops old backups).
+ */
+export type FileChangeNote = 'binary' | 'tooLarge' | 'unavailable'
+
+/** A file that changed, with how many lines it gained and lost. */
+export interface SessionFileChange {
+  /** Absolute path. */
+  path: string
+  kind: FileChangeKind
+  /** Null with a `note`. */
+  added: number | null
+  removed: number | null
+  note: FileChangeNote | null
+}
+
+/** What changed while Claude worked on a prompt: from the prompt to the next one (or to now). */
+export interface SessionTurnChanges {
+  /** The prompt's message id, the point `/rewind` goes back to. */
+  id: string
+  /** When the prompt was sent. */
+  at: string | null
+  prompt: string | null
+  /** The latest prompt: its changes reach up to the files as they are now. */
+  latest: boolean
+  files: SessionFileChange[]
+}
+
+/** The changes of a session prompt by prompt, from Claude Code's file history; oldest first. */
+export interface SessionChanges {
+  /** Only prompts during which files changed. */
+  turns: SessionTurnChanges[]
+  /** Files the session changed altogether. */
+  files: number
+}
+
+/** Both versions of a file to compare; null for a side where the file isn't there. */
+export interface SessionChangeTexts {
+  before: string | null
+  after: string | null
+  note: FileChangeNote | null
+}
+
 /** A session that changed a file with Claude's Edit or Write. */
 export interface SessionFileEdit {
   session: SessionSummary

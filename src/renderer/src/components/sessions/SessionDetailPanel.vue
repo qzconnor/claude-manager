@@ -5,6 +5,7 @@ import {
   CopyIcon,
   CpuIcon,
   EllipsisIcon,
+  FileDiffIcon,
   FolderGit2Icon,
   FolderIcon,
   FolderOpenIcon,
@@ -38,6 +39,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Spinner } from '@/components/ui/spinner'
 import { useAccountSwitch } from '@/composables/useAccountSwitch'
 import { useLauncher } from '@/composables/useLauncher'
@@ -49,6 +51,7 @@ import { sessionFolder } from '@/lib/session-tree'
 import { useAppStore } from '@/stores/app'
 import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
+import SessionChangesView from './SessionChangesView.vue'
 import TranscriptView from './TranscriptView.vue'
 
 const props = defineProps<{
@@ -67,6 +70,8 @@ const launcher = useLauncher()
 const accountSwitch = useAccountSwitch()
 const removal = useSessionRemoval()
 const choicesOpen = ref(false)
+/** The conversation, or what Claude changed in the files; stays when another session is shown. */
+const pane = ref<'messages' | 'changes'>('messages')
 
 /** The project's folder: for a session in a worktree, the folder it was started in. */
 const folder = computed(() => sessionFolder(props.summary))
@@ -234,10 +239,30 @@ async function copyId() {
           </span>
         </div>
       </div>
+
+      <Tabs v-model="pane" class="-mb-4">
+        <TabsList variant="line" class="h-8 gap-4 p-0">
+          <TabsTrigger value="messages" class="flex-none px-0 pb-2">
+            <MessagesSquareIcon />
+            Verlauf
+          </TabsTrigger>
+          <TabsTrigger value="changes" class="flex-none px-0 pb-2">
+            <FileDiffIcon />
+            Änderungen
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
     </header>
 
     <div class="min-h-0 flex-1">
-      <div v-if="error" class="p-6">
+      <SessionChangesView
+        v-if="pane === 'changes'"
+        :account-id="summary.accountId"
+        :session-id="summary.id"
+        :folder="folder"
+        :updated-at="summary.updatedAt"
+      />
+      <div v-else-if="error" class="p-6">
         <Alert variant="destructive">
           <TriangleAlertIcon />
           <AlertTitle>Transcript konnte nicht geladen werden</AlertTitle>

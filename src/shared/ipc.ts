@@ -40,6 +40,9 @@ import type {
   SessionGroup,
   SessionRef,
   SessionRemoveResult,
+  SessionChanges,
+  SessionChangeTexts,
+  SessionFileChange,
   SessionFileEdit,
   SessionSearchHit,
   SettingsImportResult,
@@ -130,6 +133,9 @@ export const IpcInvoke = {
   sessionsToolCall: 'sessions:tool-call',
   sessionsSearch: 'sessions:search',
   sessionsEditedBy: 'sessions:edited-by',
+  sessionsChanges: 'sessions:changes',
+  sessionsRewindPreview: 'sessions:rewind-preview',
+  sessionsChangeTexts: 'sessions:change-texts',
   sessionsContinueWith: 'sessions:continue-with',
   sessionsRemove: 'sessions:remove',
   sessionsRename: 'sessions:rename',
@@ -474,6 +480,12 @@ export interface ManagerApi {
     search(query: string): Promise<SessionSearchHit[]>
     /** The sessions of all accounts that changed the file at `path`, the latest change first. */
     editedBy(path: string): Promise<SessionFileEdit[]>
+    /** What the session changed prompt by prompt, from Claude Code's file history. */
+    changes(accountId: string, sessionId: string): Promise<SessionChanges>
+    /** What `/rewind` to the prompt `turnId` would do to the files: each from now back to then. */
+    rewindPreview(accountId: string, sessionId: string, turnId: string): Promise<SessionFileChange[]>
+    /** Both versions of a file of `changes` (`turn`) or `rewindPreview` (`rewind`). */
+    changeTexts(accountId: string, sessionId: string, turnId: string, path: string, kind: 'turn' | 'rewind'): Promise<SessionChangeTexts>
     /** Opens the session in a new tab that runs with `targetAccountId`'s limits; null when its folder isn't trusted. */
     continueWith(accountId: string, sessionId: string, targetAccountId: string): Promise<TerminalInfo | null>
     /**

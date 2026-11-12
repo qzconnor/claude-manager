@@ -125,6 +125,9 @@ const api: ManagerApi = {
     toolCall: (accountId, sessionId, toolUseId) => invoke(IpcInvoke.sessionsToolCall, accountId, sessionId, toolUseId),
     search: (query) => invoke(IpcInvoke.sessionsSearch, query),
     editedBy: (path) => invoke(IpcInvoke.sessionsEditedBy, path),
+    changes: (accountId, sessionId) => invoke(IpcInvoke.sessionsChanges, accountId, sessionId),
+    rewindPreview: (accountId, sessionId, turnId) => invoke(IpcInvoke.sessionsRewindPreview, accountId, sessionId, turnId),
+    changeTexts: (accountId, sessionId, turnId, path, kind) => invoke(IpcInvoke.sessionsChangeTexts, accountId, sessionId, turnId, path, kind),
     continueWith: (accountId, sessionId, targetAccountId) =>
       invoke(IpcInvoke.sessionsContinueWith, accountId, sessionId, targetAccountId),
     remove: (sessions) => invoke(IpcInvoke.sessionsRemove, sessions),

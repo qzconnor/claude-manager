@@ -427,6 +427,22 @@ export function registerIpc(ctx: AppContext): void {
     ctx.sessions.search(typeof query === 'string' ? query.slice(0, 200) : ''),
   )
   handle(IpcInvoke.sessionsEditedBy, (_e, path: unknown) => ctx.sessions.editedBy(requirePath(path, 'path')))
+  handle(IpcInvoke.sessionsChanges, (_e, accountId: unknown, sessionId: unknown) =>
+    ctx.sessions.changes(requireString(accountId, 'accountId'), requireString(sessionId, 'sessionId')),
+  )
+  handle(IpcInvoke.sessionsRewindPreview, (_e, accountId: unknown, sessionId: unknown, turnId: unknown) =>
+    ctx.sessions.rewindPreview(requireString(accountId, 'accountId'), requireString(sessionId, 'sessionId'), requireString(turnId, 'turnId')),
+  )
+  handle(IpcInvoke.sessionsChangeTexts, (_e, accountId: unknown, sessionId: unknown, turnId: unknown, path: unknown, kind: unknown) => {
+    if (kind !== 'turn' && kind !== 'rewind') throw new Error('Ungültiger Parameter: kind')
+    return ctx.sessions.changeTexts(
+      requireString(accountId, 'accountId'),
+      requireString(sessionId, 'sessionId'),
+      requireString(turnId, 'turnId'),
+      requirePath(path, 'path'),
+      kind,
+    )
+  })
   handle(IpcInvoke.sessionsContinueWith, (_e, accountId: unknown, sessionId: unknown, targetAccountId: unknown) =>
     ctx.handoff.resumeSession(
       requireString(accountId, 'accountId'),

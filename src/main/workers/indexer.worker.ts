@@ -12,6 +12,7 @@ import { MAX_STATS_DAYS } from '@shared/defaults'
 import { readJson, writeJsonAtomic } from '../lib/json-file'
 import { ThrottledSave } from '../lib/throttled-save'
 import { editedAt } from './edited-files'
+import { changeTexts, readFileHistory, rewindPreview, sessionChanges, VersionReader, type FileHistory } from './file-history'
 import { dropOldUsage, firstStatsDay } from './index-cache'
 import { readAppended } from './read-appended'
 import {
@@ -325,6 +326,18 @@ function pruneCache(): void {
   })()
 }
 
+/** The file history of the session last asked for: a click on one of its files needn't read it again. */
+let lastHistory: { filePath: string; size: number; mtimeMs: number; history: FileHistory } | null = null
+
+async function fileHistory(filePath: string): Promise<FileHistory> {
+  const info = await stat(filePath)
+  const known = lastHistory
+  if (known?.filePath === filePath && known.size === info.size && known.mtimeMs === info.mtimeMs) return known.history
+  const history = readFileHistory(await readFile(filePath))
+  lastHistory = { filePath, size: info.size, mtimeMs: info.mtimeMs, history }
+  return history
+}
+
 async function handle(request: IndexerRequest): Promise<unknown> {
   switch (request.method) {
     case 'scanSessions':
@@ -341,6 +354,14 @@ async function handle(request: IndexerRequest): Promise<unknown> {
       return searchIndex.search(request.projectsDir, request.query, request.limit)
     case 'editedBy':
       return editedBy(request.projectsDir, request.path)
+    case 'sessionChanges':
+      return sessionChanges(await fileHistory(request.filePath), new VersionReader(request.historyDir), request.cwd)
+    case 'rewindPreview':
+      return rewindPreview(await fileHistory(request.filePath), request.turnId, new VersionReader(request.historyDir), request.cwd)
+    case 'changeTexts': {
+      const history = await fileHistory(request.filePath)
+      return changeTexts(history, request.turnId, request.path, request.kind, new VersionReader(request.historyDir), request.cwd)
+    }
     case 'ping':
       return true
   }

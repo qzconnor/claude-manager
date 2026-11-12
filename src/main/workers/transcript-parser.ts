@@ -127,7 +127,8 @@ export function cleanPrompt(raw: string): string {
   return unwrapPasted(raw.replace(NOISE_RE, '')).trim()
 }
 
-function textOf(content: unknown): string {
+/** The text of a message: its text blocks, without images and tool results. */
+export function textOf(content: unknown): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
   const parts: string[] = []
