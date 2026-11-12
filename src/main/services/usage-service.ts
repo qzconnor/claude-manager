@@ -32,6 +32,11 @@ const RENEW_BUSY_RETRY_MS = 30_000
 export interface LiveRecord {
   usage: AccountUsage
   nextAllowedAt: number
+  /**
+   * When the usage API was last asked, also when that failed (`usage.fetchedAt` stays at the last
+   * answer with data); for data from the cache file, when it was fetched.
+   */
+  askedAt: number
   /** The login the data was fetched for (see `AccountCredentials.loginKey`). */
   loginKey: string | null
   /** Fingerprint of the token it was fetched with; unknown for data from the cache file. */
@@ -87,7 +92,8 @@ export class UsageService extends TypedEmitter<Events> {
     if (persisted?.version === 2 && persisted.records && typeof persisted.records === 'object') {
       for (const [id, record] of Object.entries(persisted.records)) {
         if (record?.usage && typeof record.usage === 'object') {
-          this.live.set(id, { usage: record.usage, nextAllowedAt: 0, loginKey: record.loginKey ?? null, tokenKey: null })
+          const askedAt = record.usage.fetchedAt ? Date.parse(record.usage.fetchedAt) || 0 : 0
+          this.live.set(id, { usage: record.usage, nextAllowedAt: 0, askedAt, loginKey: record.loginKey ?? null, tokenKey: null })
         }
       }
       for (const [key, list] of Object.entries(persisted.samples ?? {})) {
@@ -269,6 +275,7 @@ export class UsageService extends TypedEmitter<Events> {
             ? { ...emptyUsage(accountId, 'ok', 'live'), ...parsed, fetchedAt: new Date().toISOString() }
             : { ...base, status: 'error', message: 'Unerwartete Antwort der Usage-API.' },
           nextAllowedAt: now + intervalMs,
+          askedAt: now,
           loginKey: creds.loginKey,
           tokenKey,
         }
@@ -287,6 +294,7 @@ export class UsageService extends TypedEmitter<Events> {
         record = {
           usage: { ...base, status: failure.status, message: failure.message },
           nextAllowedAt: now + wait,
+          askedAt: now,
           loginKey: creds.loginKey,
           tokenKey,
         }
@@ -295,6 +303,7 @@ export class UsageService extends TypedEmitter<Events> {
       record = {
         usage: { ...base, status: 'error', message: `Usage konnte nicht geladen werden: ${error instanceof Error ? error.message : String(error)}` },
         nextAllowedAt: now + Math.min(intervalMs, 2 * 60_000),
+        askedAt: now,
         loginKey: creds.loginKey,
         tokenKey,
       }
@@ -317,8 +326,7 @@ export class UsageService extends TypedEmitter<Events> {
     const now = Date.now()
     const previous = this.live.get(accountId)
     if (previous && !isOtherLogin(previous.loginKey, creds.loginKey)) {
-      const fetchedAt = previous.usage.fetchedAt ? Date.parse(previous.usage.fetchedAt) : 0
-      if (now < (manual ? fetchedAt + MIN_MANUAL_INTERVAL_MS : previous.nextAllowedAt)) return
+      if (now < (manual ? previous.askedAt + MIN_MANUAL_INTERVAL_MS : previous.nextAllowedAt)) return
     }
     const tokenKey = fingerprintOf(creds.accessToken)
     const last = this.renewals.get(accountId)
@@ -555,7 +563,8 @@ export function dueNow(previous: LiveRecord | undefined, tokenKey: string, manua
   if (!previous) return true
   if (previous.usage.status === 'rate-limited' && now < previous.nextAllowedAt) return false
   if (worthAsking(previous, tokenKey)) return true
-  if (manual) return now >= (previous.usage.fetchedAt ? Date.parse(previous.usage.fetchedAt) : 0) + MIN_MANUAL_INTERVAL_MS
+  // From the last request, not the last data: a failed one leaves that as it was.
+  if (manual) return now >= previous.askedAt + MIN_MANUAL_INTERVAL_MS
   return now >= previous.nextAllowedAt - ROUND_SLACK_MS
 }
 
