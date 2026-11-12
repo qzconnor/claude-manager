@@ -57,6 +57,8 @@ function tab(id: string, ids: { sessionId?: string; resumeSessionId?: string }, 
     activity: null,
     subagents: 0,
     compacting: false,
+    turn: null,
+    prompt: null,
   }
 }
 

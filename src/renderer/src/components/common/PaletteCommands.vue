@@ -3,6 +3,7 @@ import {
   ArrowRightLeftIcon,
   BellIcon,
   BellOffIcon,
+  BellRingIcon,
   CircleStopIcon,
   Columns2Icon,
   FilesIcon,
@@ -45,6 +46,7 @@ import { SETTINGS } from '@/composables/useSettingsSearch'
 import { useTerminalActions } from '@/composables/useTerminalActions'
 import { attempt } from '@/lib/errors'
 import { formatRelative, shortenPath } from '@/lib/format'
+import { nextWaiting } from '@/lib/overview'
 import { PAGE_INFO } from '@/lib/pages'
 import type { SettingsEntry } from '@/lib/settings-index'
 import { BROWSER_TAB, PAGES } from '@/lib/workspace'
@@ -117,6 +119,9 @@ function focusTabs() {
   emit('done', false)
 }
 
+/** The tab Ctrl+Shift+J goes to: the next one in which Claude waits for the user. */
+const waitingNext = computed(() => nextWaiting(terminals.terminals, terminals.keyboardTerminal))
+
 /** Shows a terminal's tab; in groups the route follows it by itself. */
 function switchTo(id: string) {
   terminals.activate(id)
@@ -177,6 +182,16 @@ const closesBrowser = computed(
           <PlusIcon />
           Neue Session
           <CommandShortcut>Strg+Umschalt+T</CommandShortcut>
+        </CommandItem>
+        <CommandItem
+          v-if="waitingNext"
+          value="next-waiting"
+          filter-text="Zum Tab, der auf dich wartet springen Erlaubnis Frage Plan Limit"
+          @select="run(() => switchTo(waitingNext!))"
+        >
+          <BellRingIcon />
+          Zum Tab, der auf dich wartet
+          <CommandShortcut>Strg+Umschalt+J</CommandShortcut>
         </CommandItem>
         <CommandItem
           v-if="terminals.recentlyClosed.length"

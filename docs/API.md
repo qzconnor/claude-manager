@@ -82,6 +82,14 @@ Mit `hooks: true` meldet Claude Code seinen Zustand über Hooks an die App (Eins
 
 Ohne Hooks liest die App den Zustand aus Fenstertitel und Transcript. `activity` bleibt dann `null`, `subagents` `0` und `compacting` `false`.
 
+`turn` sagt, wie der letzte Turn der Session endete, und bleibt, bis der nächste beginnt (anders als `attention` auch, wenn der Tab angezeigt wird):
+- `kind`: `done`, `input` oder `limit` wie bei `attention`.
+- `tool`: bei `input`, worauf Claude wartet, z. B. `Bash`, `AskUserQuestion` oder `ExitPlanMode`.
+- `detail`: der Anfang der Antwort als Text, der wartende Befehl oder die Frage, oder die Meldung zum Limit.
+- `at`: wann der Turn endete.
+
+`prompt` ist der Anfang des letzten Prompts auf einer Zeile, nur mit Hooks, sonst `null`.
+
 `context` sagt, wie voll der Kontext einer Session ist, ab ihrem Start (bei Shells, Anmeldungen und Browser-Tabs `null`):
 - `tokens`: Tokens im Kontext nach der letzten Antwort, nach einem Compact die Zusammenfassung; `null` vor der ersten Antwort.
 - `compactAt`: ab hier fasst Claude Code den Verlauf von selbst zusammen, `null`, wenn Auto-Compact aus ist.

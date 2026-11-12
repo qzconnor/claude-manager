@@ -31,6 +31,8 @@ function terminal(id: string, mode: TerminalMode = 'session', extra: Partial<Ter
     activity: null,
     subagents: 0,
     compacting: false,
+    turn: null,
+    prompt: null,
     ...extra,
   }
 }

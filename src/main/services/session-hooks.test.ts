@@ -63,7 +63,7 @@ describe('SessionHooks', () => {
     const args = hooks.lastArgs('t1', [], dir)
     const answer = await sendHook(args, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt: 'Hallo' })
     expect(answer).toEqual({ status: 204, body: '' })
-    await vi.waitFor(() => expect(received).toEqual([['t1', { sessionId: SESSION, event: { kind: 'prompt' } }]]))
+    await vi.waitFor(() => expect(received).toEqual([['t1', { sessionId: SESSION, event: { kind: 'prompt', prompt: 'Hallo' } }]]))
   })
 
   it('answers events it doesn’t know or can’t read without telling them', async () => {

@@ -111,6 +111,12 @@ describe('parseHookCall', () => {
     expect(call('UserPromptSubmit', { session_id: 'not-a-session' })?.sessionId).toBeNull()
   })
 
+  it('keeps the beginning of a prompt on one line', () => {
+    expect(event('UserPromptSubmit', { prompt: '  Teste\n\nalles ' })).toEqual({ kind: 'prompt', prompt: 'Teste alles' })
+    expect(event('UserPromptSubmit', { prompt: 'x'.repeat(1000) })).toEqual({ kind: 'prompt', prompt: `${'x'.repeat(299)}…` })
+    expect(event('UserPromptSubmit', { prompt: 42 })).toEqual({ kind: 'prompt' })
+  })
+
   it('reads the tool that starts, with what it runs on', () => {
     expect(event('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'npm test' } })).toEqual({
       kind: 'tool',

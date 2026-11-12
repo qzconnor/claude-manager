@@ -98,6 +98,8 @@ function tab(overrides: Partial<TerminalInfo>): TerminalInfo {
     activity: null,
     subagents: 0,
     compacting: false,
+    turn: null,
+    prompt: null,
     ...overrides,
   }
 }

@@ -495,6 +495,24 @@ export interface TerminalInfo {
   subagents: number
   /** Claude Code compacts the conversation (`/compact` or by itself). */
   compacting: boolean
+  /**
+   * How the session's last turn ended: done, waiting for the user, or stopped at a limit. Stays until
+   * the next turn starts, also while the tab is shown (unlike `attention`). Null before the first end.
+   */
+  turn: TerminalTurn | null
+  /** The beginning of the last prompt, on one line; only with `hooks`, null before the first one. */
+  prompt: string | null
+}
+
+/** The end of a session's turn, as the tab keeps it (see `TerminalInfo.turn`). */
+export interface TerminalTurn {
+  kind: AttentionKind
+  /** `input`: what waits, e.g. `Bash`, `AskUserQuestion`, `ExitPlanMode`. */
+  tool: string | null
+  /** The beginning of the answer as plain text, the command or question that waits, or the limit message. */
+  detail: string | null
+  /** When it ended (ISO). */
+  at: string
 }
 
 /** A tool Claude runs in a session, as Claude Code's hooks tell it (see `TerminalInfo.hooks`). */

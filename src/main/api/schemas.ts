@@ -238,6 +238,11 @@ export const schemas: Record<string, Schema> = {
     },
     subagents: { type: 'integer', minimum: 0, description: 'Laufende Subagents der Session (nur mit hooks)' },
     compacting: { type: 'boolean', description: 'Claude Code fasst gerade den Verlauf zusammen (nur mit hooks)' },
+    turn: {
+      ...nullable(ref('TerminalTurn')),
+      description: 'Wie der letzte Turn der Session endete. Bleibt, bis der nächste beginnt, auch wenn der Tab angezeigt wird',
+    },
+    prompt: { ...nullable(str), description: 'Anfang des letzten Prompts auf einer Zeile (nur mit hooks)' },
     attention: {
       ...nullable({ type: 'string', enum: ['done', 'input', 'limit'] }),
       description:
@@ -269,6 +274,19 @@ export const schemas: Record<string, Schema> = {
       ...nullable(ref('SessionWorktree')),
       description: 'Git-Worktree, in dem die Session arbeitet (claude --worktree); cwd bleibt der Startordner',
     },
+  }),
+  TerminalTurn: object({
+    kind: {
+      type: 'string',
+      enum: ['done', 'input', 'limit'],
+      description: 'done = Antwort fertig, input = wartet auf Erlaubnis, Antwort oder Freigabe, limit = Nutzungslimit',
+    },
+    tool: { ...nullable(str), description: 'Bei input, worauf Claude wartet, z. B. Bash, AskUserQuestion, ExitPlanMode' },
+    detail: {
+      ...nullable(str),
+      description: 'Anfang der Antwort als Text, der wartende Befehl oder die Frage, oder die Meldung zum Limit',
+    },
+    at: { ...dateTime, description: 'Wann der Turn endete' },
   }),
   TerminalActivity: object({
     tool: { type: 'string', description: 'z. B. Bash, Edit oder mcp__claude-manager__browser_click' },

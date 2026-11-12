@@ -1,7 +1,9 @@
 import { tryOnScopeDispose, useEventListener } from '@vueuse/core'
 import { useRouter } from 'vue-router'
+import { toast } from 'vue-sonner'
 import { createDefaultSettings } from '@shared/defaults'
 import { matchBrowserShortcut, matchShortcut, type Shortcut } from '@shared/shortcuts'
+import { nextWaiting } from '@/lib/overview'
 import { useBrowsersStore } from '@/stores/browsers'
 import { useSettingsStore } from '@/stores/settings'
 import { useTerminalsStore } from '@/stores/terminals'
@@ -105,6 +107,14 @@ export function useShortcuts() {
       case 'toggle-file-tree':
         fileTree.toggle()
         break
+      case 'next-waiting': {
+        const id = nextWaiting(terminals.terminals, terminals.keyboardTerminal)
+        if (id) {
+          terminals.activate(id)
+          showTerminals()
+        } else toast('Kein Tab wartet auf dich')
+        break
+      }
       case 'browser-address':
         activeBrowser()?.focusAddress()
         break

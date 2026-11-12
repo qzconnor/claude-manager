@@ -43,7 +43,7 @@ vi.mock('../window/tray', () => ({ resourceIcon: (name: string) => `icon:${name}
 
 import { writeJsonAtomic } from '../lib/json-file'
 import type { AccountService } from './account-service'
-import { NotificationService, plainText } from './notification-service'
+import { NotificationService } from './notification-service'
 import type { SettingsService } from './settings-service'
 import type { TerminalService, TurnEnd } from './terminal-service'
 import type { UsageService } from './usage-service'
@@ -151,6 +151,8 @@ function terminal(overrides: Partial<TerminalInfo> = {}): TerminalInfo {
     activity: null,
     subagents: 0,
     compacting: false,
+    turn: null,
+    prompt: null,
     ...overrides,
   }
 }
@@ -635,29 +637,6 @@ describe('finished turns', () => {
     await start()
     changeSettings({ unreadDot: false })
     expect(setAttention.mock.calls).toEqual([['t1', null]])
-  })
-})
-
-describe('plainText', () => {
-  it('turns Markdown into one line of text', () => {
-    expect(
-      plainText('# Fertig\n\n- **Tests** laufen\n- Siehe [Doku](https://example.com) und `npm test`\n> Hinweis\n1. __eins__'),
-    ).toBe('Fertig Tests laufen Siehe Doku und npm test Hinweis eins')
-  })
-
-  it('leaves out code blocks, also an unclosed one', () => {
-    expect(plainText('Vorher\n```ts\nconst a = 1\n```\nNachher')).toBe('Vorher Nachher')
-    expect(plainText('Text\n```\nnot closed')).toBe('Text')
-  })
-
-  it('keeps the alt text of images', () => {
-    expect(plainText('![Diagramm](img.png)')).toBe('Diagramm')
-  })
-
-  it('is null without text', () => {
-    expect(plainText(null)).toBeNull()
-    expect(plainText('')).toBeNull()
-    expect(plainText('```\ncode only\n```')).toBeNull()
   })
 })
 

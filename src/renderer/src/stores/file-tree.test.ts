@@ -35,6 +35,8 @@ function session(id: string, sessionId: string | null): TerminalInfo {
     activity: null,
     subagents: 0,
     compacting: false,
+    turn: null,
+    prompt: null,
   }
 }
 

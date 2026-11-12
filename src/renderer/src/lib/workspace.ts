@@ -15,7 +15,7 @@ import type { PaneNode } from '@shared/types'
  */
 export const BROWSER_TAB = 'view:browser'
 
-export const PAGES = ['sessions', 'artifacts', 'dashboard', 'accounts', 'settings'] as const
+export const PAGES = ['overview', 'sessions', 'artifacts', 'dashboard', 'accounts', 'settings'] as const
 export type PageName = (typeof PAGES)[number]
 
 const PAGE_PREFIX = 'page:'

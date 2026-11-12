@@ -5,6 +5,7 @@ import type { Account, AccountUsage, AttentionKind, NotificationSettings, Termin
 import { isPlainObject, limitLabel, standardTwin } from '@shared/utils'
 import { readJson, writeJsonAtomic } from '../lib/json-file'
 import { nearLimits, type NearLimit, type WarnedWindows } from '../lib/near-limit'
+import { oneLine, plainText } from '../lib/plain-text'
 import { resourceIcon } from '../window/tray'
 import type { AccountService } from './account-service'
 import type { AutoSwitch } from './auto-switch'
@@ -308,25 +309,8 @@ function describe(terminal: TerminalInfo, turn: TurnEnd, preview: boolean): { ti
   return { title: 'Claude ist fertig', detail: preview ? shorten(plainText(turn.detail)) : null }
 }
 
-/** Markdown of an answer as plain text on one line; code blocks are left out. */
-export function plainText(markdown: string | null): string | null {
-  if (!markdown) return null
-  const text = markdown
-    .replace(/```[\s\S]*?(```|$)/g, ' ')
-    .replace(/`([^`\n]*)`/g, '$1')
-    .replace(/!?\[([^\]\n]*)\]\([^)\n]*\)/g, '$1')
-    .replace(/^[ \t]{0,3}(#{1,6}[ \t]+|[-*+][ \t]+|\d+[.)][ \t]+|>[ \t]?)/gm, '')
-    .replace(/\*\*([^*\n]+)\*\*/g, '$1')
-    .replace(/__([^_\n]+)__/g, '$1')
-    .replace(/\s+/g, ' ')
-    .trim()
-  return text || null
-}
-
 function shorten(text: string | null): string | null {
-  const single = text?.replace(/\s+/g, ' ').trim()
-  if (!single) return null
-  return single.length > MAX_DETAIL_CHARS ? `${single.slice(0, MAX_DETAIL_CHARS - 1)}…` : single
+  return oneLine(text, MAX_DETAIL_CHARS)
 }
 
 /** "um 19:40", on another day "Fr. 19:40". */

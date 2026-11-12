@@ -643,6 +643,65 @@ describe('the end of a turn, told by hooks', () => {
     const [terminals] = changed.mock.lastCall as [TerminalInfo[]]
     expect(terminals.find((t) => t.id === id)?.activity).toMatchObject({ tool: 'Grep', detail: 'TODO' })
   })
+  it('keeps how the turn ended and the prompt, also once the tab was shown, until the next turn', async () => {
+    hook({ kind: 'prompt', prompt: 'Teste alles' })
+    expect(own.get(id).prompt).toBe('Teste alles')
+    pty.output(BUSY)
+    await vi.advanceTimersByTimeAsync(1000)
+    stop('# Fertig\n\nAlle **Tests** laufen.\n\n```sh\nnpm test\n```')
+    pty.output(IDLE)
+    expect(own.get(id).turn).toEqual({ kind: 'done', tool: null, detail: 'Fertig Alle Tests laufen.', at: new Date().toISOString() })
+    own.setAttention(id, null)
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(own.get(id).turn?.kind).toBe('done')
+
+    hook({ kind: 'prompt', prompt: 'Noch eins' })
+    expect(own.get(id).turn).toBeNull()
+    expect(own.get(id).prompt).toBe('Noch eins')
+  })
+
+  it('keeps a wait for the user until it is answered', () => {
+    hook({ kind: 'prompt' })
+    pty.output(BUSY)
+    hook({ kind: 'input', tool: 'Bash', detail: 'npm test' })
+    pty.output(IDLE)
+    expect(own.get(id).turn).toMatchObject({ kind: 'input', tool: 'Bash', detail: 'npm test' })
+    // Another tool of a subagent goes on: the session itself still waits.
+    hook({ kind: 'tool', tool: 'Read', detail: 'a.ts', agent: 'a1' })
+    expect(own.get(id).turn?.kind).toBe('input')
+    hook({ kind: 'toolDone', agent: null })
+    expect(own.get(id).turn).toBeNull()
+  })
+
+  it('forgets an end the transcript told with the next prompt', async () => {
+    hook({ kind: 'prompt' })
+    pty.output(BUSY)
+    // Esc: no Stop comes, the end is the transcript's.
+    pty.output(IDLE)
+    await vi.advanceTimersByTimeAsync(9000)
+    expect(own.get(id).turn?.kind).toBe('done')
+    hook({ kind: 'prompt', prompt: 'Weiter' })
+    expect(own.get(id).turn).toBeNull()
+  })
+
+  it('forgets the end of the turn once Claude works again, also without a hook', () => {
+    hook({ kind: 'prompt' })
+    pty.output(BUSY)
+    stop('Fertig.')
+    pty.output(IDLE)
+    expect(own.get(id).turn).not.toBeNull()
+    pty.output(BUSY)
+    expect(own.get(id).turn).toBeNull()
+  })
+
+  it('forgets prompt and end of the conversation before /clear', () => {
+    const first = '11111111-2222-4333-8444-555555555555'
+    own.applyHook(id, { sessionId: first, event: { kind: 'prompt', prompt: 'Alt' } })
+    own.applyHook(id, { sessionId: first, event: { kind: 'stop', message: 'Fertig.', background: false } })
+    expect(own.get(id)).toMatchObject({ prompt: 'Alt', turn: { kind: 'done' } })
+    own.applyHook(id, { sessionId: '99999999-2222-4333-8444-555555555555', event: { kind: 'compact', running: false } })
+    expect(own.get(id)).toMatchObject({ prompt: null, turn: null })
+  })
 })
 
 // Without hooks (or when they tell nothing) the transcript tells why the title turned idle.

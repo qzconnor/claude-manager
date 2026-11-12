@@ -25,6 +25,9 @@ describe('matchShortcut', () => {
     expect(matchShortcut(press({ key: 'A', shift: true }))).toEqual({ action: 'tab-search' })
     expect(matchShortcut(press({ key: 'F', shift: true }))).toEqual({ action: 'find' })
     expect(matchShortcut(press({ key: 'E', shift: true }))).toEqual({ action: 'toggle-file-tree' })
+    expect(matchShortcut(press({ key: 'J', shift: true }))).toEqual({ action: 'next-waiting' })
+    // Without Shift it is a new line in Claude Code.
+    expect(matchShortcut(press({ key: 'j' }))).toBeNull()
     expect(matchShortcut(press({ key: 'Tab', shift: true }))).toEqual({ action: 'previous-tab' })
   })
 

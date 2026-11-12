@@ -38,6 +38,8 @@ function terminal(id: string, mode: TerminalMode = 'session'): TerminalInfo {
     activity: null,
     subagents: 0,
     compacting: false,
+    turn: null,
+    prompt: null,
   }
 }
 

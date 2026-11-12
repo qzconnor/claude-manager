@@ -55,6 +55,7 @@ import {
   type TitleScan,
   worktreeAt,
 } from '../lib/session-files'
+import { oneLine, plainText } from '../lib/plain-text'
 import { awaitEnd, forceKill } from '../lib/process-end'
 import { TrimmedModes } from '../lib/terminal-modes'
 import { claudeActivity, TitleReader } from '../lib/terminal-title'
@@ -92,6 +93,8 @@ const TURN_END_TIMEOUT_MS = 8000
 const HOOK_END_GRACE_MS = 1500
 /** Changes the hooks report while Claude works (one tool after the other) go out together. */
 const HOOK_CHANGES_MS = 100
+/** How much of the end of a turn a tab keeps (`TerminalInfo.turn`). */
+const MAX_TURN_DETAIL_CHARS = 400
 /** Arguments with which Claude Code picks the session itself. */
 const SESSION_CHOICE_ARG_RE = /^(-c|--continue|-r|--resume|--session-id|--from-pr|--teleport)(=|$)/
 
@@ -436,6 +439,8 @@ export class TerminalService extends TypedEmitter<Events> {
       activity: null,
       subagents: 0,
       compacting: false,
+      turn: null,
+      prompt: null,
     }
     let markExited!: () => void
     const record = newRecord(info, defaultTitle, proc, new Promise((resolve) => (markExited = resolve)))
@@ -504,6 +509,8 @@ export class TerminalService extends TypedEmitter<Events> {
       activity: null,
       subagents: 0,
       compacting: false,
+      turn: null,
+      prompt: null,
     }
     this.add(newRecord(info, defaultTitle, null, Promise.resolve()), options)
     this.emitChanged()
@@ -936,6 +943,9 @@ export class TerminalService extends TypedEmitter<Events> {
       return
     }
     const { info } = record
+    // Another conversation: the last one's prompt and end are not this one's.
+    info.prompt = null
+    info.turn = null
     const name = this.names?.get(sessionId)
     if (name === undefined) return
     if (name !== null) {
@@ -1082,6 +1092,7 @@ export class TerminalService extends TypedEmitter<Events> {
       else record.busySince = Date.now()
       // A permission or question was answered (also through the API): it no longer waits.
       if (info.attention === 'input') info.attention = null
+      info.turn = null
     } else if (record.hooks?.ended) {
       // The hooks told already how the turn ended, or that it waits for the user.
       record.turnEnding = false
@@ -1102,6 +1113,7 @@ export class TerminalService extends TypedEmitter<Events> {
     const record = this.terminals.get(id)
     if (!record || record.info.mode !== 'session' || record.info.status !== 'running') return
     const { info } = record
+    const wasEnded = record.hooks?.ended === true
     const { state, end } = applyHookCall(record.hooks ?? newHookState(), call, new Date().toISOString())
     // The turn starts with the prompt; a short one may end before the title ever shows it.
     if (call.event.kind === 'prompt' && !info.busy) record.busySince = Date.now()
@@ -1112,6 +1124,15 @@ export class TerminalService extends TypedEmitter<Events> {
       changed = true
       // A new session (`/clear`): its title, worktree and limit.
       this.trackSoon()
+    }
+    if (call.event.kind === 'prompt') {
+      info.prompt = call.event.prompt ?? null
+      changed = true
+    }
+    // The session goes on (a prompt, an answered permission): how the last turn ended is past.
+    if (info.turn && (call.event.kind === 'prompt' || (wasEnded && !state.ended))) {
+      info.turn = null
+      changed = true
     }
     const soon = this.showHookState(record, state)
     if (end) this.endTurnByHook(record, end)
@@ -1143,7 +1164,7 @@ export class TerminalService extends TypedEmitter<Events> {
     const since = record.busySince
     const busyMs = since ? Date.now() - since : 0
     if (end.kind !== 'limit') {
-      this.emit('turnEnded', record.info.id, { ...end, busyMs })
+      this.finishTurn(record, { ...end, busyMs })
       return
     }
     // When the limit resets is only in the transcript, which Claude Code writes a little later.
@@ -1163,7 +1184,19 @@ export class TerminalService extends TypedEmitter<Events> {
       }
     }
     if (!current()) return
-    this.emit('turnEnded', record.info.id, { kind: 'limit', tool: null, detail: record.info.limit?.message ?? message, busyMs })
+    this.finishTurn(record, { kind: 'limit', tool: null, detail: record.info.limit?.message ?? message, busyMs })
+  }
+
+  /** Keeps how the turn ended in the tab (`TerminalInfo.turn`) and tells it: notifications, the unread dot. */
+  private finishTurn(record: TerminalRecord, end: TurnEnd): void {
+    record.info.turn = {
+      kind: end.kind,
+      tool: end.tool,
+      detail: oneLine(end.kind === 'done' ? plainText(end.detail) : end.detail, MAX_TURN_DETAIL_CHARS),
+      at: new Date().toISOString(),
+    }
+    this.emitChanged()
+    this.emit('turnEnded', record.info.id, end)
   }
 
   /**
@@ -1206,7 +1239,7 @@ export class TerminalService extends TypedEmitter<Events> {
       if (turn === null || !current()) continue
       record.turnEnding = false
       // Stopped by the user (Esc, or a permission declined): they are at the tab already. Its subagents stopped too.
-      if (turn !== 'interrupted') this.emit('turnEnded', record.info.id, { ...turn, busyMs: since ? idleAt - since : 0 })
+      if (turn !== 'interrupted') this.finishTurn(record, { ...turn, busyMs: since ? idleAt - since : 0 })
       else if (record.hooks && this.showHookState(record, interruptedHookState(record.hooks))) this.emitChanged()
       return
     }

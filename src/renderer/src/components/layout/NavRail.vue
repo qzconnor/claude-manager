@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { GaugeIcon, HistoryIcon, SearchIcon, SettingsIcon, ShapesIcon, UsersIcon } from '@lucide/vue'
+import { GaugeIcon, HistoryIcon, LayoutGridIcon, SearchIcon, SettingsIcon, ShapesIcon, UsersIcon } from '@lucide/vue'
 import { computed, type Component } from 'vue'
 import TerminalTabs from '@/components/terminal/TerminalTabs.vue'
 import { Separator } from '@/components/ui/separator'
+import { overviewGroups } from '@/lib/overview'
 import { cn } from '@/lib/utils'
 import { UPDATES_ROUTE } from '@/router'
 import { useSettingsStore } from '@/stores/settings'
+import { useTerminalsStore } from '@/stores/terminals'
 import { useUiStore } from '@/stores/ui'
 import { useUpdatesStore } from '@/stores/updates'
 import NavRailButton from './NavRailButton.vue'
@@ -19,6 +21,7 @@ interface NavItem {
 
 // No entry for the terminals: their tabs lead there, in the title bar or in the sidebar.
 const primary: NavItem[] = [
+  { name: 'overview', label: 'Übersicht', icon: LayoutGridIcon },
   { name: 'dashboard', label: 'Usage-Dashboard', icon: GaugeIcon },
   { name: 'sessions', label: 'Sessions', icon: HistoryIcon },
   { name: 'artifacts', label: 'Artefakte', icon: ShapesIcon },
@@ -28,6 +31,14 @@ const primary: NavItem[] = [
 const settings = useSettingsStore()
 const ui = useUiStore()
 const updates = useUpdatesStore()
+const terminals = useTerminalsStore()
+
+/** Tabs in which Claude waits for the user: a dot on the overview (Ctrl+Shift+J goes to them). */
+const waiting = computed(() => overviewGroups(terminals.terminals).waiting.length)
+const tooltipOf = (item: NavItem) =>
+  item.name === 'overview' && waiting.value
+    ? `Übersicht · ${waiting.value === 1 ? 'Ein Tab wartet' : `${waiting.value} Tabs warten`} auf dich (Strg+Umschalt+J)`
+    : item.tooltip
 
 /** With the tabs in the sidebar the rail widens, labels its icons and lists the tabs below them. */
 const expanded = computed(() => settings.settings.appearance.tabPosition === 'sidebar')
@@ -67,12 +78,19 @@ const settingsTooltip = computed(() =>
         <NavRailButton
           :label="item.label"
           :icon="item.icon"
-          :tooltip="item.tooltip"
+          :tooltip="tooltipOf(item)"
           :expanded="expanded"
           :href="href"
           :active="isActive"
           @click="navigate"
-        />
+        >
+          <template v-if="item.name === 'overview' && waiting">
+            <span v-if="expanded" class="mr-1 rounded-full bg-warning px-1.5 text-[0.7rem] leading-4 font-medium text-background tabular-nums">
+              {{ waiting }}
+            </span>
+            <span v-else class="absolute top-1 right-1 size-2 rounded-full bg-warning" />
+          </template>
+        </NavRailButton>
       </RouterLink>
     </div>
 

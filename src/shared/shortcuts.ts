@@ -22,6 +22,8 @@ export type ShortcutAction =
   | 'split-down'
   | 'focus-pane'
   | 'toggle-file-tree'
+  /** To the next tab in which Claude waits for the user (see the overview). */
+  | 'next-waiting'
   | 'browser-address'
   | 'browser-reload'
   | 'browser-reload-hard'
@@ -92,6 +94,8 @@ function matchAction(e: ShortcutKey): ShortcutAction | null {
     if (key === 'f') return 'find'
     // Like the Explorer in VS Code.
     if (key === 'e') return 'toggle-file-tree'
+    // „Jump“: Ctrl+J without Shift stays with the terminal (a new line in Claude Code).
+    if (key === 'j') return 'next-waiting'
     if (e.key === 'Tab') return 'previous-tab'
     return null
   }

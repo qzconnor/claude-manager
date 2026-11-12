@@ -2,6 +2,7 @@ import { isAbsolute, resolve } from 'node:path'
 import type { FileTouch, TerminalActivity } from '@shared/types'
 import { isPlainObject } from '@shared/utils'
 import { toolSummary } from '../workers/transcript-parser'
+import { oneLine } from './plain-text'
 import { SESSION_ID_RE, waitingDetail } from './session-files'
 import { shellFiles } from './shell-files'
 
@@ -95,7 +96,8 @@ export function readUserSettings(value: string, cwd: string, readFile: (path: st
 
 /** One hook call of Claude Code, as far as the app needs it. */
 export type HookEvent =
-  | { kind: 'prompt' }
+  /** The user sent a prompt: its beginning on one line. */
+  | { kind: 'prompt'; prompt?: string }
   /** A tool starts; `agent`: the subagent it runs in, null in the session's own turn. */
   | { kind: 'tool'; tool: string; detail: string | null; agent: string | null }
   | { kind: 'toolDone'; agent: string | null }
@@ -106,6 +108,9 @@ export type HookEvent =
   | { kind: 'failure'; error: string; message: string | null }
   | { kind: 'subagent'; id: string; running: boolean }
   | { kind: 'compact'; running: boolean }
+
+/** How much of a prompt the app keeps, for the overview of the tabs. */
+const MAX_PROMPT_CHARS = 300
 
 /** Tools that wait for the user by themselves, without a permission prompt. */
 const ASKING_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode'])
@@ -247,8 +252,10 @@ function parseEvent(body: Record<string, unknown>): HookEvent | null {
   const tool = text(body.tool_name)
   const agent = text(body.agent_id)
   switch (body.hook_event_name) {
-    case 'UserPromptSubmit':
-      return { kind: 'prompt' }
+    case 'UserPromptSubmit': {
+      const prompt = oneLine(text(body.prompt), MAX_PROMPT_CHARS)
+      return prompt ? { kind: 'prompt', prompt } : { kind: 'prompt' }
+    }
     case 'PreToolUse':
       if (!tool) return null
       if (ASKING_TOOLS.has(tool)) return { kind: 'input', tool, detail: text(waitingDetail(tool, body.tool_input)) }

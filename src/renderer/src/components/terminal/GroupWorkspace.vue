@@ -20,6 +20,7 @@ import { useUiStore } from '@/stores/ui'
 import AccountsView from '@/views/AccountsView.vue'
 import ArtifactsView from '@/views/ArtifactsView.vue'
 import DashboardView from '@/views/DashboardView.vue'
+import OverviewView from '@/views/OverviewView.vue'
 import SessionsView from '@/views/SessionsView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import BrowserBar from './BrowserBar.vue'
@@ -51,6 +52,7 @@ const { width: rootWidth, height: rootHeight } = useElementSize(root)
 const treeSide = computed(() => settings.settings.appearance.fileTreeSide)
 
 const PAGE_VIEWS: Record<PageName, Component> = {
+  overview: OverviewView,
   sessions: SessionsView,
   artifacts: ArtifactsView,
   dashboard: DashboardView,
