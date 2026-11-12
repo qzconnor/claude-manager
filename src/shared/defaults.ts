@@ -112,6 +112,7 @@ export function createDefaultSettings(platform = 'win32'): AppSettings {
       hideSecretsFromCommands: false,
       browserTools: true,
       browserToolsAllowed: true,
+      browserSensitiveAllowed: false,
       noClaudeInChrome: false,
       claudeInChromeHintDismissed: false,
       appContext: true,

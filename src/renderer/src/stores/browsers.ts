@@ -10,6 +10,7 @@ import type {
   BrowserLoginRequest,
   ClaudeInChromeStatus,
 } from '@shared/types'
+import { trimLog } from '@shared/browser'
 import { useTerminalsStore } from './terminals'
 
 /** What a browser pane shows of its page, for its tab. */
@@ -80,7 +81,7 @@ export const useBrowsersStore = defineStore('browsers', () => {
     if (index >= 0) log[index] = activity
     else {
       log.push(activity)
-      if (log.length > LOG_LIMIT) log.splice(0, log.length - LOG_LIMIT)
+      trimLog(log, LOG_LIMIT)
     }
   })
   window.api.browser.onHighlight((id, highlight) => highlights.set(id, { ...highlight, seq: ++highlightCount }))

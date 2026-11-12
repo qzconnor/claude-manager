@@ -25,6 +25,12 @@ export interface ToolDefinition<P> {
   readOnly?: boolean
   /** It deletes something of the user's (the client may ask before it runs). */
   destructive?: boolean
+  /**
+   * It reaches beyond what the page shows: local files, the site's cookies and storage, the contents
+   * of its requests, scripts in it, its data. Claude asks before it unless the settings allow it, and
+   * the log marks it (and keeps it when it drops old lines).
+   */
+  sensitive?: boolean
   kind: string
   whileDialog?: boolean
   parse(args: Args): P

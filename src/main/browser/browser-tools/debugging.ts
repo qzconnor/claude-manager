@@ -122,6 +122,7 @@ export const debuggingTools: ToolDefinition<never>[] = [
     },
     required: ['id'],
     readOnly: true,
+    sensitive: true,
     kind: 'network',
     whileDialog: true,
     parse: (args) => {
@@ -230,6 +231,7 @@ export const debuggingTools: ToolDefinition<never>[] = [
       reload: { type: 'boolean', description: 'Load the page again afterwards (default true).' },
     },
     destructive: true,
+    sensitive: true,
     kind: 'clear',
     parse: (args) => {
       const what = args.what === undefined || args.what === null ? [...SITE_DATA] : stringList(args, 'what', 3)

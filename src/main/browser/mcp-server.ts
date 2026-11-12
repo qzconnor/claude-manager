@@ -7,7 +7,7 @@ import type { SettingsService } from '../services/settings-service'
 import type { SessionArgsProvider } from '../services/terminal-service'
 import { allowedAppToolNames, appInstructions, appToolGroup, enabledAppGroups, type AppTools } from './app-tools'
 import type { BrowserTools } from './browser-tools'
-import { BROWSER_INSTRUCTIONS } from './browser-tools'
+import { BROWSER_INSTRUCTIONS, SENSITIVE_BROWSER_TOOLS } from './browser-tools'
 import { handleRpc, isRequest, PARSE_ERROR, rpcError, type McpServerSpec } from './mcp-protocol'
 
 /** The name Claude Code knows the server by; its tools are `mcp__claude-manager__browser_…`, `mcp__claude-manager__limits` … */
@@ -32,13 +32,15 @@ export function mcpLaunchArgs(configFile: string, allowedTools: string[], noChro
 }
 
 /**
- * The tools a session may use without asking: the browser's when the settings allow it, the app's
- * reading tools whenever they are on, its shell tools only when allowed too; the theme tools that
- * change something always ask.
+ * The tools a session may use without asking: the browser's when the settings allow it (those that
+ * reach beyond the page, like uploads and cookies, only when allowed too), the app's reading tools
+ * whenever they are on, its shell tools only when allowed too; the theme tools that change something
+ * always ask.
  */
 export function allowedToolNames(claude: ClaudeSettings, browserToolNames: string[], appTools: boolean): string[] {
+  const browser = claude.browserTools && claude.browserToolsAllowed ? browserToolNames : []
   return [
-    ...(claude.browserTools && claude.browserToolsAllowed ? browserToolNames : []),
+    ...browser.filter((name) => claude.browserSensitiveAllowed || !SENSITIVE_BROWSER_TOOLS.has(name)),
     ...(appTools ? allowedAppToolNames(claude) : []),
   ]
 }

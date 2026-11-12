@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createDefaultSettings } from '@shared/defaults'
 import type { ClaudeSettings } from '@shared/types'
+import { SENSITIVE_BROWSER_TOOLS } from './browser-tools'
 import { allowedToolNames, askedAgain, mcpConfig, mcpLaunchArgs } from './mcp-server'
 import { pageCall } from './page-scripts'
 
@@ -39,6 +40,31 @@ describe('allowedToolNames', () => {
   it('leaves the browser to ask when the settings say so, or when it is off', () => {
     expect(allowedToolNames(claude({ browserToolsAllowed: false }), browser, true)).toEqual(['limits', 'sessions_search', 'session_read', 'themes_list'])
     expect(allowedToolNames(claude({ browserTools: false }), browser, true)).not.toContain('browser_click')
+  })
+
+  it('lets the browser tools that reach beyond the page ask, unless they are allowed too', () => {
+    const tools = [
+      'browser_click',
+      'browser_file_upload',
+      'browser_storage',
+      'browser_evaluate',
+      'browser_network_request',
+      'browser_clear_site_data',
+    ]
+    expect(allowedToolNames(claude(), tools, false)).toEqual(['browser_click'])
+    expect(allowedToolNames(claude({ browserSensitiveAllowed: true }), tools, false)).toEqual(tools)
+    // Asking for every step of the browser asks for these too.
+    expect(allowedToolNames(claude({ browserToolsAllowed: false, browserSensitiveAllowed: true }), tools, false)).toEqual([])
+  })
+
+  it('counts uploads, cookies, request contents, scripts and deleting site data as reaching beyond the page', () => {
+    expect([...SENSITIVE_BROWSER_TOOLS].sort()).toEqual([
+      'browser_clear_site_data',
+      'browser_evaluate',
+      'browser_file_upload',
+      'browser_network_request',
+      'browser_storage',
+    ])
   })
 
   it('allows the shells only when they are on and allowed', () => {

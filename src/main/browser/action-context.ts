@@ -137,4 +137,6 @@ export interface ActionStep {
   label: string
   /** The action also works while the page shows a dialog (which blocks the page's scripts). */
   whileDialog?: boolean
+  /** It reaches beyond what the page shows (see `sensitive` of the tool): the log marks it. */
+  sensitive?: boolean
 }

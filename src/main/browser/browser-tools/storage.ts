@@ -52,6 +52,7 @@ export const storageTools: ToolDefinition<never>[] = [
     },
     // delete and clear take what a site kept, like browser_clear_site_data.
     destructive: true,
+    sensitive: true,
     kind: 'storage',
     parse: (args) => {
       const action = oneOf(args, 'action', ACTIONS, 'get')

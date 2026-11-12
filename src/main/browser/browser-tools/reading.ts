@@ -143,11 +143,13 @@ export const readingTools: ToolDefinition<never>[] = [
     description: 'Runs JavaScript in the page and returns the result as JSON: a function like "() => document.title" or an expression. Promises are awaited.',
     properties: { function: { type: 'string', description: 'The function or expression.' } },
     required: ['function'],
+    sensitive: true,
     kind: 'evaluate',
     parse: (args) => ({ code: requiredString(args, 'function', 100_000) }),
     label: () => 'Führt ein Skript aus',
     run: async (ctx, { code }) => {
       ctx.highlight('Führt ein Skript aus')
+      ctx.note(cut(code.trim(), 300))
       const expression = `(async () => { const __value = (${code}\n); return typeof __value === 'function' ? await __value() : await __value })()`
       type Evaluation = {
         result: { type: string; value?: unknown; description?: string; unserializableValue?: string }

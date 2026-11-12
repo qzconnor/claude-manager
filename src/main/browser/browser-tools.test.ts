@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import type { ActionStep } from './action-context'
+import type { BrowserControl } from './browser-control'
+import { BrowserTools } from './browser-tools'
 import { NO_EMULATION } from '@shared/browser'
 import { describeEmulation, mergePermissions, parseEmulation } from './browser-tools/emulation-args'
 import { bodyText, formatBytes, headerLines, requestBodyText } from './browser-tools/network-format'
@@ -220,5 +223,26 @@ describe('cookieLine', () => {
     const line = cookieLine(cookie({ name: 'user_session', value: 'secret-token', httpOnly: true, sameSite: 'Lax' }), 20_000)
     expect(line).toBe('- user_session (value withheld, 12 characters) (domain .example.com, httpOnly, secure, SameSite=Lax, session)')
     expect(line).not.toContain('secret-token')
+  })
+})
+
+describe('BrowserTools.call', () => {
+  /** The step a tool hands to the browser's control, without running it. */
+  async function stepOf(name: string, args: Record<string, unknown>): Promise<ActionStep> {
+    let step: ActionStep | null = null
+    const control = {
+      perform: async (_sessionId: string, given: ActionStep) => {
+        step = given
+        throw new Error('not run')
+      },
+    }
+    await expect(new BrowserTools(control as unknown as BrowserControl).call('session', name, args)).rejects.toThrow('not run')
+    return step!
+  }
+
+  it('marks the steps that reach beyond the page for the log', async () => {
+    expect((await stepOf('browser_evaluate', { function: '() => 1' })).sensitive).toBe(true)
+    expect((await stepOf('browser_storage', {})).sensitive).toBe(true)
+    expect((await stepOf('browser_snapshot', {})).sensitive).toBe(false)
   })
 })

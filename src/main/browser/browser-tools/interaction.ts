@@ -248,6 +248,7 @@ export const interactionTools: ToolDefinition<never>[] = [
       element,
     },
     required: ['paths'],
+    sensitive: true,
     kind: 'upload',
     parse: (args) => {
       const paths = stringList(args, 'paths', MAX_UPLOAD_FILES)
@@ -265,6 +266,8 @@ export const interactionTools: ToolDefinition<never>[] = [
         if (problem) throw new ToolError(problem)
       }
       const names = p.paths.map((path) => path.split(/[\\/]/).pop()).join(', ')
+      // The log says which files left the computer.
+      ctx.note(p.paths.join(', '))
       if (p.ref) {
         if (isFrameRef(p.ref)) throw new ToolError('This file input is inside a frame of another site; click it and use browser_file_upload without ref.')
         const locator = await locate(ctx, p.ref)

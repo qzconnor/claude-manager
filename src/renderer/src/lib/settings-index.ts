@@ -214,6 +214,11 @@ const TREE = [
         fields: [
           { id: 'claude.browserTools', label: 'Browser für Claude-Sessions', keywords: 'MCP Server Werkzeuge Tools' },
           { id: 'claude.browserToolsAllowed', label: 'Ohne Nachfrage bedienen', keywords: 'Erlaubnis Berechtigung fragen' },
+          {
+            id: 'claude.browserSensitiveAllowed',
+            label: 'Auch heikle Werkzeuge ohne Nachfrage',
+            keywords: 'Erlaubnis fragen Dateien hochladen Upload Cookies Speicher Storage Netzwerk Anfragen Skript JavaScript Seitendaten löschen',
+          },
           { id: 'claude.noClaudeInChrome', label: 'Ohne Claude in Chrome', keywords: 'Erweiterung no-chrome' },
           { id: 'claude.clearBrowserData', label: 'Browserdaten löschen', keywords: 'Cookies Cache abmelden Logins' },
         ],

@@ -329,6 +329,11 @@ export interface BrowserActivity {
   /** In words, e.g. „Klickt auf „Anmelden““. */
   label: string
   status: BrowserActivityStatus
+  /**
+   * Claude reached beyond what the page shows: uploaded files, the site's cookies or storage, the
+   * contents of a request, a script, its data deleted. The log keeps these lines longest.
+   */
+  sensitive: boolean
   /** The error, or what came out of it. */
   detail: string | null
   durationMs: number | null
@@ -1063,6 +1068,11 @@ export interface ClaudeSettings {
   browserTools: boolean
   /** Claude Code uses the browser without asking before every action (`--allowedTools`). */
   browserToolsAllowed: boolean
+  /**
+   * Also the browser tools that reach beyond the page (uploads, cookies and storage, request contents,
+   * scripts, deleting site data) without asking; only with `browserToolsAllowed`.
+   */
+  browserSensitiveAllowed: boolean
   /**
    * Sessions the app starts with its browser run without Claude in Chrome (`--no-chrome`), so Claude
    * takes the app's browser instead of the user's Chrome. Claude Code's own setting stays as it is.

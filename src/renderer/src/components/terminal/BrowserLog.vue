@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CheckIcon, Trash2Icon, TriangleAlertIcon, XIcon } from '@lucide/vue'
+import { CheckIcon, ShieldAlertIcon, Trash2Icon, TriangleAlertIcon, XIcon } from '@lucide/vue'
 import { computed, nextTick, ref, watch } from 'vue'
 import type { BrowserActivity } from '@shared/types'
 import { Button } from '@/components/ui/button'
@@ -15,8 +15,17 @@ const browsers = useBrowsersStore()
 const list = ref<HTMLElement | null>(null)
 /** A screenshot shown in full size; the others as small pictures. */
 const enlarged = ref<number | null>(null)
+/** Only what reached beyond the page: uploads, cookies, request contents, scripts, deleted data. */
+const onlySensitive = ref(false)
 
-const entries = computed<BrowserActivity[]>(() => browsers.logs.get(props.terminalId) ?? [])
+const all = computed<BrowserActivity[]>(() => browsers.logs.get(props.terminalId) ?? [])
+const sensitiveCount = computed(() => all.value.filter((entry) => entry.sensitive).length)
+const entries = computed(() => (onlySensitive.value ? all.value.filter((entry) => entry.sensitive) : all.value))
+
+// Nothing left to filter for: the whole log again.
+watch(sensitiveCount, (count) => {
+  if (count === 0) onlySensitive.value = false
+})
 
 const time = (at: string) => new Date(at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
@@ -42,14 +51,32 @@ watch(
   <aside class="flex min-h-0 flex-col text-xs" aria-label="Protokoll von Claude">
     <div class="flex h-8 shrink-0 items-center gap-1 border-b pr-1 pl-3">
       <span class="font-medium">Protokoll</span>
-      <span class="text-muted-foreground tabular-nums">{{ entries.length }}</span>
+      <span class="text-muted-foreground tabular-nums">{{ all.length }}</span>
+      <Button
+        v-if="sensitiveCount > 0"
+        variant="ghost"
+        size="xs"
+        :class="
+          cn('ml-auto gap-1 px-1.5 tabular-nums', onlySensitive && 'bg-warning/15 text-warning hover:bg-warning/20 hover:text-warning')
+        "
+        :aria-pressed="onlySensitive"
+        v-tooltip="
+          onlySensitive
+            ? 'Wieder alles zeigen'
+            : 'Nur heikle Zugriffe: hochgeladene Dateien, Cookies und Speicher, Inhalte von Anfragen, Skripte, gelöschte Daten'
+        "
+        @click="onlySensitive = !onlySensitive"
+      >
+        <ShieldAlertIcon />
+        {{ sensitiveCount }}
+      </Button>
       <Button
         variant="ghost"
         size="icon-xs"
-        class="ml-auto"
+        :class="sensitiveCount > 0 ? '' : 'ml-auto'"
         aria-label="Protokoll leeren"
         v-tooltip="'Protokoll leeren'"
-        :disabled="entries.length === 0"
+        :disabled="all.length === 0"
         @click="browsers.clearLog(terminalId)"
       >
         <Trash2Icon />
@@ -75,7 +102,14 @@ watch(
         </span>
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-2">
-            <span :class="cn('min-w-0 flex-1 break-words', entry.kind === 'control' && 'text-muted-foreground italic')">{{ entry.label }}</span>
+            <span :class="cn('min-w-0 flex-1 break-words', entry.kind === 'control' && 'text-muted-foreground italic')">
+              <ShieldAlertIcon
+                v-if="entry.sensitive"
+                class="mr-1 -mt-0.5 inline size-3.5 text-warning"
+                aria-label="Heikler Zugriff"
+                v-tooltip="'Heikler Zugriff: reicht über die Seite hinaus'"
+              />{{ entry.label }}
+            </span>
             <span class="shrink-0 text-[10px] text-muted-foreground tabular-nums">
               <template v-if="duration(entry.durationMs)">{{ duration(entry.durationMs) }} · </template>{{ time(entry.at) }}
             </span>

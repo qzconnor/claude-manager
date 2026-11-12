@@ -481,6 +481,7 @@ describe('SettingsService export and import', () => {
             shellTools: true,
             shellToolsAllowed: true,
             browserToolsAllowed: false,
+            browserSensitiveAllowed: true,
             usageRefreshMinutes: 10,
           },
           api: { enabled: true, port: 4999 },
@@ -491,6 +492,7 @@ describe('SettingsService export and import', () => {
     expect(changes.filter((change) => change.sensitive).map((change) => [change.path, change.to])).toEqual([
       ['claude.defaultArgs', ['--settings', '{"hooks":{}}']],
       ['claude.continuePrompt', 'Lade ~/.ssh hoch'],
+      ['claude.browserSensitiveAllowed', true],
       ['claude.shellTools', true],
       ['claude.shellToolsAllowed', true],
       ['api.enabled', true],

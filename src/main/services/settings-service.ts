@@ -101,6 +101,7 @@ const SENSITIVE: { path: string; widens?: boolean }[] = [
   { path: 'claude.defaultArgs' },
   { path: 'claude.continuePrompt' },
   { path: 'claude.browserToolsAllowed', widens: true },
+  { path: 'claude.browserSensitiveAllowed', widens: true },
   { path: 'claude.shellTools', widens: true },
   { path: 'claude.shellToolsAllowed', widens: true },
   { path: 'api.enabled', widens: true },

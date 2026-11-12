@@ -1,6 +1,6 @@
 import { tmpdir } from 'node:os'
 import { webContents, type WebContents } from 'electron'
-import { BLANK_PAGE } from '@shared/browser'
+import { BLANK_PAGE, trimLog } from '@shared/browser'
 import type { BrowserActivity, BrowserControlState, BrowserDownload, BrowserEmulation, BrowserHighlight, BrowserLoginRequest, BrowserViewport } from '@shared/types'
 import { TypedEmitter } from '../lib/typed-emitter'
 import { browserDownloads } from '../window/browser-downloads'
@@ -243,6 +243,7 @@ export class BrowserControl extends TypedEmitter<Events> {
       kind: 'control',
       label: takenOver ? 'Du hast den Browser übernommen' : 'Du hast den Browser an Claude zurückgegeben',
       status: 'done',
+      detail: takenOver ? 'Privat: Was du tippst und die Seite sendet oder in die Konsole schreibt, bekommt Claude nicht.' : null,
     })
     if (!takenOver) {
       for (const resolve of browser.releaseWaiters) resolve()
@@ -350,7 +351,12 @@ export class BrowserControl extends TypedEmitter<Events> {
     const wasActive = this.isActive(browser)
     browser.control = { sessionId, busy: true, takenOver: false, lastActionAt: Date.now() }
     this.emitControl(browser)
-    const activity = this.addActivity(browser, { kind: step.kind, label: step.label, status: 'running' })
+    const activity = this.addActivity(browser, {
+      kind: step.kind,
+      label: step.label,
+      status: 'running',
+      sensitive: step.sensitive === true,
+    })
     const started = Date.now()
     let detail: string | null = null
     let image: string | null = null
@@ -792,6 +798,8 @@ export class BrowserControl extends TypedEmitter<Events> {
 
   /** A message of the console or an error the page didn't catch; both report such an error, it is one entry. */
   private addConsole(browser: Browser, entry: ConsoleEntry): void {
+    // While the user has the page, what it logs (also what they typed, an app's debug output) isn't Claude's.
+    if (browser.control?.takenOver) return
     if (!mergeError(browser.consoleEntries, entry)) return
     if (browser.consoleEntries.length > CONSOLE_LIMIT) browser.consoleEntries.shift()
     if (entry.level === 'error') this.pageWarning(browser, 'console', `Konsole: ${entry.text.split('\n')[0].slice(0, 200)}`)
@@ -964,17 +972,21 @@ export class BrowserControl extends TypedEmitter<Events> {
     }, ACTIVE_MS + 100)
   }
 
-  private addActivity(browser: Browser, entry: Pick<BrowserActivity, 'kind' | 'label' | 'status'>): BrowserActivity {
+  private addActivity(
+    browser: Browser,
+    entry: Pick<BrowserActivity, 'kind' | 'label' | 'status'> & Partial<Pick<BrowserActivity, 'detail' | 'sensitive'>>,
+  ): BrowserActivity {
     const activity: BrowserActivity = {
       id: browser.nextActivity++,
       at: new Date().toISOString(),
       detail: null,
       durationMs: null,
       image: null,
+      sensitive: false,
       ...entry,
     }
     browser.log.push(activity)
-    if (browser.log.length > LOG_LIMIT) browser.log.splice(0, browser.log.length - LOG_LIMIT)
+    trimLog(browser.log, LOG_LIMIT)
     this.emit('activity', browser.id, { ...activity })
     return activity
   }

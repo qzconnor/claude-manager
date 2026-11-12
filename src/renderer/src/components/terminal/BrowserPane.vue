@@ -978,14 +978,18 @@ watch(
                 </span>
               </Transition>
               <span class="max-w-full truncate text-[11px] text-muted-foreground">
-                {{ control.takenOver ? 'Claude wartet' : 'Claude' }} · {{ control.sessionTitle }}
+                {{ control.takenOver ? 'Privat · Claude wartet' : 'Claude' }} · {{ control.sessionTitle }}
               </span>
             </button>
             <Button
               :variant="control.takenOver ? 'default' : 'secondary'"
               size="xs"
               class="shrink-0 rounded-full"
-              v-tooltip="control.takenOver ? 'Claude darf den Browser wieder bedienen' : 'Selbst bedienen, Claude wartet so lange'"
+              v-tooltip="
+                control.takenOver
+                  ? 'Claude darf den Browser wieder bedienen'
+                  : 'Selbst bedienen, privat: Claude wartet so lange und bekommt nicht mit, was du tippst und die Seite sendet'
+              "
               @click="takeOver"
             >
               <PlayIcon v-if="control.takenOver" data-icon="inline-start" />

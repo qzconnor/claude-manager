@@ -69,6 +69,7 @@ export const SETTING_PLACES: Record<string, { anchor: SettingsAnchor; label?: st
   'claude.hideSecretsFromCommands': { anchor: 'claude.hideSecrets' },
   'claude.browserTools': { anchor: 'claude.browserTools' },
   'claude.browserToolsAllowed': { anchor: 'claude.browserToolsAllowed', label: 'Browser ohne Nachfrage bedienen' },
+  'claude.browserSensitiveAllowed': { anchor: 'claude.browserSensitiveAllowed', label: 'Heikle Browser-Werkzeuge ohne Nachfrage' },
   'claude.noClaudeInChrome': { anchor: 'claude.noClaudeInChrome' },
   'claude.claudeInChromeHintDismissed': { anchor: 'claude.noClaudeInChrome', label: 'Hinweis zu Claude in Chrome ausgeblendet' },
   'claude.appContext': { anchor: 'claude.appContext' },
