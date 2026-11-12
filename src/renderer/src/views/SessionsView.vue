@@ -55,6 +55,7 @@ import { sessionKey, useSessionSearch } from '@/composables/useSessionSearch'
 import { attempt } from '@/lib/errors'
 import { formatBytes } from '@/lib/format'
 import { containsTerms, searchText } from '@/lib/search'
+import { setChecked, toggleChecked } from '@/lib/session-selection'
 import { readSessionsView, saveSessionsView } from '@/lib/sessions-view'
 import {
   allFolders,
@@ -443,28 +444,21 @@ function stopSelecting() {
 
 function toggle(session: SessionSummary, range: boolean) {
   if (!selecting.value) startSelecting()
-  const key = sessionKey(session.accountId, session.id)
-  const next = new Set(checked.value)
-  const keys = range && anchor ? visibleOrder.value.map((s) => sessionKey(s.accountId, s.id)) : []
-  const from = anchor ? keys.indexOf(anchor) : -1
-  const to = keys.indexOf(key)
-  if (from !== -1 && to !== -1) {
-    for (const k of keys.slice(Math.min(from, to), Math.max(from, to) + 1)) next.add(k)
-  } else if (next.has(key)) next.delete(key)
-  else next.add(key)
-  anchor = key
-  checked.value = next
+  // The order of what one can see only matters for a range.
+  const order = range && anchor ? visibleOrder.value.map((s) => sessionKey(s.accountId, s.id)) : []
+  const next = toggleChecked({ keys: checked.value, anchor }, sessionKey(session.accountId, session.id), range, order)
+  checked.value = next.keys
+  anchor = next.anchor
 }
 
 /** Checks or unchecks all sessions of a folder. */
 function checkProject(project: SessionProject, value: boolean) {
   if (!selecting.value) startSelecting()
-  const next = new Set(checked.value)
-  for (const s of project.sessions) {
-    if (value) next.add(sessionKey(s.accountId, s.id))
-    else next.delete(sessionKey(s.accountId, s.id))
-  }
-  checked.value = next
+  checked.value = setChecked(
+    checked.value,
+    project.sessions.map((s) => sessionKey(s.accountId, s.id)),
+    value,
+  )
   anchor = null
 }
 
