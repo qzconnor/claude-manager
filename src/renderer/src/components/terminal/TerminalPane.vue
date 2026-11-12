@@ -95,15 +95,21 @@ function onDrop(event: DragEvent) {
 // The limit hint stays away once dismissed, until the session hits a limit again.
 const now = useClock(30_000)
 const dismissedLimit = ref<string | null>(null)
-const limitKey = computed(() => {
-  const { limit, sessionId } = props.terminal
-  return limit ? `${sessionId}|${limit.resetsAt}|${limit.message}` : null
-})
+/** The limit the session stands at; kept past its reset, while the session is about to go on by itself. */
+const limitKey = ref<string | null>(null)
+watch(
+  () => props.terminal.limit,
+  (current) => {
+    if (current) limitKey.value = `${props.terminal.sessionId}|${current.resetsAt}|${current.message}`
+  },
+  { immediate: true },
+)
 const limit = computed(() => {
   const current = props.terminal.limit
-  if (!current || limitKey.value === dismissedLimit.value) return null
+  if (!current) return null
   return current.resetsAt && Date.parse(current.resetsAt) <= now.value ? null : current
 })
+const limitHint = computed(() => limitKey.value !== dismissedLimit.value && (limit.value !== null || props.terminal.resume !== null))
 
 // A session with the app's browser that also starts with Claude in Chrome: Claude might take Chrome.
 const browsers = useBrowsersStore()
@@ -156,11 +162,11 @@ function closeSearch() {
     <div ref="container" class="flex size-full flex-col justify-end *:shrink-0" />
 
     <div
-      v-if="limit || chromeHint"
+      v-if="limitHint || chromeHint"
       class="pointer-events-none absolute inset-x-0 top-3 z-10 flex flex-col items-center gap-2 px-4"
     >
       <TerminalLimitBanner
-        v-if="limit"
+        v-if="limitHint"
         class="pointer-events-auto"
         :terminal="terminal"
         :limit="limit"

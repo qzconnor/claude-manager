@@ -9,6 +9,7 @@ function terminal(id: string, mode: TerminalMode = 'session', extra: Partial<Ter
     authAccountId: 'a',
     sessionId: `s-${id}`,
     limit: null,
+    resume: null,
     context: null,
     busy: false,
     attention: null,

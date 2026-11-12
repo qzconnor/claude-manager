@@ -12,6 +12,7 @@ import {
   PencilIcon,
   ShrinkIcon,
   TagIcon,
+  TimerIcon,
   TriangleAlertIcon,
   WrenchIcon,
 } from '@lucide/vue'
@@ -26,7 +27,7 @@ import { attentionLook } from '@/lib/attention'
 import { accountKindLabel, formatReset } from '@/lib/format'
 import { fileManagerLabel } from '@/lib/platform'
 import { cn } from '@/lib/utils'
-import { limitLabel } from '@/lib/usage'
+import { limitLabel, resumeLabel } from '@/lib/usage'
 import BrowserFavicon from './BrowserFavicon.vue'
 
 /**
@@ -164,11 +165,13 @@ const activity = computed(() => {
         <p class="min-w-0 flex-1">Fasst den Verlauf zusammen …</p>
       </div>
 
-      <div v-if="terminal.limit" class="flex gap-2 text-warning">
-        <TriangleAlertIcon class="mt-px size-3.5 shrink-0" />
+      <div v-if="terminal.limit || terminal.resume" class="flex gap-2 text-warning">
+        <TimerIcon v-if="terminal.resume" class="mt-px size-3.5 shrink-0" />
+        <TriangleAlertIcon v-else class="mt-px size-3.5 shrink-0" />
         <p class="min-w-0 flex-1">
-          {{ limitLabel(terminal.limit.type) }} erreicht
-          <template v-if="terminal.limit.resetsAt">· Reset {{ formatReset(terminal.limit.resetsAt) }}</template>
+          {{ terminal.limit ? `${limitLabel(terminal.limit.type)} erreicht` : 'Limit zurückgesetzt' }}
+          <template v-if="terminal.resume">· {{ resumeLabel(terminal.resume, now) }}</template>
+          <template v-else-if="terminal.limit?.resetsAt">· Reset {{ formatReset(terminal.limit.resetsAt) }}</template>
         </p>
       </div>
 

@@ -221,6 +221,12 @@ export const schemas: Record<string, Schema> = {
     authAccountId: { type: 'string', description: 'Account, dessen Login, Token oder API-Key der Prozess verwendet' },
     sessionId: { ...nullable(str), description: 'Claude-Code-Session, die gerade im Tab läuft' },
     limit: { ...nullable(ref('SessionLimit')), description: 'Gesetzt, solange die Session an einem Nutzungslimit steht' },
+    resume: {
+      ...nullable(ref('LimitResume')),
+      description:
+        'Die Session steht an einem Limit und geht von selbst weiter: am Reset oder mit dem automatischen Wechsel, sobald ein ' +
+        'anderer Account frei ist. Bleibt nach dem Reset, bis sie weitergeht, auch wenn limit schon null ist',
+    },
     context: {
       ...nullable(ref('SessionContext')),
       description: 'Wie voll der Kontext der Session ist, ab ihrem Start; null bei Shells, Logins und Browsern',
@@ -273,6 +279,13 @@ export const schemas: Record<string, Schema> = {
     worktree: {
       ...nullable(ref('SessionWorktree')),
       description: 'Git-Worktree, in dem die Session arbeitet (claude --worktree); cwd bleibt der Startordner',
+    },
+  }),
+  LimitResume: object({
+    byUser: { type: 'boolean', description: 'Im Tab gewählt („Am Reset fortsetzen“); sonst wartet der automatische Wechsel' },
+    at: {
+      ...nullable(dateTime),
+      description: 'Wann die Session mit ihrem Account weitergeht: eine Minute nach dem Reset; null, wenn er unbekannt ist',
     },
   }),
   TerminalTurn: object({

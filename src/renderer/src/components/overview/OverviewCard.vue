@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { BotIcon, CircleStopIcon, MessageCircleQuestionIcon, ShieldQuestionIcon, ShrinkIcon, TriangleAlertIcon } from '@lucide/vue'
+import {
+  BotIcon,
+  CircleStopIcon,
+  MessageCircleQuestionIcon,
+  ShieldQuestionIcon,
+  ShrinkIcon,
+  TimerIcon,
+  TriangleAlertIcon,
+} from '@lucide/vue'
 import { computed } from 'vue'
 import type { TerminalInfo } from '@shared/types'
 import AccountDot from '@/components/common/AccountDot.vue'
@@ -9,7 +17,7 @@ import { activityDuration, activityLabel } from '@/lib/activity'
 import { contextGauge, modelName, shortTokens } from '@/lib/context'
 import { formatRelative, formatReset } from '@/lib/format'
 import { overviewState } from '@/lib/overview'
-import { clampPercent, limitLabel, usageLevel, usageTextClass } from '@/lib/usage'
+import { clampPercent, limitLabel, resumeLabel, usageLevel, usageTextClass } from '@/lib/usage'
 import { cn } from '@/lib/utils'
 import { useAccountsStore } from '@/stores/accounts'
 import { useUsageStore } from '@/stores/usage'
@@ -33,12 +41,18 @@ const session = computed(() => props.terminal.mode === 'session')
 /** What Claude waits for: a permission, a question, a plan, or the reset of a limit. */
 const waiting = computed(() => {
   if (state.value !== 'waiting') return null
-  const { limit, turn } = props.terminal
+  const { limit, turn, resume } = props.terminal
   if (limit) {
+    // Goes on by itself: when.
+    const goesOn = resume ? resumeLabel(resume, props.now) : null
     return {
-      icon: TriangleAlertIcon,
+      icon: resume ? TimerIcon : TriangleAlertIcon,
       title: `${limitLabel(limit.type)} erreicht`,
-      detail: limit.resetsAt ? `Reset ${formatReset(limit.resetsAt, props.now)}` : limit.message,
+      detail: goesOn
+        ? goesOn[0]!.toUpperCase() + goesOn.slice(1)
+        : limit.resetsAt
+          ? `Reset ${formatReset(limit.resetsAt, props.now)}`
+          : limit.message,
       code: false,
     }
   }

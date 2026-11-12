@@ -34,16 +34,18 @@ export class SessionHandoff extends TypedEmitter<Events> {
   /**
    * Replaces the tab by one that continues its session with `targetId`. Null when the user doesn't
    * trust the folder for the account whose folder the session lands in: the tab then keeps running.
+   * `limited`: the session stood at a limit that has reset by now (`limit` is gone then), see AutoSwitch.
    */
-  async continueTerminal(terminalId: string, targetId: string): Promise<TerminalInfo | null> {
+  async continueTerminal(terminalId: string, targetId: string, limited = false): Promise<TerminalInfo | null> {
     const old = this.terminals.get(terminalId)
     if (old.mode !== 'session') throw new Error('Nur Claude-Code-Sessions können den Account wechseln.')
     const target = this.accounts.get(targetId)
+    const atLimit = limited || old.limit !== null
     // At a limit that has reset, the session goes on with its own account (see AutoSwitch).
-    if (target.id === old.authAccountId && old.status === 'running' && !old.limit) {
+    if (target.id === old.authAccountId && old.status === 'running' && !atLimit) {
       throw new Error(`Der Tab läuft schon über „${target.name}“.`)
     }
-    return this.handOver(old, target, true)
+    return this.handOver(old, target, atLimit)
   }
 
   /**
@@ -126,7 +128,7 @@ export class SessionHandoff extends TypedEmitter<Events> {
     }
   }
 
-  /** `carryOn`: a session that stopped at its limit gets the continue prompt. */
+  /** `carryOn`: the session stopped at its limit and gets the continue prompt. */
   private async handOver(old: TerminalInfo, target: Account, carryOn: boolean): Promise<TerminalInfo | null> {
     const terminalId = old.id
     if (!old.sessionId) throw new Error('Welche Session in diesem Tab läuft, ist noch nicht bekannt.')
@@ -145,7 +147,7 @@ export class SessionHandoff extends TypedEmitter<Events> {
       await this.terminals.stop(terminalId)
       const options = await this.prepare(old.accountId, old.sessionId, cwd, target)
       // The session stopped at its limit: let Claude carry on where it was, so nobody has to type.
-      if (carryOn && old.limit && options.resumeSessionId) options.prompt = this.settings.get().claude.continuePrompt || null
+      if (carryOn && options.resumeSessionId) options.prompt = this.settings.get().claude.continuePrompt || null
       const info = this.terminals.create({
         ...options,
         // `--model opus` and the like hold for the session, also with another account.

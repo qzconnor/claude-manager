@@ -129,6 +129,7 @@ function terminal(overrides: Partial<TerminalInfo> = {}): TerminalInfo {
     authAccountId: 'a',
     sessionId: null,
     limit: null,
+    resume: null,
     context: null,
     busy: false,
     attention: null,

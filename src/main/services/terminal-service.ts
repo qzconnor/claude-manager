@@ -13,6 +13,7 @@ import type {
   BrowserOpenOptions,
   BrowserPage,
   CloseOnExit,
+  LimitResume,
   PaneNode,
   PaneSplit,
   PastedImage,
@@ -418,6 +419,7 @@ export class TerminalService extends TypedEmitter<Events> {
       authAccountId: auth.id,
       sessionId,
       limit: null,
+      resume: null,
       context: null,
       busy: false,
       attention: null,
@@ -488,6 +490,7 @@ export class TerminalService extends TypedEmitter<Events> {
       authAccountId: '',
       sessionId: null,
       limit: null,
+      resume: null,
       context: null,
       busy: false,
       attention: null,
@@ -707,6 +710,15 @@ export class TerminalService extends TypedEmitter<Events> {
       // The account is gone, the transcript is being rewritten.
       return null
     }
+  }
+
+  /** How the tab at a limit goes on by itself, as AutoSwitch decided (see `TerminalInfo.resume`). */
+  setResume(id: string, resume: LimitResume | null): void {
+    const record = this.terminals.get(id)
+    if (!record || JSON.stringify(record.info.resume) === JSON.stringify(resume)) return
+    record.info.resume = resume
+    // Told with the next changes: AutoSwitch decides while it hears of changes.
+    this.emitChangedSoon()
   }
 
   /** The numbers of the images pasted into the tab's sessions (`[Image #N]`): sent ones and those kept when pasted. */

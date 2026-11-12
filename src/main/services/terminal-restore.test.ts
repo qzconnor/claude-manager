@@ -76,6 +76,7 @@ function info(overrides: Partial<TerminalInfo>): TerminalInfo {
     authAccountId: 'acc-a',
     sessionId: null,
     limit: null,
+    resume: null,
     context: null,
     busy: false,
     attention: null,

@@ -18,6 +18,7 @@ import {
   Rows2Icon,
   SquareArrowOutUpRightIcon,
   SquareTerminalIcon,
+  TimerIcon,
   TriangleAlertIcon,
   XIcon,
 } from '@lucide/vue'
@@ -343,6 +344,7 @@ function openFolder() {
                     :style="{ color: color || undefined }"
                   />
                   <SquareTerminalIcon v-else-if="pane.mode === 'shell'" class="size-3.5" />
+                  <TimerIcon v-else-if="pane.resume" class="size-3.5 text-warning" />
                   <TriangleAlertIcon v-else-if="pane.limit" class="size-3.5 text-warning" />
                   <AccountDot v-else :color="color" :class="cn(pane.status === 'exited' && 'opacity-40')" />
                 </span>

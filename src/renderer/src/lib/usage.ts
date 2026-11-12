@@ -1,7 +1,13 @@
-import type { UsageWindow } from '@shared/types'
-import { formatClock, formatDuration } from './format'
+import type { LimitResume, UsageWindow } from '@shared/types'
+import { formatClock, formatDuration, formatReset } from './format'
 
 export { limitLabel } from '@shared/utils'
+
+/** How a tab at a limit goes on by itself (`TerminalInfo.resume`), e.g. "geht weiter in 2 Std. 13 Min. · 17:54". */
+export function resumeLabel(resume: LimitResume, now = Date.now()): string {
+  if (!resume.at) return 'geht weiter, sobald ein Account frei ist'
+  return Date.parse(resume.at) > now ? `geht weiter ${formatReset(resume.at, now)}` : 'geht gleich weiter'
+}
 
 /** Green below 60 %, orange from 60 %, red from 85 %. */
 export type UsageLevel = 'low' | 'medium' | 'high'

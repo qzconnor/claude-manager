@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import type { UsageWindow } from '@shared/types'
-import { clampPercent, forecastHint, usageLevel, windowIdle } from './usage'
+import { clampPercent, forecastHint, resumeLabel, usageLevel, windowIdle } from './usage'
+
+describe('resumeLabel', () => {
+  const now = Date.parse('2026-11-12T12:00:00.000Z')
+
+  it('tells when the session goes on by itself', () => {
+    const later = new Date(now + (2 * 60 + 13) * 60 * 1000).toISOString()
+    expect(resumeLabel({ byUser: true, at: later }, now)).toMatch(/^geht weiter in 2 Std\. 13 Min\. · \d\d:\d\d$/)
+    expect(resumeLabel({ byUser: true, at: new Date(now).toISOString() }, now)).toBe('geht gleich weiter')
+    expect(resumeLabel({ byUser: false, at: null }, now)).toBe('geht weiter, sobald ein Account frei ist')
+  })
+})
 
 describe('clampPercent', () => {
   it('rounds to whole percent', () => {

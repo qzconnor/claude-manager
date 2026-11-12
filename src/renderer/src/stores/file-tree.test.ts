@@ -13,6 +13,7 @@ function session(id: string, sessionId: string | null): TerminalInfo {
     authAccountId: 'a',
     sessionId,
     limit: null,
+    resume: null,
     context: null,
     busy: false,
     attention: null,

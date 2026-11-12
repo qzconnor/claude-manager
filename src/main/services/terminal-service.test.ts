@@ -170,6 +170,38 @@ describe('own tab name', () => {
   })
 })
 
+describe('how a tab at a limit goes on', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('keeps what AutoSwitch tells and reports it once, shortly after', async () => {
+    vi.useFakeTimers()
+    const { id } = service.openBrowser({ url: 'https://example.com/' })
+    const changed = vi.fn()
+    service.on('changed', changed)
+    const resume = { byUser: true, at: '2026-11-12T13:01:00.000Z' }
+    service.setResume(id, resume)
+    expect(service.get(id).resume).toEqual(resume)
+    // AutoSwitch decides while it hears of changes: not while it does.
+    expect(changed).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(200)
+    expect(changed).toHaveBeenCalledTimes(1)
+    // The same again: nothing to tell.
+    service.setResume(id, { ...resume })
+    await vi.advanceTimersByTimeAsync(200)
+    expect(changed).toHaveBeenCalledTimes(1)
+    service.setResume(id, null)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(changed).toHaveBeenCalledTimes(2)
+    expect(service.get(id).resume).toBeNull()
+    // A tab that is gone: nothing.
+    service.setResume('weg', resume)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(changed).toHaveBeenCalledTimes(2)
+  })
+})
+
 // Claude Code names the folder of the session in `sessions/<pid>.json`; `/cd` changes it.
 describe('following /cd', () => {
   const APP = 'C:\\dev\\app'

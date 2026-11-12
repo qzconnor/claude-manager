@@ -9,6 +9,7 @@ function terminal(id: string, status: TerminalStatus = 'running'): TerminalInfo 
     authAccountId: 'a',
     sessionId: null,
     limit: null,
+    resume: null,
     context: null,
     busy: false,
     attention: null,

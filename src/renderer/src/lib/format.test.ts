@@ -4,6 +4,7 @@ import {
   accountKindLabel,
   formatBytes,
   formatClock,
+  formatCountdown,
   formatDateTime,
   formatNumber,
   formatPeriod,
@@ -154,6 +155,25 @@ describe('formatClock', () => {
   it('shows a dash for missing or invalid dates', () => {
     expect(formatClock(null, NOW)).toBe('–')
     expect(formatClock('nope', NOW)).toBe('–')
+  })
+})
+
+describe('formatCountdown', () => {
+  const now = Date.parse('2026-11-12T12:00:00.000Z')
+  const at = (seconds: number) => new Date(now + seconds * 1000).toISOString()
+
+  it('counts down like a clock', () => {
+    expect(formatCountdown(at(5), now)).toBe('0:05')
+    expect(formatCountdown(at(12 * 60 + 34), now)).toBe('12:34')
+    expect(formatCountdown(at(3600 + 2 * 60 + 3), now)).toBe('1:02:03')
+    expect(formatCountdown(at(2 * 86400 + 4 * 3600 + 3 * 60 + 10), now)).toBe('2 T. 4:03:10')
+  })
+
+  it('rounds a started second up and stops at zero', () => {
+    expect(formatCountdown(new Date(now + 1200).toISOString(), now)).toBe('0:02')
+    expect(formatCountdown(at(0), now)).toBe('0:00')
+    expect(formatCountdown(at(-90), now)).toBe('0:00')
+    expect(formatCountdown('kaputt', now)).toBe('0:00')
   })
 })
 

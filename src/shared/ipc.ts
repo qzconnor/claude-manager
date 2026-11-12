@@ -111,6 +111,7 @@ export const IpcInvoke = {
   terminalsOpenBrowser: 'terminals:open-browser',
   terminalsPastedImageIds: 'terminals:pasted-image-ids',
   terminalsLastAnswer: 'terminals:last-answer',
+  terminalsResumeAtReset: 'terminals:resume-at-reset',
   terminalsPastedImage: 'terminals:pasted-image',
   terminalsKeepPastedImage: 'terminals:keep-pasted-image',
   browserFavicon: 'browser:favicon',
@@ -402,6 +403,8 @@ export interface ManagerApi {
     pastedImageIds(id: string): Promise<number[]>
     /** Claude's last answer in the tab's session, as Markdown; null before the first one. */
     lastAnswer(id: string): Promise<string | null>
+    /** The session at a limit goes on by itself at the reset (`on`), or no longer (see `TerminalInfo.resume`). */
+    resumeAtReset(id: string, on: boolean): Promise<void>
     /** Image `n` pasted into the tab's session; null when there is none. */
     pastedImage(id: string, n: number): Promise<PastedImage | null>
     /**

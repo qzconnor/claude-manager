@@ -442,6 +442,12 @@ export interface TerminalInfo {
   sessionId: string | null
   /** Set while the session is stopped by a usage limit. */
   limit: SessionLimit | null
+  /**
+   * The session stands at a usage limit and goes on by itself (see AutoSwitch): at the reset, or with
+   * the automatic switch as soon as another account is free. Stays a little past the reset, when `limit`
+   * is gone already, until the session goes on. Null otherwise.
+   */
+  resume: LimitResume | null
   /** How full the session's context is, from its start (tokens from the first answer on); null for shells, logins and browsers. */
   context: SessionContext | null
   /** Claude Code works on a turn, as its window title shows (also when started in a shell tab). */
@@ -502,6 +508,14 @@ export interface TerminalInfo {
   turn: TerminalTurn | null
   /** The beginning of the last prompt, on one line; only with `hooks`, null before the first one. */
   prompt: string | null
+}
+
+/** How a tab at a usage limit goes on by itself (see `TerminalInfo.resume`). */
+export interface LimitResume {
+  /** Asked for in the tab („Am Reset fortsetzen“); otherwise the automatic switch waits for a free account. */
+  byUser: boolean
+  /** When the session goes on with its own account: a minute after the reset. Null when the reset isn't known. */
+  at: string | null
 }
 
 /** The end of a session's turn, as the tab keeps it (see `TerminalInfo.turn`). */

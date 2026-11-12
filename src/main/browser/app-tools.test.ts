@@ -235,6 +235,7 @@ function terminal(id: string, patch: Partial<TerminalInfo> = {}): TerminalInfo {
     authAccountId: 'a1',
     sessionId: null,
     limit: null,
+    resume: null,
     context: null,
     busy: false,
     attention: null,

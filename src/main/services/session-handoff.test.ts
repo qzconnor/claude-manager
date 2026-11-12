@@ -76,6 +76,7 @@ function tab(overrides: Partial<TerminalInfo>): TerminalInfo {
     authAccountId: 'own',
     sessionId: S,
     limit: null,
+    resume: null,
     context: null,
     busy: false,
     attention: null,
@@ -302,6 +303,15 @@ describe('SessionHandoff.continueTerminal', () => {
     await handoff().continueTerminal('old', 'own')
     expect(createdOptions()).toMatchObject({ accountId: 'own', resumeSessionId: S, prompt: 'Mach weiter', replaces: 'old' })
     expect(steps).toEqual(['stop old', 'create', 'close old'])
+  })
+
+  it('lets it go on with its own account when Claude Code no longer names the limit that has reset', async () => {
+    // The tab's limit is gone at the reset: AutoSwitch tells that it stood at one.
+    tabs.set('old', tab({}))
+    await writeTranscript()
+    await expect(handoff().continueTerminal('old', 'own')).rejects.toThrow('läuft schon über „Name own“')
+    await handoff().continueTerminal('old', 'own', true)
+    expect(createdOptions()).toMatchObject({ accountId: 'own', resumeSessionId: S, prompt: 'Mach weiter', replaces: 'old' })
   })
 
   it('refuses a second switch of the same tab while one is running', async () => {

@@ -324,6 +324,10 @@ export function registerIpc(ctx: AppContext): void {
   })
   handle(IpcInvoke.terminalsPastedImageIds, (_e, id: unknown) => ctx.terminals.pastedImageIds(requireString(id, 'id')))
   handle(IpcInvoke.terminalsLastAnswer, (_e, id: unknown) => ctx.terminals.lastAnswer(requireString(id, 'id')))
+  handle(IpcInvoke.terminalsResumeAtReset, (_e, id: unknown, on: unknown) => {
+    if (typeof on !== 'boolean') throw new Error('Ungültiger Parameter: on')
+    ctx.autoSwitch.resumeAtReset(requireString(id, 'id'), on)
+  })
   handle(IpcInvoke.terminalsPastedImage, (_e, id: unknown, n: unknown) =>
     ctx.terminals.pastedImage(requireString(id, 'id'), requireImageNumber(n)),
   )

@@ -95,6 +95,20 @@ export function formatReset(iso: string | null | undefined, now = Date.now()): s
   return `in ${formatDuration(diff)} · ${when}`
 }
 
+/**
+ * What is left until `iso`, as a clock counts down: "0:05", "12:34", "1:02:03", from a day on
+ * "2 T. 4:03:10". "0:00" once it has come.
+ */
+export function formatCountdown(iso: string, now = Date.now()): string {
+  const left = Math.max(0, Math.ceil((Date.parse(iso) - now) / 1000)) || 0
+  const days = Math.floor(left / 86400)
+  const hours = Math.floor((left % 86400) / 3600)
+  const minutes = Math.floor((left % 3600) / 60)
+  const seconds = String(left % 60).padStart(2, '0')
+  if (days) return `${days} T. ${hours}:${String(minutes).padStart(2, '0')}:${seconds}`
+  return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${seconds}` : `${minutes}:${seconds}`
+}
+
 /** A span like "2 Std. 13 Min." or "3 T. 4 Std." (minutes only below a day). */
 export function formatDuration(ms: number): string {
   const minutes = Math.round(Math.max(0, ms) / 60000)
