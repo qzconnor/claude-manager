@@ -35,7 +35,7 @@ const reset = computed(() =>
           )
         "
       >
-        {{ percent }}%
+        {{ percent }}&nbsp;%
       </span>
     </div>
     <Progress

@@ -26,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useThemeActions } from '@/composables/useThemeActions'
+import { fileManagerLabel } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useThemesStore } from '@/stores/themes'
 
@@ -151,7 +152,7 @@ const menuButtonClass =
               <DropdownMenuItem @select="actions.edit(theme.id)"><PencilIcon /> Bearbeiten</DropdownMenuItem>
               <DropdownMenuItem @select="actions.copy(theme)"><CopyIcon /> Kopieren</DropdownMenuItem>
               <DropdownMenuItem @select="actions.openFile(theme.id)"><FileJsonIcon /> Als JSON bearbeiten</DropdownMenuItem>
-              <DropdownMenuItem @select="actions.showFile(theme.id)"><FolderOpenIcon /> Im Explorer zeigen</DropdownMenuItem>
+              <DropdownMenuItem @select="actions.showFile(theme.id)"><FolderOpenIcon /> Im {{ fileManagerLabel }} zeigen</DropdownMenuItem>
               <DropdownMenuItem @select="actions.exportTheme(theme.id)"><ShareIcon /> Exportieren…</DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" @select="actions.remove(theme.id)"><Trash2Icon /> Löschen</DropdownMenuItem>
@@ -182,7 +183,7 @@ const menuButtonClass =
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" class="w-52">
               <DropdownMenuItem @select="actions.openFile(entry.id)"><FileJsonIcon /> Als JSON bearbeiten</DropdownMenuItem>
-              <DropdownMenuItem @select="actions.showFile(entry.id)"><FolderOpenIcon /> Im Explorer zeigen</DropdownMenuItem>
+              <DropdownMenuItem @select="actions.showFile(entry.id)"><FolderOpenIcon /> Im {{ fileManagerLabel }} zeigen</DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" @select="actions.remove(entry.id)"><Trash2Icon /> Löschen</DropdownMenuItem>
             </DropdownMenuContent>

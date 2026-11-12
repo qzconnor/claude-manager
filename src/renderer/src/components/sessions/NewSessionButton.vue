@@ -38,7 +38,7 @@ const label = computed(() => `Neue Session in ${props.name}`)
       <DropdownMenuItem v-for="account in accounts.accounts" :key="account.id" @select="launcher.newSession(account.id, path)">
         <AccountDot :color="account.color" />
         <span class="truncate">{{ account.name }}</span>
-        <DropdownMenuShortcut v-if="account.id === launcher.defaultAccountId()">Standard</DropdownMenuShortcut>
+        <DropdownMenuShortcut v-if="account.id === launcher.defaultAccountId()">Vorgabe</DropdownMenuShortcut>
       </DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>

@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSepa
 import { Switch } from '@/components/ui/switch'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useSetting } from '@/composables/useSetting'
-import { isWindows, supportsMaterial } from '@/lib/platform'
+import { emojiFont, isWindows, supportsMaterial } from '@/lib/platform'
 import { THEMES } from '@shared/themes/builtin'
 import { customThemeStem } from '@shared/themes/file'
 import { useThemesStore } from '@/stores/themes'
@@ -142,7 +142,7 @@ function onScheme(value: unknown) {
       title="Schrift"
       :reset="{ terminal: ['fontFamily', 'fontSize', 'lineHeight', 'letterSpacing', 'ligatures', 'fontWeight', 'fontWeightBold'] }"
     >
-      <SettingField anchor="terminal.fontFamily" for="terminal-font" label="Schriftart" description="Emoji und Symbole werden automatisch über Segoe UI Emoji ergänzt.">
+      <SettingField anchor="terminal.fontFamily" for="terminal-font" label="Schriftart" :description="`Emoji und Symbole werden automatisch über ${emojiFont} ergänzt.`">
         <FontPicker id="terminal-font" v-model="fontFamily" />
       </SettingField>
       <SettingField anchor="terminal.fontSize" for="terminal-font-size" label="Schriftgröße" description="Auch mit Strg + / Strg − / Strg 0.">

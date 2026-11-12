@@ -2,6 +2,7 @@ import { toast } from 'vue-sonner'
 import { themeContent, uniqueThemeName } from '@shared/themes/file'
 import type { AppTheme } from '@shared/themes/types'
 import { errorMessage, toastError } from '@/lib/errors'
+import { fileManagerLabel } from '@/lib/platform'
 import { useSettingsStore } from '@/stores/settings'
 import { useThemesStore } from '@/stores/themes'
 import { useUiStore } from '@/stores/ui'
@@ -33,7 +34,7 @@ export function useThemeActions() {
     try {
       if (!(await themes.openFile(id))) {
         toast.info('Kein Programm für JSON-Dateien', {
-          description: 'Die Datei ist im Explorer markiert. Öffne sie dort mit einem Editor deiner Wahl.',
+          description: `Die Datei ist im ${fileManagerLabel} markiert. Öffne sie dort mit einem Editor deiner Wahl.`,
         })
       }
     } catch (error) {
@@ -63,7 +64,7 @@ export function useThemeActions() {
       if (!path) return
       toast.success('Theme exportiert', {
         description: path,
-        action: { label: 'Im Explorer zeigen', onClick: () => void window.api.app.showItem(path) },
+        action: { label: `Im ${fileManagerLabel} zeigen`, onClick: () => void window.api.app.showItem(path) },
       })
     } catch (error) {
       toastError(error, 'Theme nicht exportiert')

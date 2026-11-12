@@ -63,7 +63,7 @@ const label = computed(() => {
             <span class="font-medium text-foreground">{{ shortTokens(tokens ?? 0) }}</span>/{{ shortTokens(gauge.limit) }}
           </span>
           <span :class="cn('font-medium tabular-nums', level === 'low' ? 'text-foreground' : usageTextClass[level])">
-            {{ gauge.percent }}%
+            {{ gauge.percent }}&nbsp;%
           </span>
         </template>
       </Button>

@@ -16,5 +16,8 @@ export const shellKind: ShellKind = isWindows ? 'powershell' : 'posix'
 /** What opens a folder: the Explorer on Windows, the desktop's file manager elsewhere. */
 export const fileManagerLabel = isWindows ? 'Explorer' : 'Dateimanager'
 
+/** The color emoji font the terminal falls back to (TERMINAL_FONT_FALLBACKS has both). */
+export const emojiFont = isWindows ? 'Segoe UI Emoji' : 'Noto Color Emoji'
+
 /** Where Windows keeps secrets, and where Linux does. */
 export const secretStore = isWindows ? 'Windows DPAPI' : 'Schlüsselbund des Systems'

@@ -75,7 +75,7 @@ function onFolderKey(event: KeyboardEvent, path: string) {
       <DropdownMenuItem v-for="account in accounts.accounts" :key="account.id" @select="launcher.newSession(account.id)">
         <AccountDot :color="account.color" />
         <span class="truncate">{{ account.name }}</span>
-        <DropdownMenuShortcut v-if="account.id === launcher.defaultAccountId()">Standard</DropdownMenuShortcut>
+        <DropdownMenuShortcut v-if="account.id === launcher.defaultAccountId()">Vorgabe</DropdownMenuShortcut>
       </DropdownMenuItem>
     </DropdownMenuGroup>
     <template v-if="recent.folders.value.length">
@@ -104,7 +104,7 @@ function onFolderKey(event: KeyboardEvent, path: string) {
             >
               <AccountDot :color="account.color" />
               <span class="truncate">{{ account.name }}</span>
-              <DropdownMenuShortcut v-if="account.id === launcher.defaultAccountId()">Standard</DropdownMenuShortcut>
+              <DropdownMenuShortcut v-if="account.id === launcher.defaultAccountId()">Vorgabe</DropdownMenuShortcut>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem @select="launcher.newSessionInWorktree(null, folder.path)">

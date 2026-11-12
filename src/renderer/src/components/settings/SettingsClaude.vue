@@ -212,7 +212,7 @@ async function recheck() {
       title="Allgemein"
       :reset="{ general: ['defaultAccountId', 'restoreTerminals', 'confirmCloseRunning', 'closeOnExit'], claude: ['usageRefreshMinutes'] }"
     >
-      <SettingField anchor="claude.defaultAccount" for="default-account" label="Standard-Account" description="Wird für „+“ und Strg+Umschalt+T verwendet.">
+      <SettingField anchor="claude.defaultAccount" for="default-account" label="Account für neue Sessions" description="Die Vorgabe für „+“, Strg+Umschalt+T und cm.">
         <AccountSelect id="default-account" v-model="defaultAccountId" size="sm" class="w-56" />
       </SettingField>
       <SettingField

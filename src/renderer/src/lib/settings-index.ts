@@ -181,7 +181,7 @@ const TREE = [
         id: 'claude.general',
         title: 'Allgemein',
         fields: [
-          { id: 'claude.defaultAccount', label: 'Standard-Account', keywords: 'Konto neue Session' },
+          { id: 'claude.defaultAccount', label: 'Account für neue Sessions', keywords: 'Konto neue Session Vorgabe Standard-Account cm' },
           { id: 'claude.restoreTerminals', label: 'Tabs beim Start wiederherstellen', keywords: 'Sessions fortsetzen Neustart' },
           { id: 'claude.confirmClose', label: 'Schließen laufender Terminals bestätigen', keywords: 'Nachfrage' },
           { id: 'claude.closeOnExit', label: 'Tab schließen, wenn der Prozess endet', keywords: 'beenden exit' },

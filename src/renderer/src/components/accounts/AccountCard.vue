@@ -84,7 +84,7 @@ function keepLogin() {
         <AccountDot :color="account.color" class="size-2.5" />
         <span class="truncate">{{ account.name }}</span>
         <Badge v-if="plan" variant="secondary">{{ plan }}</Badge>
-        <Badge v-if="isDefault" variant="outline">Standard</Badge>
+        <Badge v-if="isDefault" v-tooltip="'Account für neue Sessions (+, Strg+Umschalt+T und cm)'" variant="outline">Vorgabe</Badge>
       </CardTitle>
       <CardDescription class="min-w-0">
         <AccountIdentityLine :identity="shownIdentity" :fallback="accountKindLabel(account.kind)" />
@@ -116,7 +116,7 @@ function keepLogin() {
               </DropdownMenuItem>
               <DropdownMenuItem :disabled="isDefault" @select="makeDefault">
                 <StarIcon />
-                Als Standard verwenden
+                Als Vorgabe verwenden
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <template v-if="account.id !== SYSTEM_ACCOUNT_ID">

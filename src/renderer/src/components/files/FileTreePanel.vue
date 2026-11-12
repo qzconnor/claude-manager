@@ -83,7 +83,7 @@ import {
   type TreeRow,
 } from '@/lib/file-tree'
 import { TOUCH_ICON } from '@/lib/file-touch'
-import { shellKind } from '@/lib/platform'
+import { fileManagerLabel, isWindows, shellKind } from '@/lib/platform'
 import { pastedPaths } from '@/lib/shell-quote'
 import { terminalBus } from '@/lib/terminal-bus'
 import { childPath, type NameKind, type NameRequest } from '@/lib/tree-names'
@@ -122,8 +122,8 @@ const launcher = useLauncher()
 const openPath = useOpenFile()
 const model = useFileTreeModel(() => props.target.root)
 
-const windows = window.api.platform === 'win32'
-const explorer = windows ? 'Explorer' : 'Dateimanager'
+const windows = isWindows
+const explorer = fileManagerLabel
 const rootName = computed(() => folderName(props.target.root))
 
 /** Rows follow the size of the interface's font (`text-sm`, like the session list). */
