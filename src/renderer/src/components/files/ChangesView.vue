@@ -46,6 +46,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDiffStyle } from '@/composables/useDiffStyle'
 import { useFileTreeModel } from '@/composables/useFileTreeModel'
+import { useLineComments } from '@/composables/useLineComments'
 import { useOpenFile } from '@/composables/useOpenFile'
 import { errorMessage } from '@/lib/errors'
 import {
@@ -61,18 +62,22 @@ import {
   wrapOffsets,
   type SeenState,
 } from '@/lib/file-diff'
-import { absolutePath, changedFiles, folderName, gitDecorations, parentPath, treeOrder, untrackedFolders } from '@/lib/file-tree'
+import { absolutePath, baseName, changedFiles, folderName, gitDecorations, parentPath, treeOrder, untrackedFolders } from '@/lib/file-tree'
+import { spanOfComment, type ReviewComment } from '@/lib/review-comments'
 import { hasLanguage, highlightDiff, languageOf, loadLanguage } from '@/lib/syntax'
 import { SEPARATOR, useFileTreeStore } from '@/stores/file-tree'
 import ChangesFileHeader from './ChangesFileHeader.vue'
 import DiffLineRow from './DiffLineRow.vue'
 import ImageDiff from './ImageDiff.vue'
+import ReviewBar from './ReviewBar.vue'
+import ReviewComposer from './ReviewComposer.vue'
 
 /**
  * All changes of a folder since the last commit, file below file, to review them in one go like a
  * pull request: each file with its head (which stays at the top while its lines pass), its lines drawn
  * like those of a single file's changes. A file marked as seen folds, so the next one follows; one that
  * changes after is to be looked at again. It follows the folder live, as Claude goes on working.
+ * Lines picked at their numbers get comments for Claude (`useLineComments`).
  */
 const props = defineProps<{
   root: string
@@ -491,7 +496,7 @@ const visible = computed(() => {
   const from = scrollTop.value - OVERSCAN
   const to = scrollTop.value + viewHeight.value + OVERSCAN
   const blocks: Block[] = []
-  const lines: { key: string; block: Block; line: DiffLine; html: string | null; top: number; rows: number; clip: number }[] = []
+  const lines: { key: string; block: Block; index: number; line: DiffLine; html: string | null; top: number; rows: number; clip: number }[] = []
   const held = stuck.value
   const heldBottom = held ? scrollTop.value + RING + HEAD + held.offset : 0
   for (const block of layout.value.blocks) {
@@ -511,7 +516,7 @@ const visible = computed(() => {
       // Below the head held at the top the lines end, so none shows beside its rounded corners.
       const clip = held?.block === block ? Math.max(0, heldBottom - top) : 0
       if (clip >= rows * row) continue
-      lines.push({ key: `${block.path}\n${i}`, block, line: block.lines[i]!, html: html?.[i] ?? null, top, rows, clip })
+      lines.push({ key: `${block.path}\n${i}`, block, index: i, line: block.lines[i]!, html: html?.[i] ?? null, top, rows, clip })
     }
   }
   return { blocks, lines }
@@ -590,6 +595,40 @@ const absolute = (path: string) => absolutePath(props.root, path, SEPARATOR)
 
 function openFile(path: string) {
   void openPath(absolute(path))
+}
+
+// ── Comments for Claude ──
+
+/** The cards and lines, for the line under the pointer while picking. */
+const content = ref<HTMLElement | null>(null)
+
+const comments = useLineComments({
+  root: () => props.root,
+  linesOf: (path) => entries.get(path)?.parsed.lines ?? null,
+  placeAt: (event) => {
+    const box = content.value?.getBoundingClientRect()
+    const anchor = box ? anchorAt(event.clientY - box.top) : null
+    return anchor && anchor.line >= 0 ? { path: anchor.path, index: anchor.line } : null
+  },
+})
+const { draft } = comments
+const draftPlace = computed(() => (draft.value ? `${baseName(draft.value.path)} · ${comments.draftLabel.value}` : ''))
+const draftKey = computed(() =>
+  draft.value ? `${draft.value.path}:${draft.value.id}:${draft.value.from.side}${draft.value.from.line}-${draft.value.to.side}${draft.value.to.line}` : '',
+)
+
+/** A comment chosen in the list: its file unfolds, its lines come into view, and it opens to be changed. */
+function revealComment(comment: ReviewComment) {
+  comments.edit(comment)
+  setCollapsed(comment.path, false)
+  void nextTick(() => {
+    const block = layout.value.blocks.find((b) => b.path === comment.path)
+    const span = block ? spanOfComment(block.lines, comment) : null
+    const el = scroller.value
+    if (!block || !el) return
+    el.scrollTop = Math.max(0, (span ? lineTop(block, span.first) - el.clientHeight / 3 : block.top) - RING)
+    onScroll()
+  })
 }
 
 const iconButton =
@@ -700,6 +739,7 @@ const iconButton =
         </div>
       </div>
       <div
+        ref="content"
         class="relative min-w-full"
         :style="{ height: `${layout.height}px`, width: wrap ? undefined : `calc(${layout.widest}ch + ${24 + INSET * 2}px)` }"
       >
@@ -751,8 +791,24 @@ const iconButton =
           :wrap="view.block.offsets !== null"
           :rows="view.rows"
           :clip-top="view.clip"
+          commentable
+          :marks="comments.marksOf(view.block.path, view.index)"
+          @pick="comments.pick(view.block.path, view.index, $event)"
+          @edit="comments.edit"
         />
       </div>
     </div>
+    <ReviewComposer
+      v-if="draft"
+      v-model="draft.text"
+      :place="draftPlace"
+      :editing="!!draft.id"
+      :can-save="comments.canSave.value"
+      :focus-key="draftKey"
+      @save="comments.save"
+      @cancel="comments.cancel"
+      @remove="comments.remove"
+    />
+    <ReviewBar :root="root" @reveal="revealComment" />
   </section>
 </template>

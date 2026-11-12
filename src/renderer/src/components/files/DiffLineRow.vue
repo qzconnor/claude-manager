@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import { PlusIcon } from '@lucide/vue'
 import { computed } from 'vue'
+import type { LineMarks } from '@/composables/useLineComments'
 import { MAX_DIFF_COLUMNS, MAX_WRAPPED_COLUMNS, shownText, wordMarks, type DiffLine } from '@/lib/file-diff'
 import { splitByRanges } from '@/lib/word-diff'
+import type { ReviewComment } from '@/lib/review-comments'
 import { cn } from '@/lib/utils'
 
 /**
@@ -12,7 +15,8 @@ import { cn } from '@/lib/utils'
  * lines off as far from its right edge. `wrap`: the line wraps over `rows` rows (`wrappedRows`) and
  * ends `inset` before the right edge, instead of scrolling sideways. `clipTop`: cut off above that (px),
  * where something stands over it. `side`: side by side, in the left half (the old file, its numbers)
- * or the right one (the new file); it wraps.
+ * or the right one (the new file); it wraps. `commentable`: a press on its number picks it for a comment
+ * to Claude (`pick`); `marks`: how it shows the comments (picked, on one, the mark of one starting here).
  */
 const props = defineProps<{
   line: DiffLine
@@ -34,8 +38,19 @@ const props = defineProps<{
   /** A section's row: with its buttons to stage or discard it. */
   hunkActions?: boolean
   side?: 'left' | 'right'
+  commentable?: boolean
+  marks?: LineMarks
 }>()
-const emit = defineEmits<{ stage: []; discard: [] }>()
+const emit = defineEmits<{ stage: []; discard: []; pick: [event: PointerEvent]; edit: [comment: ReviewComment] }>()
+
+const pickable = computed(() => props.commentable && props.line.kind !== 'hunk')
+
+function onGutterDown(event: PointerEvent) {
+  if (!pickable.value || event.button !== 0) return
+  // No text selection starts, and the keyboard stays where it is.
+  event.preventDefault()
+  emit('pick', event)
+}
 
 const wrapped = computed(() => props.wrap || !!props.side)
 const max = computed(() => (wrapped.value ? MAX_WRAPPED_COLUMNS : MAX_DIFF_COLUMNS))
@@ -110,9 +125,42 @@ const style = computed(() => {
   <!-- Wrapped, a row counted too few cuts its line instead of covering the next (`clip` keeps the numbers sticky). -->
   <div :class="cn('absolute top-0 flex whitespace-pre', wrapped && 'overflow-clip')" :style="style">
     <span
-      :class="cn('sticky z-10 flex shrink-0 justify-end gap-[1ch] px-[1ch] tabular-nums select-none', GUTTER_CLASS[line.kind])"
+      :class="
+        cn(
+          'sticky z-10 flex shrink-0 justify-end gap-[1ch] px-[1ch] tabular-nums select-none',
+          GUTTER_CLASS[line.kind],
+          pickable && 'group/gutter cursor-pointer',
+          marks?.selected
+            ? 'shadow-[inset_2px_0_0_var(--primary)]'
+            : marks?.commented && 'shadow-[inset_2px_0_0_color-mix(in_oklab,var(--primary)_55%,transparent)]',
+        )
+      "
       :style="{ left: `${inset ?? 0}px`, width: `${gutterWidth}ch` }"
+      @pointerdown="onGutterDown"
     >
+      <!-- A comment starts here: its dot in the margin left of the number, which opens it; else on hover the sign that a press comments. -->
+      <button
+        v-if="marks?.comment"
+        type="button"
+        class="group/mark absolute top-0 left-0 z-[12] flex w-[calc(1ch+2px)] cursor-pointer items-center justify-center outline-none"
+        :style="{ height: `${height}px` }"
+        :aria-label="`Kommentar: ${marks.tooltip}`"
+        v-tooltip="marks.tooltip"
+        @pointerdown.stop
+        @click="emit('edit', marks.comment)"
+      >
+        <span class="size-[6px] rounded-full bg-primary transition-transform group-hover/mark:scale-150 group-focus-visible/mark:scale-150" />
+      </button>
+      <span
+        v-else-if="pickable"
+        aria-hidden="true"
+        class="absolute top-0 left-[2px] hidden items-center group-hover/gutter:flex"
+        :style="{ height: `${height}px` }"
+      >
+        <span class="flex size-[14px] items-center justify-center rounded-[3px] bg-primary text-primary-foreground">
+          <PlusIcon class="size-[10px]" />
+        </span>
+      </span>
       <span v-if="line.kind === 'hunk'" class="flex-1 text-left">⋯</span>
       <template v-else>
         <span class="text-right" :style="{ width: `${numberWidth}ch` }">{{ number ?? '' }}</span>
@@ -120,6 +168,11 @@ const style = computed(() => {
       </template>
     </span>
     <span v-if="marked" aria-hidden="true" class="pointer-events-none absolute inset-0 z-[11] bg-primary/15 ring-1 ring-primary/50 ring-inset" />
+    <span
+      v-if="marks?.selected || marks?.commented"
+      aria-hidden="true"
+      :class="cn('pointer-events-none absolute inset-0 z-[11]', marks.selected ? 'bg-primary/15' : 'bg-primary/[0.07]')"
+    />
     <span :class="cn(codeClass, parts && 'relative')"><span v-if="parts" aria-hidden="true" :class="marksClass"><template v-for="(part, i) in parts" :key="i"><span v-if="part.changed" :class="cn('rounded-[2px]', MARK_CLASS[line.kind as 'add' | 'del'])">{{ part.text }}</span><template v-else>{{ part.text }}</template></template></span><span v-if="html !== null" class="relative" v-html="html" /><span v-else class="relative">{{ text }}</span><span v-if="line.eol" class="relative text-(--diff-number) select-none">{{ EOL[line.eol] }}</span></span>
     <!-- At the right edge of the view however far it scrolls sideways. -->
     <span

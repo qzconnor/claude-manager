@@ -18,6 +18,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDiffStyle } from '@/composables/useDiffStyle'
 import { useFileTreeModel } from '@/composables/useFileTreeModel'
 import { useGitActions } from '@/composables/useGitActions'
+import { useLineComments } from '@/composables/useLineComments'
 import { useOpenFile } from '@/composables/useOpenFile'
 import { errorMessage } from '@/lib/errors'
 import {
@@ -38,11 +39,14 @@ import {
 } from '@/lib/file-diff'
 import { fileIcon } from '@/lib/file-icons'
 import { absolutePath, baseName, gitDecorations, parentPath, STATUS_CLASS, STATUS_LABEL, STATUS_LETTER } from '@/lib/file-tree'
+import { spanOfComment, type ReviewComment } from '@/lib/review-comments'
 import { hasLanguage, highlightDiff, languageOf, loadLanguage } from '@/lib/syntax'
 import { cn } from '@/lib/utils'
 import { SEPARATOR, useFileTreeStore } from '@/stores/file-tree'
 import DiffLineRow from './DiffLineRow.vue'
 import ImageDiff from './ImageDiff.vue'
+import ReviewBar from './ReviewBar.vue'
+import ReviewComposer from './ReviewComposer.vue'
 
 /**
  * The changes of a file since the last commit, as `git diff HEAD` sees them (staged and not), drawn
@@ -51,6 +55,7 @@ import ImageDiff from './ImageDiff.vue'
  * It follows the file live: whenever it or git's state changes, the changes are asked again. A file
  * git doesn't know yet shows as all added, one without changes (or outside a repository) as it is.
  * The changes can also stand side by side, the old file left and the new one right, wrapped.
+ * Lines picked at their numbers get comments for Claude (`useLineComments`).
  */
 const props = defineProps<{
   root: string
@@ -464,6 +469,48 @@ async function onHunk(row: number, discard: boolean) {
   return done
 }
 
+// ── Comments for Claude ──
+
+/** The lines drawn, for the line under the pointer while picking. */
+const content = ref<HTMLElement | null>(null)
+
+/** The line under the pointer: side by side, on the side it is over. */
+function placeAt(event: PointerEvent) {
+  const box = content.value?.getBoundingClientRect()
+  const list = lines.value
+  if (!box || list.length === 0) return null
+  const row = Math.max(0, Math.floor((event.clientY - box.top) / rowHeight.value))
+  if (!split.value) return { path: props.path, index: Math.min(list.length - 1, row) }
+  const rows = splitRows.value
+  const starts = splitStarts.value
+  const at = rows[Math.min(rows.length - 1, starts ? lineAtRow(starts, row) : row)]
+  if (!at) return null
+  const left = event.clientX - box.left < box.width / 2
+  const index = left ? (at.left ?? at.right) : (at.right ?? at.left)
+  return index === null ? null : { path: props.path, index }
+}
+
+const comments = useLineComments({
+  root: () => props.root,
+  linesOf: (path) => (path === props.path ? lines.value : null),
+  placeAt,
+})
+const { draft } = comments
+// Another file: what was picked or written for the one before goes.
+watch(() => props.path, comments.cancel)
+const draftPlace = computed(() => `${name.value} · ${comments.draftLabel.value}`)
+const draftKey = computed(() => (draft.value ? `${draft.value.id}:${draft.value.from.side}${draft.value.from.line}-${draft.value.to.side}${draft.value.to.line}` : ''))
+
+/** A comment chosen in the list: its lines come into view, and it opens to be changed. */
+function revealComment(comment: ReviewComment) {
+  comments.edit(comment)
+  const span = spanOfComment(lines.value, comment)
+  const el = scroller.value
+  if (!span || !el) return
+  el.scrollTop = Math.max(0, lineTop(span.first) - el.clientHeight / 3)
+  onScroll()
+}
+
 const iconButton =
   'flex size-[24px] shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 aria-pressed:bg-accent aria-pressed:text-foreground'
 </script>
@@ -591,6 +638,7 @@ const iconButton =
           <span ref="probe" class="inline-block whitespace-pre">{{ '0'.repeat(PROBE_CHARS) }}</span>
         </div>
         <div
+          ref="content"
           class="relative min-w-full"
           :style="{ height: `${contentHeight}px`, width: split ? undefined : `calc(${gutterWidth + columns}ch + 24px)` }"
         >
@@ -623,6 +671,10 @@ const iconButton =
                   :number-width="numberWidth"
                   :with-sign="withSign"
                   :marked="half.view.index === markedIndex"
+                  commentable
+                  :marks="comments.marksOf(path, half.view.index)"
+                  @pick="comments.pick(path, half.view.index, $event)"
+                  @edit="comments.edit"
                 />
                 <!-- No line on this side: lines only removed, or only added. Hatched, like VS Code's. -->
                 <div
@@ -653,13 +705,29 @@ const iconButton =
               :with-sign="withSign"
               :marked="view.index === markedIndex"
               :hunk-actions="hunksApart && view.line.kind === 'hunk'"
+              commentable
+              :marks="comments.marksOf(path, view.index)"
               @stage="onHunk(view.index, false)"
               @discard="onHunk(view.index, true)"
+              @pick="comments.pick(path, view.index, $event)"
+              @edit="comments.edit"
             />
           </template>
         </div>
         <p v-if="lines.length === 0" class="px-4 pt-3 text-center text-xs text-muted-foreground">Die Datei ist leer.</p>
       </div>
     </template>
+    <ReviewComposer
+      v-if="draft"
+      v-model="draft.text"
+      :place="draftPlace"
+      :editing="!!draft.id"
+      :can-save="comments.canSave.value"
+      :focus-key="draftKey"
+      @save="comments.save"
+      @cancel="comments.cancel"
+      @remove="comments.remove"
+    />
+    <ReviewBar :root="root" :only="path" @reveal="revealComment" />
   </section>
 </template>
