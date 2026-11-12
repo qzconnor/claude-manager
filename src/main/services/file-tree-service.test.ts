@@ -549,6 +549,59 @@ describe('FileTreeService.list', () => {
   })
 })
 
+describe('FileTreeService.searchList without git', () => {
+  let dir: string
+  const service = new FileTreeService()
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'file-tree-walk-'))
+  })
+  afterEach(async () => {
+    service.dispose()
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('walks the folder and leaves out node_modules and what the tree hides', async () => {
+    await mkdir(join(dir, 'src', 'lib'), { recursive: true })
+    await mkdir(join(dir, 'node_modules', 'pkg'), { recursive: true })
+    await mkdir(join(dir, '.svn'))
+    await writeFile(join(dir, 'README.md'), '')
+    await writeFile(join(dir, 'src', 'main.ts'), '')
+    await writeFile(join(dir, 'src', 'lib', 'util.ts'), '')
+    await writeFile(join(dir, 'node_modules', 'pkg', 'index.js'), '')
+    await writeFile(join(dir, '.svn', 'entries'), '')
+    await writeFile(join(dir, 'Thumbs.db'), '')
+    const { paths, truncated } = await service.searchList(dir)
+    expect(paths.sort()).toEqual(['README.md', 'src/lib/util.ts', 'src/main.ts'])
+    expect(truncated).toBe(false)
+  })
+
+  it('stops 16 folders deep and says the list is cut', async () => {
+    let deep = dir
+    for (let depth = 1; depth <= 18; depth++) {
+      deep = join(deep, `d${depth}`)
+      await mkdir(deep)
+      await writeFile(join(deep, `at${depth}.txt`), '')
+    }
+    const { paths, truncated } = await service.searchList(dir)
+    expect(paths.some((path) => path.endsWith('/at16.txt'))).toBe(true)
+    expect(paths.some((path) => path.endsWith('/at17.txt'))).toBe(false)
+    expect(truncated).toBe(true)
+  })
+
+  it('does not follow a link back up, so it can’t go round in a circle', async () => {
+    await mkdir(join(dir, 'sub'))
+    await writeFile(join(dir, 'sub', 'file.txt'), '')
+    try {
+      await symlink(dir, join(dir, 'sub', 'up'), 'junction')
+    } catch {
+      return
+    }
+    const { paths } = await service.searchList(dir)
+    expect(paths.filter((path) => path.endsWith('file.txt'))).toEqual(['sub/file.txt'])
+  })
+})
+
 describe('FileTreeService.watch', () => {
   let dir: string
   let service: FileTreeService
