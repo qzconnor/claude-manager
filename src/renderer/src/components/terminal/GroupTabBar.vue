@@ -184,12 +184,13 @@ const iconButton =
 </script>
 
 <template>
-  <!-- A press anywhere on the bar gives its group the keyboard, so "+" opens the session in it. -->
+  <!-- A press anywhere on the bar gives its group the keyboard, so "+" opens the session in it.
+       Clipped: in a group narrower than its buttons they must not reach over the bar beside it. -->
   <div
     ref="bar"
     data-group-bar
     :data-group-id="group.id"
-    class="flex min-w-0 items-stretch pt-1"
+    class="flex min-w-0 items-stretch overflow-hidden pt-1"
     :style="{ height: `${TAB_BAR_HEIGHT}px` }"
     @pointerdown.capture="!focused && terminals.focusGroup(group.id)"
   >
@@ -245,12 +246,17 @@ const iconButton =
         />
       </template>
     </div>
-    <!-- A container: the branch only shows while the tabs leave room for it. -->
-    <div class="@container flex min-w-0 flex-1 items-center gap-0.5 border-b pr-1.5 pl-0.5">
+    <!-- The buttons keep their width, the tabs scroll instead: only the branch between them gives way. -->
+    <div class="flex shrink-0 items-center border-b pl-0.5">
       <NewTerminalMenu class="[&_button]:h-7" />
-      <div class="min-w-0 flex-1" />
-      <!-- Shortened when the tabs take up the bar, gone before it would crowd the buttons. -->
-      <GitBranchChip :cwd="branchDir" class="mr-1 hidden min-w-0 @min-[16rem]:flex" />
+    </div>
+    <!-- A container: the branch only shows while the tabs leave room for it. It can't hold the buttons:
+         a container is 0 wide at the least, and they would spill over the bar of the group beside it. -->
+    <div class="@container flex min-w-0 flex-1 items-center justify-end border-b pl-0.5">
+      <!-- Shortened when the tabs take up the bar, gone before it would be only its icon. -->
+      <GitBranchChip :cwd="branchDir" class="mr-1 hidden min-w-0 @min-[6rem]:flex" />
+    </div>
+    <div class="flex shrink-0 items-center gap-0.5 border-b pr-1.5 pl-0.5">
       <Tooltip>
         <TooltipTrigger as-child>
           <button type="button" aria-label="Neue Session rechts" :class="iconButton" @click="split('row')">
